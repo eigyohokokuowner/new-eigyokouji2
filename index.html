@@ -1,0 +1,2995 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>新営業工事実績システム２</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+  import {
+    getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+  import {
+    getFirestore, collection, doc, getDoc, getDocs, writeBatch
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyA3FGgHfsjb1a046IJPs5rQmDTOyT90I-Q",
+    authDomain: "new-eigyokouji2.firebaseapp.com",
+    projectId: "new-eigyokouji2",
+    storageBucket: "new-eigyokouji2.firebasestorage.app",
+    messagingSenderId: "337410034328",
+    appId: "1:337410034328:web:5a25fe550b8692dc371eed"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  window.fb = {
+    auth, db,
+    signInWithEmailAndPassword, onAuthStateChanged, signOut,
+    collection, doc, getDoc, getDocs, writeBatch,
+  };
+  window.dispatchEvent(new Event("firebase-ready"));
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@700;900&family=Noto+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#F4F6FB;
+    --panel:#FFFFFF; --panel-raised:#F6F7FB; --panel-sunk:#F1F3F9;
+    --line:#C7CEE0; --line-soft:#E4E8F2;
+    --ink:#12142B; --muted:#5B5F82; --muted2:#7A7E9E; --faint:#A6A9C7;
+    --accent:#4F46E5; --accent2:#06B6D4; --accent-soft:rgba(79,70,229,.08);
+    --cyan:#0E7490; --cyan-soft:rgba(14,116,144,.08);
+    --green:#059669; --green-soft:rgba(5,150,105,.09);
+    --red:#DC2626; --red-soft:rgba(220,38,38,.08);
+    --amber:#B45309; --amber-soft:rgba(180,83,9,.09);
+    /* legacy aliases kept so existing rules below don't need renaming */
+    --paper:var(--panel-sunk); --paper-deep:var(--panel-raised);
+    --navy:#12142B; --navy-deep:#0A0B1A; --blue:var(--cyan); --lchip:var(--cyan-soft);
+    --orange:var(--accent);
+    --grad:linear-gradient(135deg, #4F46E5, #06B6D4);
+    --shadow-sm:0 1px 2px rgba(18,20,43,.05), 0 1px 3px rgba(18,20,43,.04);
+    --shadow-md:0 2px 4px rgba(18,20,43,.04), 0 8px 20px rgba(18,20,43,.06);
+    --shadow-lg:0 4px 8px rgba(18,20,43,.04), 0 16px 40px rgba(18,20,43,.08);
+    --glow:var(--shadow-md);
+    --mono:'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+    --display:'Zen Kaku Gothic New', "Hiragino Kaku Gothic ProN", sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;color:var(--ink);
+    font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    background-color:var(--bg);
+    background-image:
+      radial-gradient(900px 520px at 88% -12%, rgba(6,182,212,.10), transparent 62%),
+      radial-gradient(760px 460px at -8% 8%, rgba(79,70,229,.10), transparent 60%);
+    background-repeat:no-repeat;
+    background-attachment:fixed;
+  }
+  input,button,select{font-family:inherit;}
+  input[type=checkbox]{accent-color:var(--accent); width:15px; height:15px;}
+  ::selection{background:var(--accent-soft); color:var(--ink);}
+  .topbar{display:flex;align-items:center;justify-content:space-between;max-width:1360px;margin:0 auto;
+    padding:28px 20px 20px;border-bottom:1px solid var(--line-soft);}
+  .brand{display:flex;align-items:center;gap:14px;}
+  .eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--muted2);
+    text-transform:uppercase;margin-bottom:6px;}
+  .brand h1{font-family:var(--display);font-size:23px;font-weight:900;margin:0;letter-spacing:.01em;
+    background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .brand p{font-size:12px;color:var(--muted);margin:4px 0 0;}
+  .link-btn{font-size:12px;font-weight:600;color:var(--muted);background:var(--panel);
+    border:1px solid var(--line);border-radius:9px;cursor:pointer;transition:.15s;
+    display:flex;align-items:center;gap:6px;padding:9px 14px;}
+  .link-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+  .role-pill{font-size:11px;font-weight:700;padding:6px 12px;border-radius:999px;
+    background:var(--panel-raised);color:var(--muted);border:1px solid var(--line);}
+  .role-pill.editor{background:var(--accent-soft);color:var(--accent);border-color:rgba(79,70,229,.25);}
+  .wrap{max-width:1360px;margin:0 auto;padding:20px 20px 70px;}
+
+  /* ---- onboarding (initial setup) ---- */
+  .onboard{max-width:640px;margin:60px auto;text-align:center;}
+  .onboard h2{font-family:var(--display);font-size:22px;font-weight:900;margin:18px 0 6px;}
+  .onboard p{font-size:13px;color:var(--muted);margin:0 0 26px;}
+  .drop{border:2px dashed var(--line);border-radius:12px;padding:36px 20px;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;cursor:pointer;transition:.15s;text-align:center;background:var(--panel);}
+  .drop.over{border-color:var(--accent);background:var(--accent-soft);box-shadow:0 0 0 4px var(--accent-soft);}
+  .drop p{font-size:13px;margin:8px 0 0;color:var(--ink);}
+  .status-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:18px;text-align:left;}
+  @media(min-width:600px){.status-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}}
+  .status-card{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;
+    padding:9px 11px;background:var(--panel-raised);overflow:hidden;}
+  .status-card svg{flex-shrink:0;}
+  .status-card.on{border-color:var(--green);background:var(--green-soft);}
+  .status-card .t{font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .status-card .n{font-family:var(--mono);font-size:10px;color:var(--muted2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .err-box{margin-top:14px;font-size:12px;background:var(--red-soft);color:var(--red);border-radius:10px;padding:10px 14px;
+    display:flex;gap:8px;align-items:flex-start;text-align:left;border:1px solid rgba(192,57,43,.25);}
+  .note{font-size:11px;color:var(--amber);margin-top:12px;text-align:left;}
+  .storage-warn{font-size:11px;color:var(--amber);background:var(--amber-soft);border:1px solid rgba(255,182,72,.3);
+    border-radius:8px;padding:8px 12px;margin-top:14px;text-align:left;}
+  .btn-primary{display:flex;align-items:center;gap:8px;padding:11px 22px;border-radius:10px;font-size:13px;
+    font-weight:800;background:var(--grad);color:#fff;border:none;cursor:pointer;
+    box-shadow:0 6px 20px rgba(79,70,229,.30);}
+  .btn-outline{display:flex;align-items:center;gap:6px;font-size:12px;padding:7px 12px;border-radius:8px;
+    border:1px solid var(--line);background:var(--panel-raised);color:var(--cyan);cursor:pointer;}
+  .center-row{display:flex;justify-content:center;margin-top:22px;}
+
+  /* ---- update overlay ---- */
+  .overlay-bg{position:fixed;inset:0;background:rgba(4,7,10,.72);display:flex;align-items:flex-start;
+    justify-content:center;padding:40px 16px;z-index:50;overflow-y:auto;}
+  .overlay-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;max-width:640px;width:100%;padding:26px;}
+  .overlay-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+  .overlay-hd h3{font-family:var(--display);font-size:16px;font-weight:900;margin:0;}
+  .icon-btn{background:none;border:none;cursor:pointer;color:var(--muted);}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--panel-raised);
+    border:1px solid var(--line);color:var(--ink);
+    padding:10px 18px;border-radius:999px;font-size:12px;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,.4);}
+
+  /* ---- search panel ---- */
+  .search-panel{position:relative;border-radius:16px;border:1px solid var(--line);overflow:visible;
+    background:var(--panel);margin-bottom:22px;box-shadow:var(--shadow-md);}
+  .search-panel::before{content:"";display:block;height:3px;border-radius:16px 16px 0 0;
+    background:var(--grad);}
+  .search-header{background:var(--navy);color:#fff;padding:16px 24px;display:flex;align-items:center;gap:10px;
+    font-family:var(--display);font-size:15px;font-weight:800;letter-spacing:.01em;
+    border-bottom:1px solid var(--line-soft);}
+  .search-header svg{color:var(--accent2);}
+  .search-body{padding:6px 24px 22px;}
+  .field-row{display:flex;align-items:center;gap:18px;padding:14px 0;border-bottom:1px solid var(--line-soft);}
+  .field-row:last-of-type{border-bottom:none;}
+  .field-row.wrap-row{align-items:flex-start;}
+  .field-label{flex:0 0 140px;background:var(--panel-raised);color:var(--ink);font-size:12.5px;font-weight:700;
+    letter-spacing:.01em;padding:9px 12px;border-radius:8px;border:1px solid var(--line);
+    border-left:3px solid var(--accent2);text-align:left;}
+  .field-op{flex:0 0 auto;font-size:14px;color:var(--muted);}
+  .field-control{flex:1;min-width:0;}
+  .field-control.narrow{flex:0 1 360px;max-width:360px;}
+  .field-control.narrow.small{flex:0 1 130px;max-width:130px;}
+  .pair-row{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;}
+  .pair-group{display:flex;align-items:center;gap:10px;flex:0 0 auto;}
+  .pair-group-grow{display:flex;align-items:center;gap:18px;flex:1 1 0;min-width:280px;}
+  .pair-group-grow.top{align-items:flex-start;}
+  .pair-group.top{align-items:flex-start;}
+  .field-control.half{flex:0 1 50%;max-width:620px;}
+  .field-control input[type=text],.field-control input[type=number]{width:100%;border:1.5px solid var(--line);
+    background:var(--panel-sunk);color:var(--ink);
+    border-radius:9px;padding:10px 13px;font-size:13px;font-family:inherit;
+    transition:border-color .15s, box-shadow .15s, background-color .15s;}
+  .field-control input::placeholder{color:var(--muted2);}
+  .field-control input:hover{border-color:#AAB4CC;}
+  .field-control input:focus,.msel-btn:focus,.msel-search input:focus{outline:none;border-color:var(--accent);
+    background:var(--panel);box-shadow:0 0 0 3px var(--accent-soft);}
+  .field-unit{flex:0 0 auto;font-family:var(--mono);font-size:12px;color:var(--muted2);width:52px;}
+  .yr-inline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .yr-inline input{width:92px !important;font-family:var(--mono);background:var(--panel-sunk);color:var(--ink);
+    border:1.5px solid var(--line);border-radius:9px;padding:10px 11px;font-size:13px;
+    transition:border-color .15s, box-shadow .15s, background-color .15s;}
+  .yr-inline input:hover{border-color:#AAB4CC;}
+  .yr-inline input:focus{outline:none;border-color:var(--accent);background:var(--panel);box-shadow:0 0 0 3px var(--accent-soft);}
+  .yr-inline select{font-family:inherit;background:var(--panel-sunk);color:var(--ink);
+    border:1.5px solid var(--line);border-radius:9px;padding:10px 8px;font-size:13px;cursor:pointer;}
+  .yr-inline select:hover{border-color:#AAB4CC;}
+  .yr-inline select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+  .yr-era{font-family:var(--mono);font-size:11px;color:var(--accent);}
+  .yr-presets{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap;}
+  .yr-presets button{font-size:11.5px;font-weight:600;padding:5px 11px;border-radius:999px;border:1px solid var(--line);
+    background:var(--panel);color:var(--muted);cursor:pointer;transition:.15s;}
+  .yr-presets button:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+  .chk-inline{display:flex;align-items:center;gap:10px;font-size:12.5px;background:var(--panel-sunk);
+    border:1.5px solid var(--line);border-radius:9px;padding:10px 13px;}
+
+  /* multi-select dropdown */
+  .msel{position:relative;}
+  .msel-btn{width:100%;text-align:left;border:1.5px solid var(--line);border-radius:9px;padding:10px 13px;
+    font-size:13px;background:var(--panel-sunk);cursor:pointer;display:flex;align-items:center;justify-content:space-between;
+    color:var(--ink);transition:border-color .15s, box-shadow .15s, background-color .15s;}
+  .msel-btn:hover{border-color:#AAB4CC;}
+  .msel-btn.placeholder{color:var(--faint);}
+  .msel-panel{position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;box-shadow:var(--shadow-lg);z-index:30;max-height:340px;display:flex;
+    flex-direction:column;overflow:hidden;}
+  .msel-search{padding:9px;border-bottom:1px solid var(--line-soft);}
+  .msel-search input{width:100%;border:1px solid var(--line);background:var(--panel);color:var(--ink);
+    border-radius:8px;padding:7px 11px;font-size:12.5px;}
+  .msel-list{overflow-y:auto;padding:6px;}
+  .msel-opt{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:8px;font-size:12.5px;
+    cursor:pointer;color:var(--ink);}
+  .msel-opt:hover{background:var(--accent-soft);}
+  .msel-opt-personnel{display:flex;flex-direction:column;gap:2px;padding:8px 9px;border-radius:8px;
+    font-size:12.5px;cursor:pointer;color:var(--ink);}
+  .msel-opt-personnel:hover{background:var(--accent-soft);}
+  .msel-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;}
+  .msel-tag{font-size:11.5px;font-weight:600;background:var(--accent-soft);color:var(--accent);padding:4px 10px;
+    border-radius:999px;display:flex;align-items:center;gap:5px;border:1px solid rgba(79,70,229,.18);}
+  .msel-tag button{background:none;border:none;cursor:pointer;color:var(--accent);font-size:11px;line-height:1;
+    padding:0;opacity:.7;}
+  .msel-tag button:hover{opacity:1;}
+
+  .actions-row{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:4px 24px 22px;}
+  .btn-ghost{display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:10px;font-size:12.5px;
+    font-weight:600;background:var(--panel);border:1px solid var(--line);color:var(--muted);cursor:pointer;
+    transition:.15s;}
+  .btn-ghost:hover{color:var(--ink);border-color:#CDD3E3;background:var(--panel-raised);}
+  .btn-search{display:flex;align-items:center;gap:8px;padding:11px 26px;border-radius:10px;font-size:13px;
+    font-weight:800;background:var(--grad);color:#fff;border:none;cursor:pointer;
+    box-shadow:0 4px 14px rgba(79,70,229,.28);transition:.15s;}
+  .btn-search:hover{filter:brightness(1.06);box-shadow:0 6px 20px rgba(79,70,229,.36);}
+
+  /* ---- results ---- */
+  .card{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px;
+    box-shadow:var(--shadow-md);}
+  .card::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;border-radius:16px 16px 0 0;
+    background:var(--grad);}
+  .res-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;}
+  .res-hd h2{font-family:var(--display);font-size:17px;font-weight:900;margin:0;}
+  .res-hd .sub{font-size:12.5px;color:var(--muted);margin:5px 0 0;}
+  .empty{text-align:center;padding:40px 0;font-size:13px;color:var(--faint);}
+  .eng-item{border:1px solid var(--line);border-radius:12px;margin-bottom:9px;overflow:hidden;background:var(--panel);
+    transition:border-color .15s, box-shadow .15s;}
+  .eng-item:hover{border-color:#CDD3E3;box-shadow:var(--shadow-sm);}
+  .eng-hd{width:100%;display:flex;align-items:center;justify-content:space-between;padding:14px 18px;
+    background:none;border:none;cursor:pointer;text-align:left;font-family:inherit;}
+  .eng-hd:hover{background:var(--panel-raised);}
+  .eng-hd .left{display:flex;align-items:center;gap:11px;}
+  .eng-hd .name{font-weight:800;font-size:13.5px;color:var(--ink);}
+  .name-link{background:none;border:none;padding:0;cursor:pointer;font-family:inherit;text-decoration:none;}
+  .name-link:hover{color:var(--accent);text-decoration:underline;text-underline-offset:3px;}
+  .eng-hd .code{font-size:11.5px;color:var(--muted2);}
+  .badge-count{font-size:12px;font-weight:700;padding:5px 12px;border-radius:999px;
+    background:var(--accent-soft);color:var(--accent);border:1px solid rgba(79,70,229,.18);}
+  .eng-body{border-top:1px solid var(--line-soft);padding:14px 18px;display:flex;flex-direction:column;gap:10px;}
+  .entry{font-size:12px;border-radius:11px;padding:12px 14px;background:var(--panel-raised);border:1px solid var(--line-soft);}
+  .entry .row1{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;}
+  .row1-left{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+  .row1-right{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-left:auto;}
+  .entry .constno{font-family:var(--mono);font-size:10.5px;color:var(--accent);}
+  .eng-item.verified{background:#EAF7EE;border-color:#BEE3C6;}
+  .eng-item.verified .eng-hd:hover{background:#DFF2E4;}
+  .eng-item.rejected{background:#FBEEEE;border-color:#EFC7C7;}
+  .eng-item.rejected .eng-hd:hover{background:#F7E4E4;}
+  .verified-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;
+    color:var(--green);background:var(--green-soft);padding:3px 9px;border-radius:999px;}
+  .rejected-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;
+    color:var(--red);background:var(--red-soft);padding:3px 9px;border-radius:999px;}
+  .point-badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:800;
+    color:#fff;background:linear-gradient(135deg,#F5A623,#E8590C);padding:6px 12px;border-radius:999px;
+    box-shadow:0 3px 10px rgba(232,89,12,.28);}
+  .score-badge{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;
+    color:#B4650A;background:var(--amber-soft);padding:3px 9px;border-radius:999px;
+    border:1px solid rgba(180,101,10,.25);}
+  .entry.verified{background:#EAF7EE;border-color:#BEE3C6;}
+  .entry.rejected{background:#FBEEEE;border-color:#EFC7C7;}
+  .verify-toggle{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;}
+  .vt-btn{display:flex;align-items:center;gap:3px;font-size:11px;font-weight:700;padding:5px 9px;
+    background:var(--panel);color:var(--muted);border:none;cursor:pointer;transition:.12s;}
+  .vt-btn.vt-ok{border-right:1px solid var(--line);}
+  .vt-btn:hover{background:var(--panel-raised);}
+  .vt-btn.vt-ok.active{background:var(--green);color:#fff;}
+  .vt-btn.vt-no.active{background:var(--red);color:#fff;}
+  .auto-tag{font-size:9.5px;font-weight:700;color:var(--cyan);background:var(--cyan-soft);
+    padding:2px 7px;border-radius:999px;align-self:center;}
+  .role-badge{font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:999px;
+    background:var(--accent-soft);color:var(--accent);}
+  .install-badge{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;
+    background:var(--cyan-soft);color:var(--cyan);}
+  .install-badge.full{background:var(--green-soft);color:var(--green);}
+  .constno-link{font-family:var(--mono);font-size:10.5px;color:var(--accent);background:none;border:none;
+    padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px;}
+  .constno-link:hover{color:var(--accent2);}
+  .corins-link{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;
+    color:var(--cyan);background:var(--cyan-soft);padding:3px 9px;border-radius:999px;
+    text-decoration:none;border:1px solid rgba(8,145,178,.2);}
+  .corins-link:hover{background:#D7EEF3;}
+  .entry .pname{font-weight:800;color:var(--ink);font-size:12.5px;}
+  .kinds-list{margin-top:8px;display:flex;flex-direction:column;gap:6px;}
+  .kind-item{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;padding:8px 12px;
+    background:var(--panel);border:1px solid var(--line-soft);border-radius:9px;}
+  .kind-gaiyo{display:flex;align-items:baseline;gap:8px;flex:1 1 260px;min-width:0;}
+  .gaiyo-label{font-size:10.5px;font-weight:700;color:var(--muted2);flex:0 0 auto;
+    background:var(--panel-raised);padding:2px 8px;border-radius:6px;}
+  .gaiyo-text{color:var(--ink);line-height:1.6;font-size:12px;}
+  .jv-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--cyan-soft);color:var(--cyan);}
+  .entry .meta{color:var(--muted);line-height:1.7;}
+  .jwari-full{display:inline-block;font-size:11px;font-weight:700;
+    background:var(--accent-soft);color:var(--accent);padding:2px 9px;border-radius:999px;
+    border:1px solid rgba(79,70,229,.18);}
+  .kinds{margin-top:7px;display:flex;flex-wrap:wrap;gap:6px;}
+  .kind-tag{padding:3px 9px;border-radius:999px;border:1px solid var(--line);font-size:10.5px;color:var(--muted);
+    background:var(--panel);}
+  .kbn-prefix{font-weight:700;color:var(--accent);margin-right:2px;}
+  .kbn-prefix::after{content:"：";}
+
+  /* ---- tabs ---- */
+  .tabs{display:flex;gap:8px;margin:20px 0 22px;}
+  .tab-btn{font-size:12.5px;letter-spacing:.01em;padding:10px 18px;border-radius:10px;
+    border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer;font-weight:700;
+    transition:.15s;}
+  .tab-btn:hover{color:var(--ink);border-color:#CDD3E3;}
+  .tab-btn.active{background:var(--grad);color:#fff;border-color:transparent;box-shadow:0 4px 14px rgba(79,70,229,.25);}
+
+  /* ---- employee master ---- */
+  .master-add-form{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--panel-raised);
+    border:1px solid var(--line);border-radius:10px;padding:14px;margin-top:14px;}
+  .master-add-form input{border:1px solid var(--line);background:var(--panel-sunk);color:var(--ink);
+    border-radius:8px;padding:8px 10px;font-size:13px;}
+  .m-form-err{font-size:12px;color:var(--red);}
+  .master-group-label{font-family:var(--mono);font-size:11.5px;font-weight:700;letter-spacing:.03em;
+    color:var(--green);margin:18px 0 8px;}
+  .master-group-label:first-of-type{margin-top:14px;}
+  .master-group-label.retired{color:var(--red);}
+  .master-list{border:1px solid var(--line);border-radius:10px;overflow-x:auto;overflow-y:hidden;}
+  .master-row{display:grid;grid-template-columns:90px 150px 1fr 92px 76px 138px;align-items:center;gap:10px;
+    padding:10px 14px;border-bottom:1px solid var(--line-soft);font-size:13px;background:var(--panel);}
+  .master-row:last-child{border-bottom:none;}
+  .master-row.retired{background:var(--panel-raised);opacity:.75;}
+  .master-row-head{background:var(--panel-raised);font-family:var(--mono);font-size:10.5px;color:var(--muted2);
+    letter-spacing:.04em;padding:8px 14px;}
+  .m-code{font-family:var(--mono);color:var(--cyan);font-size:12px;}
+  .m-name{font-weight:700;color:var(--ink);}
+  .m-comp{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+  .m-badge{font-family:var(--mono);font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;
+    background:var(--green-soft);color:var(--green);width:fit-content;}
+  .m-badge.retired{background:var(--red-soft);color:var(--red);}
+  .m-actions{display:flex;gap:6px;justify-content:flex-start;}
+  .m-actions .btn-ghost,.m-actions .btn-outline{padding:6px 10px;font-size:11.5px;}
+  .m-input{width:100%;border:1px solid var(--line);background:var(--panel-sunk);color:var(--ink);
+    border-radius:6px;padding:6px 8px;font-size:12.5px;}
+  .m-lic-toggle{display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:11px;
+    background:var(--panel-sunk);border:1px solid var(--line);color:var(--cyan);border-radius:6px;
+    padding:6px 8px;cursor:pointer;width:fit-content;}
+  .m-lic-toggle:hover{border-color:var(--cyan);}
+  .m-lic-panel{background:var(--panel-sunk);border-bottom:1px solid var(--line-soft);padding:12px 16px 14px 100px;}
+  .m-lic-tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
+  .m-lic-tag{font-size:11.5px;background:var(--cyan-soft);color:var(--cyan);padding:4px 9px;border-radius:999px;
+    display:flex;align-items:center;gap:6px;border:1px solid rgba(11,114,133,.25);}
+  .m-lic-tag button{background:none;border:none;cursor:pointer;color:var(--cyan);font-size:11px;line-height:1;padding:0;}
+  .m-lic-add{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .m-lic-add select{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;
+    padding:7px 10px;font-size:12.5px;min-width:240px;}
+
+  /* ---- construction detail (工事詳細データ) ---- */
+  .detail-card{background:var(--bg);}
+  .kw-input{width:100%;border:1.5px solid var(--line);border-radius:9px;padding:10px 13px;font-size:13px;
+    background:#fff;color:var(--ink);font-family:inherit;transition:border-color .15s, box-shadow .15s;}
+  .kw-input::placeholder{color:var(--muted2);}
+  .kw-input:hover{border-color:#AAB4CC;}
+  .kw-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+  .detail-info-table{border-collapse:collapse;width:100%;font-size:12.5px;}
+  .detail-info-table th{background:#BFE3F5;color:#0B3556;font-weight:700;text-align:left;
+    padding:9px 12px;border:1px solid #9FCEE6;white-space:nowrap;}
+  .detail-info-table td{background:#fff;color:var(--ink);padding:9px 12px;border:1px solid #BFDCEE;
+    word-break:break-word;font-size:14px;font-weight:700;}
+  .detail-info-table td.mono{font-family:var(--mono);}
+  .dt-input,.dt-select{width:100%;border:1.5px solid var(--line);background:#fff;color:var(--ink);
+    border-radius:6px;padding:6px 8px;font-size:12.5px;font-family:inherit;}
+  .dt-input.mono{font-family:var(--mono);}
+  .dt-input:focus,.dt-select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft);}
+  .detail-info-table td.num{font-family:var(--mono);text-align:right;}
+  .kindmark{display:inline-block;width:20px;text-align:center;font-weight:800;color:var(--accent);font-size:14px;}
+  .personnel-list{display:flex;flex-direction:column;gap:26px;margin-top:22px;}
+  .personnel-card{border:1px solid var(--line);border-radius:12px;padding:18px;background:var(--panel);}
+  .personnel-card-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+  .personnel-card-name{font-family:var(--display);font-size:15px;font-weight:800;color:var(--ink);}
+  .detail-subhead{font-family:var(--display);font-size:14px;font-weight:800;margin:22px 0 10px;color:var(--ink);}
+  .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;}
+  .detail-table{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap;}
+  .detail-table th{background:#BFE3F5;color:#0B3556;font-family:var(--mono);font-size:10.5px;
+    font-weight:700;text-align:left;padding:9px 10px;border:1px solid #9FCEE6;letter-spacing:.03em;}
+  .detail-table td{padding:9px 10px;border:1px solid var(--line-soft);color:var(--ink);background:#fff;
+    font-size:13px;font-weight:700;}
+  .detail-table tbody tr:nth-child(even) td{background:#F2F4F8;}
+  .detail-table td.num{font-family:var(--mono);text-align:right;}
+  .detail-table td.empty{text-align:center;color:var(--faint);white-space:normal;background:#fff;}
+  @media(max-width:720px){
+    .master-row{grid-template-columns:70px 1fr 70px;}
+    .master-row .m-comp{display:none;}
+    .m-lic-panel{padding-left:16px;}
+  }
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useCallback, useRef, useEffect } = React;
+const STORAGE_KEY = "engSearchSystemData_v1";
+
+/* ---------------- icons ---------------- */
+const Ic = {
+  Upload:(p)=><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={p.color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14.9A5 5 0 0 1 6 5.3a6 6 0 0 1 11.3 2A4.5 4.5 0 0 1 20 16"/><path d="M12 12v9"/><path d="m9 15 3-3 3 3"/></svg>,
+  Check:(p)=><svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" fill="none" stroke={p.color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>,
+  Circle:(p)=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={p.color||"currentColor"} strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg>,
+  Search:(p)=><svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>,
+  Down:(p)=><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>,
+  Right:(p)=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>,
+  Reset:(p)=><svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>,
+  Warn:(p)=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg>,
+  Refresh:(p)=><svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/></svg>,
+  X:(p)=><svg width={p.size||18} height={p.size||18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>,
+  Filter:(p)=><svg width={p.size||16} height={p.size||16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>,
+  Download:(p)=><svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>,
+  Plus:(p)=><svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>,
+  Edit:(p)=><svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>,
+  Link:(p)=><svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.49-1.49"/></svg>,
+  Star:(p)=><svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2l2.9 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l7.1-1.01L12 2z"/></svg>,
+};
+
+/* ---------------- era / date helpers ---------------- */
+function eraLabel(y){
+  if(!y) return "";
+  if(y>=2019) return "令和"+(y-2018===1?"元":y-2018);
+  if(y>=1989) return "平成"+(y-1988===1?"元":y-1988);
+  if(y>=1926) return "昭和"+(y-1925===1?"元":y-1925);
+  return String(y);
+}
+function fmtDateEra(yyyymmdd){
+  const s=String(yyyymmdd||"").trim();
+  if(!/^\d{8}$/.test(s)) return "-";
+  const y=parseInt(s.slice(0,4),10), m=parseInt(s.slice(4,6),10), d=parseInt(s.slice(6,8),10);
+  const western=s.slice(0,4)+"/"+s.slice(4,6)+"/"+s.slice(6,8);
+  return western+"（"+eraLabel(y)+"年"+m+"月"+d+"日）";
+}
+function fiscalYearOf(yyyymmdd){
+  if(yyyymmdd===null||yyyymmdd===undefined||yyyymmdd==="") return null;
+  const s=String(yyyymmdd).trim();
+  if(!/^\d{8}$/.test(s)) return null;
+  const y=parseInt(s.slice(0,4),10), m=parseInt(s.slice(4,6),10);
+  if(!y||!m) return null;
+  return m>=4 ? y : y-1;
+}
+function fmtDate(yyyymmdd){
+  const s=String(yyyymmdd||"").trim();
+  if(!/^\d{8}$/.test(s)) return "-";
+  return s.slice(0,4)+"/"+s.slice(4,6)+"/"+s.slice(6,8);
+}
+function validYMD(s){ return /^\d{8}$/.test(String(s||"")); }
+function ymdToDate(s){
+  const str=String(s);
+  return new Date(parseInt(str.slice(0,4),10), parseInt(str.slice(4,6),10)-1, parseInt(str.slice(6,8),10));
+}
+// 期間[aFrom,aTo]と[bFrom,bTo]が重なる日数（両端を含む日数）を返す。重ならなければ0。
+function overlapDays(aFrom, aTo, bFrom, bTo){
+  if(![aFrom,aTo,bFrom,bTo].every(validYMD)) return 0;
+  const start = aFrom > bFrom ? aFrom : bFrom;
+  const end = aTo < bTo ? aTo : bTo;
+  if(start > end) return 0;
+  const ms = ymdToDate(end) - ymdToDate(start);
+  return Math.round(ms/86400000) + 1;
+}
+function totalDays(from, to){
+  if(!validYMD(from) || !validYMD(to) || from>to) return 0;
+  return Math.round((ymdToDate(to)-ymdToDate(from))/86400000) + 1;
+}
+
+/* ---------------- dataset definitions ---------------- */
+const DATASET_DEFS = {
+  constrslt:{label:"工事実績データ", headerMustInclude:["CONSTNO","POINT","KOKF","KOKT"], keyCol:"CONSTNO",
+    keyValid:(v)=>/^[0-9A-Za-z]+-\d+$/.test(String(v||"").trim())},
+  eng:{label:"技術者情報", headerMustInclude:["CONSTNO","POSICD","ENGCD"], keyCol:"ENGCD",
+    keyValid:(v)=>/^\d+$/.test(String(v||"").trim())},
+  kind:{label:"種別情報", headerMustInclude:["CONSTNO","KBN","KIND"], keyCol:"CONSTNO",
+    keyValid:(v)=>/^[0-9A-Za-z]+-\d+$/.test(String(v||"").trim())},
+  employee:{label:"社員データ", headerMustInclude:["ID_NAME"], keyColCandidates:["ENGCD","ID"],
+    keyValid:(v)=>/^\d+$/.test(String(v||"").trim()), aliasKeyTo:"ENGCD"},
+  literals:{label:"コードマスタ", headerMustInclude:["CDTYP","LTLCD","LTLNM"], keyCol:"CDTYP",
+    keyValid:(v)=>/^[A-Z][A-Z0-9]{1,7}$/.test(String(v||"").trim())},
+  licenses:{label:"資格マスタ", headerMustInclude:["LICCD","LICNM","LICEFG"], keyCol:"LICCD",
+    keyValid:(v)=>/^\d+$/.test(String(v||"").trim())},
+  englicense:{label:"技術者保持資格情報", headerMustInclude:["ENGCD","LICCD"], keyCol:"ENGCD",
+    keyValid:(v)=>/^\d+$/.test(String(v||"").trim())},
+  enginfo:{label:"技術者情報(資格詳細)", headerMustInclude:["ENGCD","FURI","BDAY"], keyCol:"ENGCD",
+    keyValid:(v)=>/^\d+$/.test(String(v||"").trim())},
+};
+// key used when merging a re-imported file into existing data (upsert unit)
+const MERGE_KEY = {
+  constrslt:(r)=>r.CONSTNO,
+  eng:(r)=>r.CONSTNO,
+  kind:(r)=>r.CONSTNO,
+  employee:(r)=>r.ENGCD,
+  literals:(r)=>r.CDTYP+"|"+r.LTLCD,
+  licenses:(r)=>normLicCode(r.LICCD),
+  englicense:(r)=>r.ENGCD+"|"+normLicCode(r.LICCD),
+  enginfo:(r)=>r.ENGCD,
+};
+
+function detectType(rows){
+  for(let i=0;i<Math.min(rows.length,4);i++){
+    const row=rows[i].map((c)=>String(c||"").trim());
+    for(const [type,def] of Object.entries(DATASET_DEFS)){
+      if(def.headerMustInclude.every((h)=>row.includes(h))){
+        return {type, headerRowIndex:i, headerRow:row};
+      }
+    }
+  }
+  return null;
+}
+
+function normLicCode(v){
+  const s=String(v||"").trim();
+  return /^\d+$/.test(s) ? s.padStart(4,"0") : s;
+}
+function parseCsvFile(file){
+  return new Promise((resolve)=>{
+    Papa.parse(file,{
+      encoding:"UTF-8",
+      skipEmptyLines:true,
+      complete:(res)=>{
+        const rows=res.data;
+        const detected=detectType(rows);
+        if(!detected){ resolve({ok:false, filename:file.name, error:"列構成を認識できませんでした"}); return; }
+        const {type, headerRowIndex, headerRow} = detected;
+        const def=DATASET_DEFS[type];
+        const colIndex={};
+        headerRow.forEach((h,idx)=>{ if(h) colIndex[h]=idx; });
+        const keyCol = def.keyCol || (def.keyColCandidates && def.keyColCandidates.find((c)=>colIndex[c]!==undefined));
+        const keyIdx=colIndex[keyCol];
+        const records=[];
+        for(let r=headerRowIndex+1; r<rows.length; r++){
+          const row=rows[r];
+          if(!row) continue;
+          const keyVal=row[keyIdx];
+          if(!def.keyValid(keyVal)) continue;
+          const rec={};
+          Object.entries(colIndex).forEach(([col,idx])=>{ rec[col]= row[idx]!==undefined ? String(row[idx]).trim() : ""; });
+          if(def.aliasKeyTo && keyCol && keyCol!==def.aliasKeyTo){ rec[def.aliasKeyTo]=rec[keyCol]; }
+          // 資格コード(LICCD)は資料によって桁数の表記ゆれ（先頭ゼロの有無）があるため、4桁ゼロ埋めに統一する
+          if((type==="licenses" || type==="englicense") && rec.LICCD!==undefined){
+            rec.LICCD = normLicCode(rec.LICCD);
+          }
+          records.push(rec);
+        }
+        resolve({ok:true, filename:file.name, type, records});
+      },
+      error:(err)=>resolve({ok:false, filename:file.name, error:err.message}),
+    });
+  });
+}
+
+function mergeRecords(existing, incoming, keyFn){
+  const incomingKeys = new Set(incoming.map(keyFn));
+  const kept = (existing||[]).filter((r)=>!incomingKeys.has(keyFn(r)));
+  return [...kept, ...incoming];
+}
+// ENGCD+LICCDが同じ行が複数あるとき、より情報量の多い(免許No等が埋まっている)方を残して統合する
+function dedupeEngLicense(records){
+  const map=new Map();
+  records.forEach((r)=>{
+    const key=r.ENGCD+"|"+r.LICCD;
+    const prev=map.get(key);
+    if(!prev){ map.set(key,r); return; }
+    const score=(x)=>(x.LICNO?1:0)+(x.SDAY?1:0)+(x.KBN?1:0);
+    if(score(r) >= score(prev)) map.set(key,r);
+  });
+  return [...map.values()];
+}
+
+/* ---------------- storage helpers (Firebase Firestore) ----------------
+   1データ種別＝1コレクション、1行＝1ドキュメントとしてFirestoreに保存する。
+   保存のたびに、前回の状態と比べて変化があった種別だけ差分（追加・更新・削除）を書き込む。 */
+const FS_TYPES=["constrslt","eng","kind","employee","literals","licenses","englicense","enginfo","verified"];
+
+function waitForFirebase(){
+  return new Promise((resolve)=>{
+    if(window.fb){ resolve(); return; }
+    window.addEventListener("firebase-ready", ()=>resolve(), {once:true});
+    setTimeout(()=>resolve(), 5000); // 5秒待っても来なければ諦めて進む（window.fb未定義のままになる）
+  });
+}
+
+function docIdFor(type, r){
+  switch(type){
+    case "constrslt": return r.CONSTNO;
+    case "employee": return r.ENGCD;
+    case "literals": return r.CDTYP+"__"+r.LTLCD;
+    case "licenses": return r.LICCD;
+    case "englicense": return r.ENGCD+"__"+r.LICCD;
+    case "enginfo": return r.ENGCD;
+    case "verified": return r.ENGCD+"__"+r.CONSTNO+"__"+r.POSICD;
+    case "kind":
+    case "eng":
+      return (r.CONSTNO||"")+"__"+(r.__seq!==undefined ? r.__seq : "0");
+    default: return null;
+  }
+}
+// kind/engは同一CONSTNOに複数行あるので、出現順に連番(__seq)を振ってIDを一意にする
+function withSeq(records){
+  const cnt={};
+  return records.map((r)=>{
+    const c=r.CONSTNO||"";
+    const seq=cnt[c]||0;
+    cnt[c]=seq+1;
+    return {...r, __seq:seq};
+  });
+}
+
+function storageAvailable(){
+  return true;
+}
+
+async function loadFromStorage(){
+  await waitForFirebase();
+  if(!window.fb) return {};
+  const {db, collection, getDocs}=window.fb;
+  const out={};
+  for(const type of FS_TYPES){
+    try{
+      const snap=await getDocs(collection(db, type));
+      const records=[];
+      snap.forEach((d)=>{ const data={...d.data()}; delete data.__seq; records.push(data); });
+      if(records.length>0) out[type]={records, filename:"firestore"};
+    }catch(e){
+      // 未作成のコレクション・権限不足は無視して次へ
+    }
+  }
+  return out;
+}
+
+async function saveToStorage(next, prev){
+  await waitForFirebase();
+  if(!window.fb) return false;
+  const {db, doc, writeBatch}=window.fb;
+  try{
+    for(const type of FS_TYPES){
+      const nextRecordsRaw=next[type]?.records || [];
+      const prevRecordsRaw=(prev && prev[type]?.records) || [];
+      if(nextRecordsRaw===prevRecordsRaw) continue; // 参照が同じ＝変更なし
+
+      const nextRecords=(type==="kind"||type==="eng") ? withSeq(nextRecordsRaw) : nextRecordsRaw;
+      const prevRecords=(type==="kind"||type==="eng") ? withSeq(prevRecordsRaw) : prevRecordsRaw;
+
+      const nextIds=new Set(nextRecords.map((r)=>docIdFor(type,r)).filter(Boolean));
+      const prevIds=prevRecords.map((r)=>docIdFor(type,r)).filter(Boolean);
+      const toDelete=prevIds.filter((id)=>!nextIds.has(id));
+
+      const ops=[];
+      nextRecords.forEach((r)=>{
+        const id=docIdFor(type,r);
+        if(!id) return;
+        const {__seq, ...data}=r;
+        ops.push({op:"set", id, data});
+      });
+      toDelete.forEach((id)=>ops.push({op:"delete", id}));
+
+      for(let i=0;i<ops.length;i+=450){
+        const chunk=ops.slice(i,i+450);
+        const batch=writeBatch(db);
+        chunk.forEach((o)=>{
+          const ref=doc(db, type, o.id);
+          if(o.op==="set") batch.set(ref, o.data);
+          else batch.delete(ref);
+        });
+        await batch.commit();
+      }
+    }
+    return true;
+  }catch(e){
+    console.error("Firestore save error:", e);
+    return false;
+  }
+}
+
+/* ---------------- small components ---------------- */
+function Chip({active,onClick,children}){
+  return <button onClick={onClick} className={"chip"+(active?" active":"")}>{children}</button>;
+}
+
+function MultiSelect({options, selected, onChange, placeholder, searchable}){
+  const [open,setOpen]=useState(false);
+  const [q,setQ]=useState("");
+  const ref=useRef(null);
+  useEffect(()=>{
+    function onDocClick(e){ if(ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", onDocClick);
+    return ()=>document.removeEventListener("mousedown", onDocClick);
+  },[]);
+  const filtered = useMemo(()=>{
+    if(!searchable || !q.trim()) return options;
+    const t=q.trim();
+    return options.filter((o)=>o.name.includes(t)||o.code.includes(t));
+  },[options,q,searchable]);
+  const toggleVal=(code)=>{
+    onChange(selected.includes(code) ? selected.filter((v)=>v!==code) : [...selected, code]);
+  };
+  const selectedNames = selected.map((c)=>{
+    const o=options.find((o)=>o.code===c);
+    return o ? o.name : c;
+  });
+  return (
+    <div className="msel" ref={ref}>
+      <button type="button" className={"msel-btn"+(selected.length===0?" placeholder":"")} onClick={()=>setOpen((v)=>!v)}>
+        <span>{selected.length===0 ? (placeholder||"選択してください（複数可）") : selected.length+"件選択中"}</span>
+        <Ic.Down/>
+      </button>
+      {open &&
+        <div className="msel-panel">
+          {searchable &&
+            <div className="msel-search">
+              <input type="text" value={q} onChange={(e)=>setQ(e.target.value)} placeholder="名称で絞り込み" autoFocus/>
+            </div>
+          }
+          <div className="msel-list">
+            {filtered.map((o)=>(
+              <label key={o.code} className="msel-opt">
+                <input type="checkbox" checked={selected.includes(o.code)} onChange={()=>toggleVal(o.code)}/>
+                {o.name}
+              </label>
+            ))}
+            {filtered.length===0 && <div style={{fontSize:12,color:"var(--faint)",padding:"6px 8px"}}>該当なし</div>}
+          </div>
+        </div>
+      }
+      {selected.length>0 &&
+        <div className="msel-tags">
+          {selected.map((c,i)=>(
+            <span key={c} className="msel-tag">
+              {selectedNames[i]}
+              <button onClick={()=>toggleVal(c)}><Ic.X size={11}/></button>
+            </span>
+          ))}
+        </div>
+      }
+    </div>
+  );
+}
+
+function FieldRow({label, children, wrapRow}){
+  return (
+    <div className={"field-row"+(wrapRow?" wrap-row":"")}>
+      <div className="field-label">{label}</div>
+      {children}
+    </div>
+  );
+}
+
+/* ---------------- employee master (社員データ管理) ---------------- */
+/* ---------------- construction detail (工事詳細データ) ---------------- */
+/* 支店コード（EIGYCD）。既存のコードマスタには対応表が無いため、ヒアリング内容を直接定義 */
+const EIGYCD_MAP={"0":"中四国支店","1":"中部支店","2":"東京支店","3":"東北支店","5":"九州支店","6":"北陸支店","8":"関西支店","9":"北海道支店"};
+function branchName(code){
+  if(code===undefined || code===null || code==="") return "";
+  const c=String(parseFloat(code));
+  return EIGYCD_MAP[c] || ("(code:"+code+")");
+}
+function lit(literalMap, type, code){
+  if(code===undefined || code===null || code==="") return "";
+  const c=String(parseFloat(code));
+  return (literalMap[type] && literalMap[type][c]) || ("(code:"+code+")");
+}
+function fmtMoney(v){
+  if(v===undefined || v===null || v==="") return "-";
+  const n=parseFloat(v);
+  return isNaN(n) ? "-" : n.toLocaleString("ja-JP");
+}
+// 工番（例：54G-9010）を「頭の数字→ハイフン後の数字」の順で若い順に並べる比較関数
+function compareConstno(a,b){
+  const pa=String(a||"").match(/^(\d+)[A-Za-z]+-(\d+)$/);
+  const pb=String(b||"").match(/^(\d+)[A-Za-z]+-(\d+)$/);
+  if(pa && pb){
+    const d1=parseInt(pa[1],10)-parseInt(pb[1],10);
+    if(d1!==0) return d1;
+    return parseInt(pa[2],10)-parseInt(pb[2],10);
+  }
+  return String(a||"").localeCompare(String(b||""));
+}
+
+function KV({label, value, wide}){
+  return (
+    <div className={"kv-row"+(wide?" wide":"")}>
+      <span className="kv-label">{label}</span>
+      <span className="kv-value">{value || "-"}</span>
+    </div>
+  );
+}
+
+function DTInput({value, onChange, placeholder, mono}){
+  return <input className={"dt-input"+(mono?" mono":"")} value={value||""} placeholder={placeholder||""}
+    onChange={(e)=>onChange(e.target.value)}/>;
+}
+function DTSelect({value, onChange, options}){
+  return (
+    <select className="dt-select" value={value||""} onChange={(e)=>onChange(e.target.value)}>
+      <option value="">-</option>
+      {options.map((o)=><option key={o.code} value={o.code}>{o.name}</option>)}
+    </select>
+  );
+}
+function optionsFromLiteral(literalMap, type){
+  return Object.entries(literalMap[type]||{})
+    .map(([code,name])=>({code,name}))
+    .sort((a,b)=>parseFloat(a.code)-parseFloat(b.code));
+}
+
+function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalMap, employeeMap, initialConstno, jumpNonce, canEdit, onSaveProject, onSaveKinds, onSaveEng, onCreateProject}){
+  const [query,setQuery]=useState("");
+  const [selected,setSelected]=useState(null);
+  const [editingHeader,setEditingHeader]=useState(false);
+  const [headerDraft,setHeaderDraft]=useState({});
+  const [editingRows,setEditingRows]=useState(false);
+  const [kindsDraft,setKindsDraft]=useState([]);
+  const [engDraft,setEngDraft]=useState([]);
+  const [showNew,setShowNew]=useState(false);
+  const [newDraft,setNewDraft]=useState({});
+  const [newError,setNewError]=useState("");
+
+  const now=new Date();
+  const currentFY = now.getMonth()+1>=4 ? now.getFullYear() : now.getFullYear()-1;
+  const [fFyFrom,setFFyFrom]=useState(currentFY-9);
+  const [fFyFromMonth,setFFyFromMonth]=useState("04");
+  const [fFyTo,setFFyTo]=useState(currentFY);
+  const [fFyToMonth,setFFyToMonth]=useState("04");
+  const [fSelectedKind,setFSelectedKind]=useState([]);
+  const [fKeikMin,setFKeikMin]=useState("");
+  const [fHeighMin,setFHeighMin]=useState("");
+  const [fSuisMin,setFSuisMin]=useState("");
+  const [fSyusMin,setFSyusMin]=useState("");
+  const [fHoryuMin,setFHoryuMin]=useState("");
+  const [filterSearched,setFilterSearched]=useState(false);
+
+  useEffect(()=>{
+    if(initialConstno){
+      setSelected(initialConstno);
+      setQuery(initialConstno);
+      setEditingHeader(false);
+      setEditingRows(false);
+    }
+  },[jumpNonce]);
+
+  const suggestions=useMemo(()=>{
+    const q=query.trim();
+    if(!q) return [];
+    return constrsltRecords
+      .filter((r)=> r.CONSTNO.includes(q) || ((r.NAM1||"")+(r.NAM2||"")).includes(q))
+      .slice(0,20);
+  },[constrsltRecords, query]);
+
+  const filterKindOptions=useMemo(()=>{
+    const set=new Set();
+    Object.values(kindByConst).forEach((rows)=>{ (rows||[]).forEach((k)=>{ if(k.KIND) set.add(String(parseFloat(k.KIND))); }); });
+    return [...set]
+      .filter((code)=> !!(literalMap.SHRU && literalMap.SHRU[code]))
+      .map((code)=>({code, name: literalMap.SHRU[code]}))
+      .sort((a,b)=>parseFloat(a.code)-parseFloat(b.code));
+  },[kindByConst, literalMap]);
+
+  const filterResults=useMemo(()=>{
+    if(!filterSearched) return [];
+    const fromYM=fFyFrom*100+parseInt(fFyFromMonth,10);
+    const toYM=fFyTo*100+parseInt(fFyToMonth,10);
+    const keikMinN=fKeikMin===""?null:parseFloat(fKeikMin);
+    const heighMinN=fHeighMin===""?null:parseFloat(fHeighMin);
+    const suisMinN=fSuisMin===""?null:parseFloat(fSuisMin);
+    const syusMinN=fSyusMin===""?null:parseFloat(fSyusMin);
+    const horyuMinN=fHoryuMin===""?null:parseFloat(fHoryuMin);
+    const hasKindFilter = fSelectedKind.length || keikMinN!==null || heighMinN!==null || suisMinN!==null || syusMinN!==null || horyuMinN!==null;
+
+    return constrsltRecords.filter((r)=>{
+      const ym = r.KOKT && /^\d{8}$/.test(r.KOKT) ? parseInt(r.KOKT.slice(0,6),10) : null;
+      if(ym===null || ym<fromYM || ym>toYM) return false;
+      if(hasKindFilter){
+        const kinds=kindByConst[r.CONSTNO]||[];
+        const ok=kinds.some((k)=>{
+          if(fSelectedKind.length && !fSelectedKind.includes(String(parseFloat(k.KIND||"")))) return false;
+          const num=(v)=> v===""||v===undefined ? null : parseFloat(v);
+          const keik=num(k.KEIK), heigh=num(k.HEIGH), suis=num(k.SUIS), syus=num(k.SYUS), horyu=num(k.HORYU);
+          if(keikMinN!==null && (keik===null||keik<keikMinN)) return false;
+          if(heighMinN!==null && (heigh===null||heigh<heighMinN)) return false;
+          if(suisMinN!==null && (suis===null||suis<suisMinN)) return false;
+          if(syusMinN!==null && (syus===null||syus<syusMinN)) return false;
+          if(horyuMinN!==null && (horyu===null||horyu<horyuMinN)) return false;
+          return true;
+        });
+        if(!ok) return false;
+      }
+      const kw=query.trim();
+      if(kw && !(r.CONSTNO.includes(kw) || ((r.NAM1||"")+(r.NAM2||"")).includes(kw))) return false;
+      return true;
+    }).sort((a,b)=>compareConstno(a.CONSTNO,b.CONSTNO)).slice(0,300);
+  },[filterSearched, constrsltRecords, kindByConst, fFyFrom, fFyFromMonth, fFyTo, fFyToMonth, fSelectedKind, fKeikMin, fHeighMin, fSuisMin, fSyusMin, fHoryuMin, query]);
+
+  const resetFilter=()=>{
+    setFFyFrom(currentFY-9); setFFyFromMonth("04"); setFFyTo(currentFY); setFFyToMonth("04");
+    setFSelectedKind([]); setFKeikMin(""); setFHeighMin(""); setFSuisMin(""); setFSyusMin(""); setFHoryuMin(""); setQuery("");
+    setFilterSearched(false);
+  };
+
+  const pickFromFilter=(cn)=>{ setSelected(cn); setQuery(cn); };
+
+  const proj=useMemo(()=> selected ? constrsltRecords.find((r)=>r.CONSTNO===selected) : null, [constrsltRecords, selected]);
+  const kinds=useMemo(()=> (selected && kindByConst[selected]) || [], [selected, kindByConst]);
+  const engRows=useMemo(()=> selected ? engRecords.filter((r)=>r.CONSTNO===selected) : [], [selected, engRecords]);
+
+  const bunyaOpts=useMemo(()=>optionsFromLiteral(literalMap,"BNYA"),[literalMap]);
+  const kkgsOpts=useMemo(()=>optionsFromLiteral(literalMap,"KKGS"),[literalMap]);
+  const nskbOpts=useMemo(()=>optionsFromLiteral(literalMap,"NSKB"),[literalMap]);
+  const kyktOpts=useMemo(()=>optionsFromLiteral(literalMap,"KYKT"),[literalMap]);
+  const jcktOpts=useMemo(()=>optionsFromLiteral(literalMap,"JCKT"),[literalMap]);
+  const tsbtOpts=useMemo(()=>optionsFromLiteral(literalMap,"TSBT"),[literalMap]);
+  const kosyOpts=useMemo(()=>optionsFromLiteral(literalMap,"KOSY"),[literalMap]);
+  const kataOpts=useMemo(()=>optionsFromLiteral(literalMap,"KATA"),[literalMap]);
+  const sesuOpts=useMemo(()=>optionsFromLiteral(literalMap,"SESU"),[literalMap]);
+  const shruOpts=useMemo(()=>optionsFromLiteral(literalMap,"SHRU"),[literalMap]);
+  const khkiOpts=useMemo(()=>optionsFromLiteral(literalMap,"KHKI"),[literalMap]);
+  const trgtOpts=useMemo(()=>optionsFromLiteral(literalMap,"TRGT"),[literalMap]);
+  const eigyoOpts=useMemo(()=>Object.entries(EIGYCD_MAP).map(([code,name])=>({code,name})),[]);
+
+  const startEditHeader=()=>{ setHeaderDraft({...proj}); setEditingHeader(true); };
+  const cancelEditHeader=()=>setEditingHeader(false);
+  const saveHeader=()=>{ onSaveProject(selected, headerDraft); setEditingHeader(false); };
+  const hf=(field)=>headerDraft[field]||"";
+  const setHf=(field)=>(v)=>setHeaderDraft({...headerDraft, [field]:v});
+
+  const startEditRows=()=>{
+    setKindsDraft(kinds.map((k)=>({...k})));
+    setEngDraft(engRows.map((e)=>({...e})));
+    setEditingRows(true);
+  };
+  const cancelEditRows=()=>setEditingRows(false);
+  const saveRows=()=>{
+    onSaveKinds(selected, kindsDraft.map((k,i)=>({...k, CONSTNO:selected, SEQNO:String(i+1)})));
+    onSaveEng(selected, engDraft.map((e,i)=>({...e, CONSTNO:selected, SEQNO:String(i+1)})));
+    setEditingRows(false);
+  };
+  const addKindRow=()=>setKindsDraft([...kindsDraft, {CONSTNO:selected, SEQNO:"", KBN:"", KIND:"", KGAI:"", KIKA:"", ZAIS:"", KEIK:"", HEIGH:"", INZU:"", SUIS:"", SYUS:"", HORYU:""}]);
+  const removeKindRow=(i)=>setKindsDraft(kindsDraft.filter((_,idx)=>idx!==i));
+  const updKind=(i,field)=>(v)=>setKindsDraft(kindsDraft.map((k,idx)=> idx===i ? {...k,[field]:v} : k));
+  const addEngRow=()=>setEngDraft([...engDraft, {CONSTNO:selected, SEQNO:"", POSICD:"", ENGCD:"", KOKF01:"",KOKT01:"",KOKF02:"",KOKT02:"",KOKF03:"",KOKT03:"", JWARI:""}]);
+  const removeEngRow=(i)=>setEngDraft(engDraft.filter((_,idx)=>idx!==i));
+  const updEng=(i,field)=>(v)=>setEngDraft(engDraft.map((e,idx)=> idx===i ? {...e,[field]:v} : e));
+
+  const openNewForm=()=>{ setNewDraft({}); setNewError(""); setShowNew(true); };
+  const nf=(field)=>newDraft[field]||"";
+  const setNf=(field)=>(v)=>setNewDraft({...newDraft, [field]:v});
+  const createNewProject=()=>{
+    const cn=(newDraft.CONSTNO||"").trim();
+    if(!cn){ setNewError("工番を入力してください"); return; }
+    if(constrsltRecords.some((r)=>r.CONSTNO===cn)){ setNewError("その工番は既に存在します"); return; }
+    onCreateProject({CONSTNO:cn, ...newDraft});
+    setShowNew(false);
+    setSelected(cn);
+    setQuery(cn);
+  };
+
+  return (
+    <div className="card detail-card">
+      <div className="res-hd">
+        <div>
+          <h2>工事詳細データ</h2>
+          <p className="sub">条件を指定して検索してください</p>
+        </div>
+        {canEdit &&
+          <button className="btn-outline" onClick={openNewForm}><Ic.Plus/> 新規工事を登録</button>
+        }
+      </div>
+
+      {showNew &&
+        <div className="master-add-form" style={{flexDirection:"column", alignItems:"stretch", marginBottom:18}}>
+          <p style={{fontSize:12,color:"var(--muted)",margin:"0 0 10px"}}>工番だけ先に登録し、あとから詳細・種別・技術者を編集で追加できます。</p>
+          <div style={{display:"flex", gap:10, flexWrap:"wrap", alignItems:"center"}}>
+            <DTInput value={nf("CONSTNO")} onChange={setNf("CONSTNO")} placeholder="工番（例：99G-9999）" mono/>
+            <DTInput value={nf("NAM1")} onChange={setNf("NAM1")} placeholder="工事件名"/>
+            <DTInput value={nf("KYA1")} onChange={setNf("KYA1")} placeholder="発注者"/>
+            <button className="btn-primary" onClick={createNewProject}>登録する</button>
+            <button className="btn-ghost" onClick={()=>setShowNew(false)}>キャンセル</button>
+          </div>
+          {newError && <div className="m-form-err" style={{marginTop:8}}>{newError}</div>}
+        </div>
+      }
+
+      <div className="search-panel" style={{marginBottom:0}}>
+        <div className="search-header"><Ic.Filter/> 工事の条件検索</div>
+        <div className="search-body">
+          <div className="field-row pair-row">
+            <div className="pair-group-grow top">
+              <div className="field-label">年度</div>
+              <div className="field-control">
+                <div className="yr-inline">
+                  <input type="number" value={fFyFrom} onChange={(e)=>setFFyFrom(parseInt(e.target.value||0,10))}/>
+                  <span>年</span>
+                  <select value={fFyFromMonth} onChange={(e)=>setFFyFromMonth(e.target.value)}>
+                    {Array.from({length:12},(_,i)=>String(i+1).padStart(2,"0")).map((m)=>(
+                      <option key={m} value={m}>{parseInt(m,10)}月</option>
+                    ))}
+                  </select>
+                  <span className="yr-era">{eraLabel(fFyFrom)}年度</span>
+                  <span>〜</span>
+                  <input type="number" value={fFyTo} onChange={(e)=>setFFyTo(parseInt(e.target.value||0,10))}/>
+                  <span>年</span>
+                  <select value={fFyToMonth} onChange={(e)=>setFFyToMonth(e.target.value)}>
+                    {Array.from({length:12},(_,i)=>String(i+1).padStart(2,"0")).map((m)=>(
+                      <option key={m} value={m}>{parseInt(m,10)}月</option>
+                    ))}
+                  </select>
+                  <span className="yr-era">{eraLabel(fFyTo)}年度</span>
+                </div>
+                <div className="yr-presets">
+                  {[5,10,15].map((n)=>(
+                    <button key={n} onClick={()=>{ setFFyFrom(currentFY-(n-1)); setFFyFromMonth("04"); setFFyTo(currentFY); setFFyToMonth("04"); }}>直近{n}年度</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <FieldRow label="種別">
+            <div className="field-control">
+              <MultiSelect options={filterKindOptions} selected={fSelectedKind} onChange={setFSelectedKind} searchable placeholder="選択してください（複数可）"/>
+            </div>
+          </FieldRow>
+
+          <div className="field-row pair-row">
+            <div className="pair-group">
+              <div className="field-label">径間以上</div>
+              <div className="field-control narrow small"><input type="number" value={fKeikMin} onChange={(e)=>setFKeikMin(e.target.value)} placeholder="0"/></div>
+              <div className="field-unit">m</div>
+            </div>
+            <div className="pair-group">
+              <div className="field-label">高さ以上</div>
+              <div className="field-control narrow small"><input type="number" value={fHeighMin} onChange={(e)=>setFHeighMin(e.target.value)} placeholder="0"/></div>
+              <div className="field-unit">m</div>
+            </div>
+          </div>
+
+          <div className="field-row pair-row">
+            <div className="pair-group">
+              <div className="field-label">水深以上</div>
+              <div className="field-control narrow small"><input type="number" value={fSuisMin} onChange={(e)=>setFSuisMin(e.target.value)} placeholder="0"/></div>
+              <div className="field-unit">m</div>
+            </div>
+            <div className="pair-group">
+              <div className="field-label">取水量以上</div>
+              <div className="field-control narrow small"><input type="number" value={fSyusMin} onChange={(e)=>setFSyusMin(e.target.value)} placeholder="0"/></div>
+              <div className="field-unit">m³/s</div>
+            </div>
+            <div className="pair-group">
+              <div className="field-label">放流量以上</div>
+              <div className="field-control narrow small"><input type="number" value={fHoryuMin} onChange={(e)=>setFHoryuMin(e.target.value)} placeholder="0"/></div>
+              <div className="field-unit">m³/s</div>
+            </div>
+          </div>
+
+          <FieldRow label="工事件名">
+            <div className="field-control">
+              <input type="text" value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="キーワードまたは工番（任意）例）ダム、54G-3009"/>
+            </div>
+          </FieldRow>
+        </div>
+        <div className="actions-row">
+          <button className="btn-ghost" onClick={resetFilter}><Ic.Reset/> クリア</button>
+          <button className="btn-search" onClick={()=>setFilterSearched(true)}><Ic.Search/> 検索する</button>
+        </div>
+      </div>
+
+      {filterSearched &&
+        <div style={{marginTop:16}}>
+          <p className="sub" style={{marginBottom:10}}>{filterResults.length}件が該当しました{filterResults.length>=300 && "（上位300件を表示）"}</p>
+          <div className="master-list">
+            {filterResults.map((r)=>(
+              <div key={r.CONSTNO} className="master-row" style={{gridTemplateColumns:"110px 1fr 140px 140px", cursor:"pointer"}} onClick={()=>pickFromFilter(r.CONSTNO)}>
+                <span className="m-code">{r.CONSTNO}</span>
+                <span className="m-name">{r.NAM1}{r.NAM2}</span>
+                <span className="m-comp">{r.KYA1||"-"}</span>
+                <span className="m-comp">{fmtDate(r.KOKF)}〜{fmtDate(r.KOKT)}</span>
+              </div>
+            ))}
+            {filterResults.length===0 && <div className="empty">条件に合致する工事が見つかりませんでした</div>}
+          </div>
+        </div>
+      }
+
+      {proj &&
+        <div style={{marginTop:20}}>
+          <div className="res-hd" style={{marginBottom:10}}>
+            <div></div>
+            {canEdit && (
+              editingHeader ? (
+                <span style={{display:"flex",gap:8}}>
+                  <button className="btn-primary" onClick={saveHeader}>保存する</button>
+                  <button className="btn-ghost" onClick={cancelEditHeader}>キャンセル</button>
+                </span>
+              ) : (
+                <button className="btn-outline" onClick={startEditHeader}><Ic.Edit/> この工事情報を編集</button>
+              )
+            )}
+          </div>
+          <div className="table-wrap">
+            <table className="detail-info-table">
+              <tbody>
+                <tr>
+                  <th>工番</th><td className="mono">{proj.CONSTNO}</td>
+                  <th>工事点数</th><td className="num">{editingHeader ? <DTInput value={hf("POINT")} onChange={setHf("POINT")} mono/> : (proj.POINT || "-")}</td>
+                  <th>工事表彰</th><td>{editingHeader ? <DTSelect value={hf("HYOSYO")} onChange={setHf("HYOSYO")} options={[{code:"1",name:"あり"},{code:"0",name:"なし"}]}/> : (proj.HYOSYO!==undefined && proj.HYOSYO!=="" ? (parseFloat(proj.HYOSYO)===1 ? "あり" : "なし") : "-")}</td>
+                  <th></th><td></td>
+                </tr>
+                <tr>
+                  <th>据付開始日</th><td>{editingHeader ? <DTInput value={hf("SSDAY")} onChange={setHf("SSDAY")} placeholder="YYYYMMDD" mono/> : (proj.SSDAY ? fmtDate(proj.SSDAY) : "-")}</td>
+                  <th>金額</th><td className="num">{editingHeader ? <DTInput value={hf("KYKN")} onChange={setHf("KYKN")}/> : (fmtMoney(proj.KYKN)+" 円")}</td>
+                  <th>工期</th><td>{editingHeader ? <span style={{display:"flex",gap:6}}><DTInput value={hf("KOKF")} onChange={setHf("KOKF")} placeholder="YYYYMMDD" mono/><span>〜</span><DTInput value={hf("KOKT")} onChange={setHf("KOKT")} placeholder="YYYYMMDD" mono/></span> : (fmtDate(proj.KOKF)+" 〜 "+fmtDate(proj.KOKT))}</td>
+                  <th>支店</th><td>{editingHeader ? <DTSelect value={hf("EIGYCD")} onChange={setHf("EIGYCD")} options={eigyoOpts}/> : (branchName(proj.EIGYCD) || "-")}</td>
+                </tr>
+                <tr><th>発注者</th><td colSpan="7">{editingHeader ? <DTInput value={hf("KYA1")} onChange={setHf("KYA1")}/> : (proj.KYA1 || "-")}</td></tr>
+                <tr><th>担当事務所</th><td colSpan="7">{editingHeader ? <DTInput value={hf("KYA2")} onChange={setHf("KYA2")}/> : (proj.KYA2 || "-")}</td></tr>
+                <tr><th>工事件名</th><td colSpan="7">{editingHeader ? <span style={{display:"flex",gap:6}}><DTInput value={hf("NAM1")} onChange={setHf("NAM1")} placeholder="工事件名1"/><DTInput value={hf("NAM2")} onChange={setHf("NAM2")} placeholder="工事件名2"/></span> : (((proj.NAM1||"")+" "+(proj.NAM2||"")).trim() || "-")}</td></tr>
+                <tr><th>施工場所</th><td colSpan="7">{editingHeader ? <DTInput value={hf("SEAD")} onChange={setHf("SEAD")}/> : (proj.SEAD || "-")}</td></tr>
+                <tr><th>JV名称</th><td colSpan="7">{editingHeader ? <DTInput value={hf("JVNM")} onChange={setHf("JVNM")} placeholder="JVでなければ空欄"/> : (proj.JVNM || "-")}</td></tr>
+                <tr>
+                  <th>コリンズ証明書</th>
+                  <td colSpan="7">
+                    {editingHeader ? (
+                      <DTInput value={hf("CORINS_URL")} onChange={setHf("CORINS_URL")} placeholder="PDFの保存先URLを貼り付け"/>
+                    ) : (
+                      proj.CORINS_URL
+                        ? <a className="corins-link" href={proj.CORINS_URL} target="_blank" rel="noopener noreferrer"><Ic.Link size={13}/> 証明書PDFを開く</a>
+                        : "-"
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <th>工事評定点PDF</th>
+                  <td colSpan="3">
+                    {editingHeader ? (
+                      <DTInput value={hf("RATING_PDF_URL")} onChange={setHf("RATING_PDF_URL")} placeholder="PDFの保存先URLを貼り付け"/>
+                    ) : (
+                      proj.RATING_PDF_URL
+                        ? <a className="corins-link" href={proj.RATING_PDF_URL} target="_blank" rel="noopener noreferrer"><Ic.Link size={13}/> 評定点PDFを開く</a>
+                        : "-"
+                    )}
+                  </td>
+                  <th>工事表彰PDF</th>
+                  <td colSpan="3">
+                    {editingHeader ? (
+                      <DTInput value={hf("AWARD_PDF_URL")} onChange={setHf("AWARD_PDF_URL")} placeholder="PDFの保存先URLを貼り付け"/>
+                    ) : (
+                      proj.AWARD_PDF_URL
+                        ? <a className="corins-link" href={proj.AWARD_PDF_URL} target="_blank" rel="noopener noreferrer"><Ic.Link size={13}/> 表彰PDFを開く</a>
+                        : "-"
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <th>工事分野</th><td>{editingHeader ? <DTSelect value={hf("BUNYA")} onChange={setHf("BUNYA")} options={bunyaOpts}/> : (lit(literalMap,"BNYA",proj.BUNYA) || "-")}</td>
+                  <th>建設業許可業種</th><td>{editingHeader ? <DTSelect value={hf("KKGY")} onChange={setHf("KKGY")} options={kkgsOpts}/> : (lit(literalMap,"KKGS",proj.KKGY) || "-")}</td>
+                  <th>入札資格区分</th><td>{editingHeader ? <DTSelect value={hf("NSKBN")} onChange={setHf("NSKBN")} options={nskbOpts}/> : (lit(literalMap,"NSKB",proj.NSKBN) || "-")}</td>
+                  <th>契約形態</th><td>{editingHeader ? <DTSelect value={hf("KTYP")} onChange={setHf("KTYP")} options={kyktOpts}/> : (lit(literalMap,"KYKT",proj.KTYP) || "-")}</td>
+                </tr>
+                <tr>
+                  <th>受注形態</th><td>{editingHeader ? <DTSelect value={hf("JTYP")} onChange={setHf("JTYP")} options={jcktOpts}/> : (lit(literalMap,"JCKT",proj.JTYP) || "-")}</td>
+                  <th>登録種別</th><td>{editingHeader ? <DTSelect value={hf("TKIND")} onChange={setHf("TKIND")} options={tsbtOpts}/> : (lit(literalMap,"TSBT",proj.TKIND) || "-")}</td>
+                  <th>登録番号</th><td>{editingHeader ? <DTInput value={hf("TNO")} onChange={setHf("TNO")} mono/> : (proj.TNO || "-")}</td>
+                  <th>関連工番</th><td>{editingHeader ? <DTInput value={hf("KRNO")} onChange={setHf("KRNO")} mono/> : (proj.KRNO || "-")}</td>
+                </tr>
+                <tr>
+                  <th>工種1</th><td>{editingHeader ? <DTSelect value={hf("KKIND01")} onChange={setHf("KKIND01")} options={kosyOpts}/> : (lit(literalMap,"KOSY",proj.KKIND01) || "-")}</td>
+                  <th>工法型式</th><td>{editingHeader ? <DTSelect value={hf("KMETH01")} onChange={setHf("KMETH01")} options={kataOpts}/> : (lit(literalMap,"KATA",proj.KMETH01) || "-")}</td>
+                  <th>工種4</th><td>{editingHeader ? <DTSelect value={hf("KKIND04")} onChange={setHf("KKIND04")} options={kosyOpts}/> : (lit(literalMap,"KOSY",proj.KKIND04) || "-")}</td>
+                  <th>工法型式</th><td>{editingHeader ? <DTSelect value={hf("KMETH04")} onChange={setHf("KMETH04")} options={kataOpts}/> : (lit(literalMap,"KATA",proj.KMETH04) || "-")}</td>
+                </tr>
+                <tr>
+                  <th>工種2</th><td>{editingHeader ? <DTSelect value={hf("KKIND02")} onChange={setHf("KKIND02")} options={kosyOpts}/> : (lit(literalMap,"KOSY",proj.KKIND02) || "-")}</td>
+                  <th>工法型式</th><td>{editingHeader ? <DTSelect value={hf("KMETH02")} onChange={setHf("KMETH02")} options={kataOpts}/> : (lit(literalMap,"KATA",proj.KMETH02) || "-")}</td>
+                  <th>工種5</th><td>{editingHeader ? <DTSelect value={hf("KKIND05")} onChange={setHf("KKIND05")} options={kosyOpts}/> : (lit(literalMap,"KOSY",proj.KKIND05) || "-")}</td>
+                  <th>工法型式</th><td>{editingHeader ? <DTSelect value={hf("KMETH05")} onChange={setHf("KMETH05")} options={kataOpts}/> : (lit(literalMap,"KATA",proj.KMETH05) || "-")}</td>
+                </tr>
+                <tr>
+                  <th>工種3</th><td>{editingHeader ? <DTSelect value={hf("KKIND03")} onChange={setHf("KKIND03")} options={kosyOpts}/> : (lit(literalMap,"KOSY",proj.KKIND03) || "-")}</td>
+                  <th>工法型式</th><td>{editingHeader ? <DTSelect value={hf("KMETH03")} onChange={setHf("KMETH03")} options={kataOpts}/> : (lit(literalMap,"KATA",proj.KMETH03) || "-")}</td>
+                  <th></th><td></td><th></th><td></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="res-hd" style={{marginTop:22, marginBottom:0}}>
+            <h3 className="detail-subhead" style={{margin:0}}>種別・技術者</h3>
+            {canEdit && (
+              editingRows ? (
+                <span style={{display:"flex",gap:8}}>
+                  <button className="btn-primary" onClick={saveRows}>保存する</button>
+                  <button className="btn-ghost" onClick={cancelEditRows}>キャンセル</button>
+                </span>
+              ) : (
+                <button className="btn-outline" onClick={startEditRows}><Ic.Edit/> 種別・技術者を編集</button>
+              )
+            )}
+          </div>
+
+          <h3 className="detail-subhead">種別</h3>
+          <div className="table-wrap">
+            <table className="detail-table">
+              <thead>
+                <tr>
+                  <th>製据</th><th>種別</th><th>工事概要</th><th>開閉機規格</th><th>材質</th>
+                  <th>径間(m)</th><th>高さ(m)</th><th>員数</th><th>水深(m)</th><th>取水量(m³/s)</th><th>放流量(m³/s)</th>
+                  {editingRows && <th></th>}
+                </tr>
+              </thead>
+              <tbody>
+                {(editingRows ? kindsDraft : kinds).map((k,i)=>(
+                  <tr key={i}>
+                    <td>{editingRows ? <DTSelect value={k.KBN} onChange={updKind(i,"KBN")} options={sesuOpts}/> : lit(literalMap,"SESU",k.KBN)}</td>
+                    <td>{editingRows ? <DTSelect value={k.KIND} onChange={updKind(i,"KIND")} options={shruOpts}/> : lit(literalMap,"SHRU",k.KIND)}</td>
+                    <td>{editingRows ? <DTInput value={k.KGAI} onChange={updKind(i,"KGAI")}/> : (k.KGAI||"-")}</td>
+                    <td>{editingRows ? <DTSelect value={k.KIKA} onChange={updKind(i,"KIKA")} options={khkiOpts}/> : lit(literalMap,"KHKI",k.KIKA)}</td>
+                    <td>{editingRows ? <DTInput value={k.ZAIS} onChange={updKind(i,"ZAIS")}/> : (k.ZAIS||"-")}</td>
+                    <td className="num">{editingRows ? <DTInput value={k.KEIK} onChange={updKind(i,"KEIK")} mono/> : (k.KEIK||"-")}</td>
+                    <td className="num">{editingRows ? <DTInput value={k.HEIGH} onChange={updKind(i,"HEIGH")} mono/> : (k.HEIGH||"-")}</td>
+                    <td className="num">{editingRows ? <DTInput value={k.INZU} onChange={updKind(i,"INZU")} mono/> : (k.INZU||"-")}</td>
+                    <td className="num">{editingRows ? <DTInput value={k.SUIS} onChange={updKind(i,"SUIS")} mono/> : (k.SUIS||"-")}</td>
+                    <td className="num">{editingRows ? <DTInput value={k.SYUS} onChange={updKind(i,"SYUS")} mono/> : (k.SYUS||"-")}</td>
+                    <td className="num">{editingRows ? <DTInput value={k.HORYU} onChange={updKind(i,"HORYU")} mono/> : (k.HORYU||"-")}</td>
+                    {editingRows && <td><button className="btn-ghost" onClick={()=>removeKindRow(i)}><Ic.X size={13}/></button></td>}
+                  </tr>
+                ))}
+                {(editingRows ? kindsDraft.length : kinds.length)===0 && <tr><td colSpan={editingRows?12:11} className="empty">種別情報がありません</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {editingRows && <button className="btn-outline" style={{marginTop:10}} onClick={addKindRow}><Ic.Plus/> 種別を追加</button>}
+
+          <h3 className="detail-subhead">技術者</h3>
+          <div className="table-wrap">
+            <table className="detail-table">
+              <thead>
+                <tr>
+                  <th>役割</th><th>技術者コード</th><th>技術者名</th><th>従事期間1（自〜至）</th><th>従事期間2（自〜至）</th><th>従事期間3（自〜至）</th><th>従事割合(%)</th>
+                  {editingRows && <th></th>}
+                </tr>
+              </thead>
+              <tbody>
+                {(editingRows ? engDraft : engRows).map((r,i)=>{
+                  const emp=employeeMap[r.ENGCD];
+                  const per=(f,t)=> r[f] ? (fmtDate(r[f])+"〜"+fmtDate(r[t])) : "-";
+                  return (
+                    <tr key={i}>
+                      <td>{editingRows ? <DTSelect value={r.POSICD} onChange={updEng(i,"POSICD")} options={trgtOpts}/> : lit(literalMap,"TRGT",r.POSICD)}</td>
+                      <td>{editingRows ? <DTInput value={r.ENGCD} onChange={updEng(i,"ENGCD")} mono/> : <span className="mono">{r.ENGCD}</span>}</td>
+                      <td>{emp ? emp.ID_NAME : (editingRows ? "" : "(コード:"+r.ENGCD+")")}</td>
+                      {editingRows ? (
+                        <React.Fragment>
+                          <td><span style={{display:"flex",gap:4}}><DTInput value={r.KOKF01} onChange={updEng(i,"KOKF01")} placeholder="自" mono/><DTInput value={r.KOKT01} onChange={updEng(i,"KOKT01")} placeholder="至" mono/></span></td>
+                          <td><span style={{display:"flex",gap:4}}><DTInput value={r.KOKF02} onChange={updEng(i,"KOKF02")} placeholder="自" mono/><DTInput value={r.KOKT02} onChange={updEng(i,"KOKT02")} placeholder="至" mono/></span></td>
+                          <td><span style={{display:"flex",gap:4}}><DTInput value={r.KOKF03} onChange={updEng(i,"KOKF03")} placeholder="自" mono/><DTInput value={r.KOKT03} onChange={updEng(i,"KOKT03")} placeholder="至" mono/></span></td>
+                          <td className="num"><DTInput value={r.JWARI} onChange={updEng(i,"JWARI")} mono/></td>
+                          <td><button className="btn-ghost" onClick={()=>removeEngRow(i)}><Ic.X size={13}/></button></td>
+                        </React.Fragment>
+                      ) : (
+                        <React.Fragment>
+                          <td>{per("KOKF01","KOKT01")}</td>
+                          <td>{per("KOKF02","KOKT02")}</td>
+                          <td>{per("KOKF03","KOKT03")}</td>
+                          <td className="num">
+                            {r.JWARI!=="" && parseFloat(r.JWARI)>=99.95
+                              ? <span className="jwari-full">専任(100%)</span>
+                              : (r.JWARI || "-")}
+                          </td>
+                        </React.Fragment>
+                      )}
+                    </tr>
+                  );
+                })}
+                {(editingRows ? engDraft.length : engRows.length)===0 && <tr><td colSpan={editingRows?8:7} className="empty">技術者情報がありません</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {editingRows && <button className="btn-outline" style={{marginTop:10}} onClick={addEngRow}><Ic.Plus/> 技術者を追加</button>}
+        </div>
+      }
+    </div>
+  );
+}
+
+/* ---------------- personnel qualification search (人事資格検索) ---------------- */
+function fmtYMD8(s){ // BDAY等(YYYYMMDD)を年/月/日に
+  return fmtDate(s);
+}
+function KindMark({on}){
+  return <span className={"kindmark"+(on?" on":"")}>{on ? "○" : ""}</span>;
+}
+function PersonnelCard({emp, info, heldLicenses, licenses, literalMap, onRemove, canEdit, onSaveCertLink, onSaveKanriCert, onSaveEngInfo, onSaveLicenseRow, onDeleteLicenseRow}){
+  const [editingLic,setEditingLic]=useState(null); // liccd being edited, or "__new__"
+  const [licDraft,setLicDraft]=useState({});
+  const [editingKanri,setEditingKanri]=useState(false);
+  const [kanriDraft,setKanriDraft]=useState("");
+  const [editingInfo,setEditingInfo]=useState(false);
+  const [infoDraft,setInfoDraft]=useState({});
+  const isOn=(v)=> v!==undefined && v!==null && String(parseFloat(v))==="1";
+  const licenseSelectOpts=useMemo(()=>
+    [...(licenses||[])].map((l)=>({code:l.LICCD, name:l.LICNM})).sort((a,b)=>(a.name||"").localeCompare(b.name||"","ja"))
+  ,[licenses]);
+  const kghoOpts=useMemo(()=>optionsFromLiteral(literalMap,"KGHO"),[literalMap]);
+
+  const startEditLic=(l)=>{ setEditingLic(l.liccd); setLicDraft({LICCD:l.liccd, LICNO:l.rawLicno, SDAY:l.rawSday, KBN:l.rawKbn, CERT_URL:l.certUrl}); };
+  const startAddLic=()=>{ setEditingLic("__new__"); setLicDraft({LICCD:"", LICNO:"", SDAY:"", KBN:"", CERT_URL:""}); };
+  const saveLic=(originalLiccd)=>{
+    if(!licDraft.LICCD){ return; }
+    onSaveLicenseRow(emp.ENGCD, originalLiccd==="__new__" ? null : originalLiccd, licDraft);
+    setEditingLic(null);
+  };
+  const deleteLic=(liccd)=>{ onDeleteLicenseRow(emp.ENGCD, liccd); };
+  const saveKanri=()=>{ onSaveKanriCert(emp.ENGCD, kanriDraft.trim()); setEditingKanri(false); };
+
+  const startEditInfo=()=>{ setInfoDraft({...(info||{})}); setEditingInfo(true); };
+  const cancelEditInfo=()=>setEditingInfo(false);
+  const saveInfo=()=>{ onSaveEngInfo(emp.ENGCD, infoDraft); setEditingInfo(false); };
+  const inf=(field)=>infoDraft[field]||"";
+  const setInf=(field)=>(v)=>setInfoDraft({...infoDraft, [field]:v});
+  const gakaOpts=useMemo(()=>optionsFromLiteral(literalMap,"GAKA"),[literalMap]);
+
+  const kindFields=[
+    [["土","KDO"],["鋼","KKOU"]],
+    [["建","KKEN"],["塗","KTO"]],
+    [["電","KDEN"],["機","KKI"]],
+    [["管","KKAN"],["水","KSUI"]],
+  ];
+
+  return (
+    <div className="personnel-card">
+      <div className="personnel-card-hd">
+        <span className="personnel-card-name">{emp.ID_NAME}<span className="code" style={{marginLeft:8}}>#{emp.ENGCD}</span></span>
+        <span style={{display:"flex", gap:8}}>
+          {canEdit && (
+            editingInfo ? (
+              <React.Fragment>
+                <button className="btn-primary" onClick={saveInfo}>保存する</button>
+                <button className="btn-ghost" onClick={cancelEditInfo}>キャンセル</button>
+              </React.Fragment>
+            ) : (
+              <button className="btn-outline" onClick={startEditInfo}><Ic.Edit/> 情報を編集</button>
+            )
+          )}
+          <button className="btn-ghost" onClick={onRemove}><Ic.X size={13}/> 閉じる</button>
+        </span>
+      </div>
+      <div className="table-wrap">
+        <table className="detail-info-table">
+          <tbody>
+            <tr>
+              <th>氏名</th><td>{emp.ID_NAME}</td>
+              <th>フリガナ</th><td colSpan="5">{editingInfo ? <DTInput value={inf("FURI")} onChange={setInf("FURI")}/> : (info ? info.FURI : "-")}</td>
+            </tr>
+            <tr><th>所属</th><td colSpan="7">{[emp.DEPT, emp.POSITION].filter(Boolean).join(" ／ ") || (emp.COMPCD || "-")}</td></tr>
+            <tr>
+              <th>生年月日</th><td>{editingInfo ? <DTInput value={inf("BDAY")} onChange={setInf("BDAY")} placeholder="YYYYMMDD" mono/> : (info ? fmtDateEra(info.BDAY) : "-")}</td>
+              <th>入社日</th><td>{editingInfo ? <DTInput value={inf("NDAY")} onChange={setInf("NDAY")} placeholder="YYYYMMDD" mono/> : (info ? fmtDateEra(info.NDAY) : "-")}</td>
+              <th>卒業日</th><td colSpan="3">{editingInfo ? <DTInput value={inf("GDAY")} onChange={setInf("GDAY")} placeholder="YYYYMMDD" mono/> : (info ? fmtDateEra(info.GDAY) : "-")}</td>
+            </tr>
+            <tr>
+              <th>学校名</th><td>{editingInfo ? <DTInput value={inf("FGAKU")} onChange={setInf("FGAKU")}/> : (info ? (info.FGAKU||"-") : "-")}</td>
+              <th>学部名</th><td>{editingInfo ? <DTInput value={inf("GAKUB")} onChange={setInf("GAKUB")}/> : (info ? (info.GAKUB||"-") : "-")}</td>
+              <th>学科名</th><td colSpan="3">{editingInfo ? <DTInput value={inf("GAKKA")} onChange={setInf("GAKKA")}/> : (info ? (info.GAKKA||"-") : "-")}</td>
+            </tr>
+            <tr><th>学科区分</th><td colSpan="7">{editingInfo ? <DTSelect value={inf("KBN")} onChange={setInf("KBN")} options={gakaOpts}/> : (info ? (lit(literalMap,"GAKA",info.KBN) || "-") : "-")}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 className="detail-subhead">監理技術者資格情報</h3>
+      <div className="table-wrap">
+        <table className="detail-info-table">
+          <tbody>
+            <tr>
+              <th>初回交付日</th><td>{editingInfo ? <DTInput value={inf("KFKBI")} onChange={setInf("KFKBI")} placeholder="YYYYMMDD" mono/> : (info ? fmtDate(info.KFKBI) : "-")}</td>
+              <th>交付日</th><td>{editingInfo ? <DTInput value={inf("KFBI")} onChange={setInf("KFBI")} placeholder="YYYYMMDD" mono/> : (info ? fmtDate(info.KFBI) : "-")}</td>
+              <th>交付番号</th><td>{editingInfo ? <DTInput value={inf("KFNO")} onChange={setInf("KFNO")} mono/> : (info ? (info.KFNO||"-") : "-")}</td>
+              <th>有効期限</th><td>{editingInfo ? <DTInput value={inf("KLIMIT")} onChange={setInf("KLIMIT")} placeholder="YYYYMMDD" mono/> : (info ? fmtDate(info.KLIMIT) : "-")}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="table-wrap" style={{marginTop:10}}>
+        <table className="detail-info-table kind-grid">
+          <tbody>
+            {kindFields.map((pair,pi)=>(
+              <tr key={pi}>
+                {pair.map(([label,field],ci)=>(
+                  <React.Fragment key={ci}>
+                    <th>該当工種：{label}</th>
+                    <td>
+                      {editingInfo
+                        ? <input type="checkbox" checked={isOn(infoDraft[field])} onChange={(e)=>setInf(field)(e.target.checked?"1":"0")}/>
+                        : <KindMark on={isOn(info&&info[field])}/>}
+                    </td>
+                  </React.Fragment>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 className="detail-subhead">監理技術者講習修了証</h3>
+      <div className="table-wrap">
+        <table className="detail-info-table">
+          <tbody>
+            <tr>
+              <th>修了証番号</th><td colSpan="3">{editingInfo ? <DTInput value={inf("KSNO")} onChange={setInf("KSNO")} mono/> : (info ? (info.KSNO||"-") : "-")}</td>
+              <th>終了年月日</th><td colSpan="3">{editingInfo ? <DTInput value={inf("KSYMD")} onChange={setInf("KSYMD")} placeholder="YYYYMMDD" mono/> : (info ? fmtDate(info.KSYMD) : "-")}</td>
+            </tr>
+            <tr>
+              <th>監理技術者資格証</th>
+              <td colSpan="7">
+                {editingKanri ? (
+                  <span style={{display:"flex", gap:6}}>
+                    <DTInput value={kanriDraft} onChange={setKanriDraft} placeholder="資格証PDFのURLを貼り付け"/>
+                    <button className="btn-outline" onClick={saveKanri}>保存</button>
+                    <button className="btn-ghost" onClick={()=>setEditingKanri(false)}>取消</button>
+                  </span>
+                ) : (
+                  <span style={{display:"flex", alignItems:"center", gap:8}}>
+                    {info && info.KANRI_CERT_URL
+                      ? <a className="corins-link" href={info.KANRI_CERT_URL} target="_blank" rel="noopener noreferrer"><Ic.Link size={12}/> 資格証を開く</a>
+                      : <span style={{color:"var(--faint)"}}>-</span>}
+                    {canEdit && <button className="btn-ghost" onClick={()=>{ setKanriDraft((info&&info.KANRI_CERT_URL)||""); setEditingKanri(true); }}><Ic.Edit size={12}/></button>}
+                  </span>
+                )}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 className="detail-subhead">保有資格</h3>
+      <div className="table-wrap">
+        <table className="detail-table">
+          <thead>
+            <tr><th>資格名称</th><th>免許No</th><th>取得日</th><th>建設業法の資格区分</th><th>証明書</th>{canEdit && <th></th>}</tr>
+          </thead>
+          <tbody>
+            {heldLicenses.map((l,i)=>{
+              const editing=editingLic===l.liccd;
+              return (
+                <tr key={i}>
+                  {editing ? (
+                    <React.Fragment>
+                      <td><DTSelect value={licDraft.LICCD} onChange={(v)=>setLicDraft({...licDraft, LICCD:v})} options={licenseSelectOpts}/></td>
+                      <td><DTInput value={licDraft.LICNO} onChange={(v)=>setLicDraft({...licDraft, LICNO:v})}/></td>
+                      <td><DTInput value={licDraft.SDAY} onChange={(v)=>setLicDraft({...licDraft, SDAY:v})} placeholder="YYYYMMDD" mono/></td>
+                      <td><DTSelect value={licDraft.KBN} onChange={(v)=>setLicDraft({...licDraft, KBN:v})} options={kghoOpts}/></td>
+                      <td><DTInput value={licDraft.CERT_URL} onChange={(v)=>setLicDraft({...licDraft, CERT_URL:v})} placeholder="証明書PDFのURL"/></td>
+                      <td>
+                        <span style={{display:"flex", gap:6}}>
+                          <button className="btn-outline" onClick={()=>saveLic(l.liccd)}>保存</button>
+                          <button className="btn-ghost" onClick={()=>setEditingLic(null)}>取消</button>
+                        </span>
+                      </td>
+                    </React.Fragment>
+                  ) : (
+                    <React.Fragment>
+                      <td>{l.name}</td><td>{l.licno}</td><td>{l.acquired}</td><td>{l.kbn}</td>
+                      <td>
+                        {l.certUrl
+                          ? <a className="corins-link" href={l.certUrl} target="_blank" rel="noopener noreferrer"><Ic.Link size={12}/> 証明書を開く</a>
+                          : <span style={{color:"var(--faint)"}}>-</span>}
+                      </td>
+                      {canEdit &&
+                        <td>
+                          <span style={{display:"flex", gap:6}}>
+                            <button className="btn-ghost" onClick={()=>startEditLic(l)}><Ic.Edit size={12}/></button>
+                            <button className="btn-ghost" onClick={()=>deleteLic(l.liccd)}><Ic.X size={12}/></button>
+                          </span>
+                        </td>
+                      }
+                    </React.Fragment>
+                  )}
+                </tr>
+              );
+            })}
+            {editingLic==="__new__" &&
+              <tr>
+                <td><DTSelect value={licDraft.LICCD} onChange={(v)=>setLicDraft({...licDraft, LICCD:v})} options={licenseSelectOpts}/></td>
+                <td><DTInput value={licDraft.LICNO} onChange={(v)=>setLicDraft({...licDraft, LICNO:v})}/></td>
+                <td><DTInput value={licDraft.SDAY} onChange={(v)=>setLicDraft({...licDraft, SDAY:v})} placeholder="YYYYMMDD" mono/></td>
+                <td><DTSelect value={licDraft.KBN} onChange={(v)=>setLicDraft({...licDraft, KBN:v})} options={kghoOpts}/></td>
+                <td><DTInput value={licDraft.CERT_URL} onChange={(v)=>setLicDraft({...licDraft, CERT_URL:v})} placeholder="証明書PDFのURL"/></td>
+                <td>
+                  <span style={{display:"flex", gap:6}}>
+                    <button className="btn-outline" onClick={()=>saveLic("__new__")}>保存</button>
+                    <button className="btn-ghost" onClick={()=>setEditingLic(null)}>取消</button>
+                  </span>
+                </td>
+              </tr>
+            }
+            {heldLicenses.length===0 && editingLic!=="__new__" && <tr><td colSpan={canEdit?6:5} className="empty">保有資格の登録がありません</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      {canEdit && editingLic===null &&
+        <button className="btn-outline" style={{marginTop:10}} onClick={startAddLic}><Ic.Plus/> 資格を追加</button>
+      }
+    </div>
+  );
+}
+
+function PersonnelQualification({employees, enginfoRecords, licenses, engLicenses, literalMap, canEdit, onSaveCertLink, onSaveKanriCert, onSaveEngInfo, onCreateEmployee, onSaveLicenseRow, onDeleteLicenseRow, initialEngcd, jumpNonce}){
+  const [query,setQuery]=useState("");
+  const [selectedList,setSelectedList]=useState([]);
+  const [showNew,setShowNew]=useState(false);
+  const [newDraft,setNewDraft]=useState({});
+  const [newError,setNewError]=useState("");
+
+  useEffect(()=>{
+    if(initialEngcd){
+      setSelectedList((list)=> list.includes(initialEngcd) ? list : [...list, initialEngcd]);
+    }
+  },[jumpNonce]);
+
+  const enginfoMap=useMemo(()=>{
+    const map={};
+    (enginfoRecords||[]).forEach((r)=>{ map[r.ENGCD]=r; });
+    return map;
+  },[enginfoRecords]);
+
+  const suggestions=useMemo(()=>{
+    const q=query.trim();
+    if(!q) return [];
+    return employees
+      .filter((e)=>e.STATUS!=="retired")
+      .filter((e)=>(e.ID_NAME||"").includes(q) || (e.ENGCD||"").includes(q))
+      .slice(0,20);
+  },[employees, query]);
+
+  const licenseMap=useMemo(()=>{
+    const map={};
+    (licenses||[]).forEach((l)=>{ map[l.LICCD]=l.LICNM; });
+    return map;
+  },[licenses]);
+
+  const addPerson=(engcd)=>{
+    if(!selectedList.includes(engcd)) setSelectedList([...selectedList, engcd]);
+    setQuery("");
+  };
+  const removePerson=(engcd)=> setSelectedList(selectedList.filter((c)=>c!==engcd));
+  const clearAll=()=> setSelectedList([]);
+
+  const heldLicensesFor=(engcd)=>
+    (engLicenses||[]).filter((r)=>r.ENGCD===engcd).map((r)=>({
+      liccd: r.LICCD,
+      name: licenseMap[r.LICCD] || ("資格("+r.LICCD+")"),
+      licno: r.LICNO || "-",
+      acquired: r.SDAY ? fmtDate(r.SDAY) : "-",
+      kbn: lit(literalMap,"KGHO",r.KBN) || "-",
+      certUrl: r.CERT_URL || "",
+      rawLicno: r.LICNO || "",
+      rawSday: r.SDAY || "",
+      rawKbn: r.KBN || "",
+    }));
+
+  const openNewForm=()=>{ setNewDraft({}); setNewError(""); setShowNew(true); };
+  const nf=(field)=>newDraft[field]||"";
+  const setNf=(field)=>(v)=>setNewDraft({...newDraft, [field]:v});
+  const createNew=()=>{
+    const code=(newDraft.ENGCD||"").trim();
+    if(!/^\d+$/.test(code)){ setNewError("技術者コードは数字で入力してください"); return; }
+    if(employees.some((e)=>e.ENGCD===code)){ setNewError("そのコードは既に登録されています"); return; }
+    if(!(newDraft.ID_NAME||"").trim()){ setNewError("氏名を入力してください"); return; }
+    onCreateEmployee({ENGCD:code, COMPCD:(newDraft.COMPCD||"").trim(), ID_NAME:newDraft.ID_NAME.trim(), ID_SEI:"", ID_MEI:"", STATUS:"active"});
+    setShowNew(false);
+    addPerson(code);
+  };
+
+  return (
+    <div className="card detail-card">
+      <div className="res-hd">
+        <div>
+          <h2>人事資格検索</h2>
+          <p className="sub">氏名または技術者コードで検索し、複数人まとめて表示できます</p>
+        </div>
+        <span style={{display:"flex", gap:8}}>
+          {canEdit && <button className="btn-outline" onClick={openNewForm}><Ic.Plus/> 新規技術者を登録</button>}
+          {selectedList.length>0 &&
+            <button className="btn-ghost" onClick={clearAll}><Ic.X size={13}/> 全て閉じる（{selectedList.length}名）</button>
+          }
+        </span>
+      </div>
+
+      {showNew &&
+        <div className="master-add-form" style={{marginBottom:18}}>
+          <DTInput value={nf("ENGCD")} onChange={setNf("ENGCD")} placeholder="技術者コード（数字）"/>
+          <DTInput value={nf("ID_NAME")} onChange={setNf("ID_NAME")} placeholder="氏名"/>
+          <DTInput value={nf("COMPCD")} onChange={setNf("COMPCD")} placeholder="所属コード（任意）"/>
+          <button className="btn-primary" onClick={createNew}>登録する</button>
+          <button className="btn-ghost" onClick={()=>setShowNew(false)}>キャンセル</button>
+          {newError && <div className="m-form-err">{newError}</div>}
+        </div>
+      }
+
+      <div className="msel" style={{maxWidth:560}}>
+        <input type="text" className="kw-input" value={query}
+          onChange={(e)=>setQuery(e.target.value)}
+          placeholder="例）小西 昭裕 または 625167"/>
+        {query.trim() &&
+          <div className="msel-panel" style={{maxHeight:260}}>
+            <div className="msel-list">
+              {suggestions.map((e)=>(
+                <div key={e.ENGCD} className="msel-opt-personnel" onClick={()=>addPerson(e.ENGCD)}>
+                  <div>
+                    <span style={{fontFamily:"var(--mono)", fontSize:11, color:"var(--cyan)"}}>#{e.ENGCD}</span>
+                    &nbsp;{e.ID_NAME}
+                    {selectedList.includes(e.ENGCD) && <span style={{color:"var(--green)", fontSize:11, marginLeft:6}}>（追加済み）</span>}
+                  </div>
+                  <div style={{color:"var(--muted2)", fontSize:11}}>{[e.DEPT, e.POSITION].filter(Boolean).join(" ／ ") || e.COMPCD || ""}</div>
+                </div>
+              ))}
+              {suggestions.length===0 && <div style={{fontSize:12,color:"var(--faint)",padding:"6px 8px"}}>該当する社員が見つかりません</div>}
+            </div>
+          </div>
+        }
+      </div>
+
+      {selectedList.length===0 &&
+        <div className="empty" style={{paddingTop:30}}>検索して技術者を追加すると、ここに表示されます（複数人追加可能）</div>
+      }
+
+      <div className="personnel-list">
+        {selectedList.map((engcd)=>{
+          const emp=employees.find((e)=>e.ENGCD===engcd);
+          if(!emp) return null;
+          return (
+            <PersonnelCard key={engcd}
+              emp={emp}
+              info={enginfoMap[engcd]}
+              heldLicenses={heldLicensesFor(engcd)}
+              licenses={licenses}
+              literalMap={literalMap}
+              onRemove={()=>removePerson(engcd)}
+              canEdit={canEdit}
+              onSaveCertLink={onSaveCertLink}
+              onSaveKanriCert={onSaveKanriCert}
+              onSaveEngInfo={onSaveEngInfo}
+              onSaveLicenseRow={onSaveLicenseRow}
+              onDeleteLicenseRow={onDeleteLicenseRow}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLicenses}){
+  const [query,setQuery]=useState("");
+  const [editingCode,setEditingCode]=useState(null);
+  const [editDraft,setEditDraft]=useState({});
+  const [showAdd,setShowAdd]=useState(false);
+  const [newEmp,setNewEmp]=useState({ENGCD:"",COMPCD:"",ID_NAME:""});
+  const [formError,setFormError]=useState("");
+  const [showImport,setShowImport]=useState(false);
+  const [importPreview,setImportPreview]=useState(null);
+  const [importError,setImportError]=useState("");
+  const importInputRef=useRef(null);
+  const [expandedLic,setExpandedLic]=useState(null);
+  const [addLicCode,setAddLicCode]=useState("");
+
+  const licenseMap=useMemo(()=>{
+    const map={};
+    (licenses||[]).forEach((l)=>{ map[l.LICCD]=l.LICNM; });
+    return map;
+  },[licenses]);
+  const licenseOptionsSorted=useMemo(()=>
+    [...(licenses||[])].sort((a,b)=>(a.LICNM||"").localeCompare(b.LICNM||"","ja"))
+  ,[licenses]);
+  const engLicMap=useMemo(()=>{
+    const map={};
+    (engLicenses||[]).forEach((r)=>{
+      if(!map[r.ENGCD]) map[r.ENGCD]=[];
+      map[r.ENGCD].push(r.LICCD);
+    });
+    return map;
+  },[engLicenses]);
+
+  const addLicenseTo=(engcd, liccd)=>{
+    if(!liccd) return;
+    if((engLicMap[engcd]||[]).includes(liccd)) return;
+    onSaveEngLicenses([...(engLicenses||[]), {ENGCD:engcd, LICCD:liccd}]);
+    setAddLicCode("");
+  };
+  const removeLicenseFrom=(engcd, liccd)=>{
+    onSaveEngLicenses((engLicenses||[]).filter((r)=> !(r.ENGCD===engcd && r.LICCD===liccd)));
+  };
+
+  const filtered=useMemo(()=>{
+    const q=query.trim();
+    let list=[...employees].sort((a,b)=>(a.ID_NAME||"").localeCompare(b.ID_NAME||"","ja"));
+    if(q) list=list.filter((e)=>(e.ID_NAME||"").includes(q) || (e.ENGCD||"").includes(q));
+    return list;
+  },[employees,query]);
+
+  const activeCount=employees.filter((e)=>e.STATUS!=="retired").length;
+  const retiredCount=employees.length-activeCount;
+
+  const startEdit=(emp)=>{
+    setEditingCode(emp.ENGCD);
+    setEditDraft({ID_NAME:emp.ID_NAME||"", COMPCD:emp.COMPCD||""});
+  };
+  const cancelEdit=()=>{ setEditingCode(null); setEditDraft({}); };
+  const saveEdit=(engcd)=>{
+    const next=employees.map((e)=> e.ENGCD===engcd ? {...e, ID_NAME:editDraft.ID_NAME, COMPCD:editDraft.COMPCD} : e);
+    onSave(next);
+    setEditingCode(null);
+  };
+  const toggleStatus=(emp)=>{
+    const next=employees.map((e)=> e.ENGCD===emp.ENGCD ? {...e, STATUS: e.STATUS==="retired" ? "active" : "retired"} : e);
+    onSave(next);
+  };
+  const addEmployee=()=>{
+    const code=newEmp.ENGCD.trim();
+    if(!/^\d+$/.test(code)){ setFormError("技術者コードは数字で入力してください"); return; }
+    if(employees.some((e)=>e.ENGCD===code)){ setFormError("そのコードは既に登録されています"); return; }
+    if(!newEmp.ID_NAME.trim()){ setFormError("氏名を入力してください"); return; }
+    const rec={ENGCD:code, COMPCD:newEmp.COMPCD.trim(), ID_NAME:newEmp.ID_NAME.trim(), ID_SEI:"", ID_MEI:"", STATUS:"active"};
+    onSave([...employees, rec]);
+    setNewEmp({ENGCD:"",COMPCD:"",ID_NAME:""});
+    setShowAdd(false);
+    setFormError("");
+  };
+
+  const handleImportFile=async (file)=>{
+    setImportError("");
+    setImportPreview(null);
+    try{
+      let rowsGrid=[];
+      const lower=file.name.toLowerCase();
+      if(lower.endsWith(".xlsx") || lower.endsWith(".xls")){
+        const buf=await file.arrayBuffer();
+        const wb=XLSX.read(buf, {type:"array"});
+        const sheet=wb.Sheets[wb.SheetNames[0]];
+        rowsGrid=XLSX.utils.sheet_to_json(sheet, {header:1});
+      } else {
+        const text=await file.text();
+        const parsed=Papa.parse(text, {skipEmptyLines:true});
+        rowsGrid=parsed.data||[];
+      }
+
+      // 「在籍社員No／部署／役職」のような見出し行を探す（見つかれば部署・役職も取り込む）
+      let headerInfo=null;
+      for(let i=0;i<Math.min(rowsGrid.length,5);i++){
+        const row=(rowsGrid[i]||[]).map((c)=>String(c||"").trim());
+        const codeIdx=row.findIndex((c)=>c.includes("社員No")||c.includes("技術者コード")||c==="ID"||c==="コード");
+        if(codeIdx>=0){
+          const deptIdx=row.findIndex((c)=>c.includes("部署")||c.includes("所属"));
+          const posIdx=row.findIndex((c)=>c.includes("役職"));
+          headerInfo={headerRow:i, codeIdx, deptIdx, posIdx};
+          break;
+        }
+      }
+
+      const normalize=(s)=> /^\d+$/.test(s) ? String(parseInt(s,10)) : s;
+      const deptPosMap={};
+      let rawCodes=[];
+
+      if(headerInfo){
+        for(let r=headerInfo.headerRow+1; r<rowsGrid.length; r++){
+          const row=rowsGrid[r]||[];
+          const codeRaw=String(row[headerInfo.codeIdx]===undefined||row[headerInfo.codeIdx]===null?"":row[headerInfo.codeIdx]).trim();
+          if(!/^[0-9A-Za-z]+$/.test(codeRaw)) continue;
+          rawCodes.push(codeRaw);
+          if(/^\d+$/.test(codeRaw)){
+            const dept=headerInfo.deptIdx>=0 ? String(row[headerInfo.deptIdx]||"").replace(/\u3000/g," ").trim() : "";
+            const position=headerInfo.posIdx>=0 ? String(row[headerInfo.posIdx]||"").trim() : "";
+            deptPosMap[normalize(codeRaw)]={dept, position};
+          }
+        }
+      } else {
+        const cells=[];
+        rowsGrid.forEach((row)=>{ (row||[]).forEach((c)=>cells.push(c)); });
+        rawCodes=cells
+          .map((c)=>String(c===undefined||c===null?"":c).trim())
+          .filter((s)=>/^[0-9A-Za-z]+$/.test(s));
+      }
+
+      if(rawCodes.length===0){
+        setImportError("コードを1件も読み取れませんでした。1列に技術者コードが並んだファイルか確認してください。");
+        return;
+      }
+      // 技術者コードは6桁管理だが、ファイル・社員データ側で桁数の表記ゆれ（先頭ゼロの有無）があるため、
+      // 数字のみのコードは数値として正規化して突合する（"41"も"000041"も同じ扱いになる）。
+      // 英字混じりなど数値化できないものは対象外として分けておく。
+      const excluded=rawCodes.filter((s)=>!/^\d+$/.test(s));
+      const activeNormSet=new Set(rawCodes.filter((s)=>/^\d+$/.test(s)).map(normalize));
+
+      const existingNorm=employees.map((e)=>({emp:e, norm:normalize(e.ENGCD||"")}));
+      const unmatched=[...activeNormSet].filter((n)=> !existingNorm.some((x)=>x.norm===n));
+      const matchedCount=existingNorm.filter((x)=>activeNormSet.has(x.norm)).length;
+      setImportPreview({
+        activeNormSet,
+        deptPosMap,
+        hasDeptInfo: !!(headerInfo && (headerInfo.deptIdx>=0 || headerInfo.posIdx>=0)),
+        totalListed: activeNormSet.size,
+        matchedCount,
+        toRetireCount: employees.length-matchedCount,
+        unmatched,
+        excluded,
+        filename: file.name,
+      });
+    }catch(e){
+      setImportError("ファイルを読み取れませんでした（"+e.message+"）");
+    }
+  };
+
+  const applyImport=()=>{
+    if(!importPreview) return;
+    const normalize=(s)=> /^\d+$/.test(s) ? String(parseInt(s,10)) : s;
+    const next=employees.map((e)=>{
+      const norm=normalize(e.ENGCD||"");
+      const isActive=importPreview.activeNormSet.has(norm);
+      const dp=importPreview.deptPosMap[norm];
+      return {
+        ...e,
+        STATUS: isActive ? "active" : "retired",
+        DEPT: dp ? dp.dept : e.DEPT,
+        POSITION: dp ? dp.position : e.POSITION,
+      };
+    });
+    onSave(next);
+    setImportPreview(null);
+    setShowImport(false);
+  };
+
+  return (
+    <div className="card">
+      <div className="res-hd">
+        <div>
+          <h2>技術者情報メンテナンス</h2>
+          <p className="sub">{employees.length}名登録中（在職 {activeCount}名 ／ 退職 {retiredCount}名）</p>
+        </div>
+        <div style={{display:"flex", gap:8}}>
+          <button className="btn-outline" onClick={()=>{ setShowImport((v)=>!v); setImportError(""); setImportPreview(null); }}>
+            <Ic.Upload/> 在籍社員リストを取り込む
+          </button>
+          <button className="btn-outline" onClick={()=>{ setShowAdd((v)=>!v); setFormError(""); }}>
+            <Ic.Plus/> 新規社員を登録
+          </button>
+        </div>
+      </div>
+
+      {showImport &&
+        <div className="master-add-form" style={{flexDirection:"column", alignItems:"stretch"}}>
+          <p style={{fontSize:12,color:"var(--muted)",margin:"0 0 10px"}}>
+            現在の在職者コード一覧（.csv または .xlsx、1列に技術者コードが並んだもの）を読み込むと、
+            リストに載っている社員を「在職」、載っていない社員を「退職」に一括更新します。
+          </p>
+          <div className="drop" style={{padding:"20px"}} onClick={()=>importInputRef.current && importInputRef.current.click()}>
+            <Ic.Upload color="var(--accent)"/>
+            <p>ファイルをクリックして選択</p>
+            <input ref={importInputRef} type="file" accept=".csv,.xlsx,.xls" style={{display:"none"}}
+              onChange={(e)=>{ if(e.target.files[0]) handleImportFile(e.target.files[0]); }}/>
+          </div>
+
+          {importError && <div className="err-box" style={{marginTop:10}}><Ic.Warn/><div>{importError}</div></div>}
+
+          {importPreview &&
+            <div style={{marginTop:12, fontSize:12.5}}>
+              <p style={{margin:"0 0 6px"}}>
+                「{importPreview.filename}」から <b>{importPreview.totalListed}</b> 件のコードを読み取りました。
+                適用すると、既存の社員データ {employees.length}名のうち
+                <b style={{color:"var(--green)"}}> 在職 {importPreview.matchedCount}名</b> ／
+                <b style={{color:"var(--red)"}}> 退職 {importPreview.toRetireCount}名</b> になります。
+                {importPreview.hasDeptInfo && <span> あわせて部署・役職も更新されます。</span>}
+              </p>
+              {importPreview.unmatched.length>0 &&
+                <div className="storage-warn" style={{marginTop:8}}>
+                  <Ic.Warn/> リストには載っているが社員データに未登録のコードが{importPreview.unmatched.length}件あります（今回は反映されません。先に「新規社員を登録」で追加してください）：<br/>
+                  <span style={{fontFamily:"var(--mono)"}}>{importPreview.unmatched.join(", ")}</span>
+                </div>
+              }
+              {importPreview.excluded.length>0 &&
+                <div className="storage-warn" style={{marginTop:8}}>
+                  <Ic.Warn/> 数字のみのコードとして解釈できず、対象外にしたもの({importPreview.excluded.length}件)：<br/>
+                  <span style={{fontFamily:"var(--mono)"}}>{importPreview.excluded.join(", ")}</span>
+                </div>
+              }
+              <div style={{display:"flex", gap:10, marginTop:12}}>
+                <button className="btn-primary" onClick={applyImport}>この内容で適用する</button>
+                <button className="btn-ghost" onClick={()=>{ setImportPreview(null); setShowImport(false); }}>キャンセル</button>
+              </div>
+            </div>
+          }
+        </div>
+      }
+
+      {showAdd &&
+        <div className="master-add-form">
+          <input type="text" placeholder="技術者コード（数字）" value={newEmp.ENGCD}
+            onChange={(e)=>setNewEmp({...newEmp, ENGCD:e.target.value})}/>
+          <input type="text" placeholder="氏名" value={newEmp.ID_NAME}
+            onChange={(e)=>setNewEmp({...newEmp, ID_NAME:e.target.value})}/>
+          <input type="text" placeholder="所属コード（任意）" value={newEmp.COMPCD}
+            onChange={(e)=>setNewEmp({...newEmp, COMPCD:e.target.value})}/>
+          <button className="btn-primary" onClick={addEmployee}>登録する</button>
+          {formError && <span className="m-form-err">{formError}</span>}
+        </div>
+      }
+
+      <input type="text" className="kw-input" style={{marginTop:14, marginBottom:12, maxWidth:320}}
+        value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="氏名・技術者コードで検索"/>
+
+      {(()=>{
+        const renderRow=(emp)=>{
+          const retired=emp.STATUS==="retired";
+          const isEditing=editingCode===emp.ENGCD;
+          const licCodes=engLicMap[emp.ENGCD]||[];
+          const licOpen=expandedLic===emp.ENGCD;
+          return (
+            <React.Fragment key={emp.ENGCD}>
+            <div className={"master-row"+(retired?" retired":"")}>
+              <span className="m-code">#{emp.ENGCD}</span>
+              {isEditing ? (
+                <React.Fragment>
+                  <input className="m-input" value={editDraft.ID_NAME}
+                    onChange={(e)=>setEditDraft({...editDraft, ID_NAME:e.target.value})}/>
+                  <input className="m-input" value={editDraft.COMPCD}
+                    onChange={(e)=>setEditDraft({...editDraft, COMPCD:e.target.value})}/>
+                  <span></span>
+                  <span></span>
+                  <span className="m-actions">
+                    <button className="btn-outline" onClick={()=>saveEdit(emp.ENGCD)}>保存</button>
+                    <button className="btn-ghost" onClick={cancelEdit}>取消</button>
+                  </span>
+                </React.Fragment>
+              ) : (
+                <React.Fragment>
+                  <span className="m-name">{emp.ID_NAME}</span>
+                  <span className="m-comp" title={(emp.DEPT || emp.POSITION) ? [emp.DEPT, emp.POSITION].filter(Boolean).join(" ／ ") : (emp.COMPCD || "")}>
+                    {(emp.DEPT || emp.POSITION)
+                      ? [emp.DEPT, emp.POSITION].filter(Boolean).join(" ／ ")
+                      : (emp.COMPCD || "-")}
+                  </span>
+                  <button type="button" className="m-lic-toggle" onClick={()=>setExpandedLic(licOpen?null:emp.ENGCD)}>
+                    資格 {licCodes.length}件 {licOpen ? <Ic.Down/> : <Ic.Right/>}
+                  </button>
+                  <span className={"m-badge"+(retired?" retired":"")}>{retired ? "退職" : "在職"}</span>
+                  <span className="m-actions">
+                    <button className="btn-ghost" onClick={()=>startEdit(emp)}><Ic.Edit/></button>
+                    <button className="btn-ghost" onClick={()=>toggleStatus(emp)}>
+                      {retired ? "在職に戻す" : "退職にする"}
+                    </button>
+                  </span>
+                </React.Fragment>
+              )}
+            </div>
+            {licOpen &&
+              <div className="m-lic-panel">
+                <div className="m-lic-tags">
+                  {licCodes.length===0 && <span style={{color:"var(--faint)", fontSize:12}}>保有資格の登録がありません</span>}
+                  {licCodes.map((code)=>(
+                    <span key={code} className="m-lic-tag">
+                      {licenseMap[code] || ("資格("+code+")")}
+                      <button onClick={()=>removeLicenseFrom(emp.ENGCD, code)}><Ic.X size={11}/></button>
+                    </span>
+                  ))}
+                </div>
+                <div className="m-lic-add">
+                  <select value={addLicCode} onChange={(e)=>setAddLicCode(e.target.value)}>
+                    <option value="">資格を選択して追加...</option>
+                    {licenseOptionsSorted.filter((l)=>!licCodes.includes(l.LICCD)).map((l)=>(
+                      <option key={l.LICCD} value={l.LICCD}>{l.LICNM}</option>
+                    ))}
+                  </select>
+                  <button className="btn-outline" onClick={()=>addLicenseTo(emp.ENGCD, addLicCode)}><Ic.Plus/> 追加</button>
+                </div>
+              </div>
+            }
+            </React.Fragment>
+          );
+        };
+
+        const activeList=filtered.filter((e)=>e.STATUS!=="retired");
+        const retiredList=filtered.filter((e)=>e.STATUS==="retired");
+        const head=(
+          <div className="master-row master-row-head">
+            <span className="m-code">コード</span>
+            <span className="m-name">氏名</span>
+            <span className="m-comp">所属</span>
+            <span>資格</span>
+            <span className="m-status">状態</span>
+            <span></span>
+          </div>
+        );
+
+        return (
+          <React.Fragment>
+            <div className="master-group-label">在職者（{activeList.length}名）</div>
+            <div className="master-list">
+              {head}
+              {activeList.map(renderRow)}
+              {activeList.length===0 && <div className="empty">該当する在職者がいません</div>}
+            </div>
+
+            <div className="master-group-label retired">退職者（{retiredList.length}名）</div>
+            <div className="master-list">
+              {head}
+              {retiredList.map(renderRow)}
+              {retiredList.length===0 && <div className="empty">該当する退職者がいません</div>}
+            </div>
+          </React.Fragment>
+        );
+      })()}
+    </div>
+  );
+}
+
+/* ---------------- data uploader (used both for onboarding & update overlay) ---------------- */
+function Uploader({datasets, onMerged, compact}){
+  const [dragOver,setDragOver]=useState(false);
+  const [loadErrors,setLoadErrors]=useState([]);
+  const [pending,setPending]=useState({}); // freshly parsed, not yet merged types this session
+  const fileInputRef=useRef(null);
+
+  const handleFiles=useCallback(async (fileList)=>{
+    const all=Array.from(fileList);
+    const csvFiles=all.filter((f)=>f.name.toLowerCase().endsWith(".csv"));
+    const jsonFiles=all.filter((f)=>f.name.toLowerCase().endsWith(".json"));
+
+    const csvResults=await Promise.all(csvFiles.map(parseCsvFile));
+    const jsonResults=await Promise.all(jsonFiles.map(async (f)=>{
+      try{
+        const text=await f.text();
+        const obj=JSON.parse(text);
+        return {ok:true, filename:f.name, obj};
+      }catch(e){ return {ok:false, filename:f.name, error:"JSON形式を読み取れませんでした"}; }
+    }));
+
+    const errs=[];
+    const nextPending={...pending};
+    csvResults.forEach((r)=>{
+      if(r.ok){ nextPending[r.type]={records:r.records, filename:r.filename}; }
+      else errs.push(r.filename+": "+r.error);
+    });
+    jsonResults.forEach((r)=>{
+      if(r.ok){
+        Object.keys(DATASET_DEFS).forEach((type)=>{
+          if(r.obj[type] && Array.isArray(r.obj[type].records)){
+            nextPending[type]={records:r.obj[type].records, filename:r.filename};
+          }
+        });
+      } else errs.push(r.filename+": "+r.error);
+    });
+
+    setPending(nextPending);
+    setLoadErrors(errs);
+    // merge immediately into parent datasets
+    const merged={...datasets};
+    Object.entries(nextPending).forEach(([type,data])=>{
+      merged[type] = {
+        records: mergeRecords(datasets[type]?.records, data.records, MERGE_KEY[type]),
+        filename: data.filename,
+      };
+    });
+    // 資格コード(LICCD)は過去のデータで桁数の表記ゆれ（先頭ゼロなし）が残っている場合があるため、
+    // 更新のたびに既存データも含めて4桁ゼロ埋めへ正規化する
+    if(merged.licenses){
+      merged.licenses = {...merged.licenses, records: merged.licenses.records.map((r)=>({...r, LICCD: normLicCode(r.LICCD)}))};
+    }
+    if(merged.englicense){
+      merged.englicense = {...merged.englicense, records: dedupeEngLicense(merged.englicense.records.map((r)=>({...r, LICCD: normLicCode(r.LICCD)})))};
+    }
+    onMerged(merged);
+  },[datasets, pending, onMerged]);
+
+  const onDrop=(e)=>{ e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); };
+
+  return (
+    <div>
+      <div className={"drop"+(dragOver?" over":"")}
+        onDragOver={(e)=>{e.preventDefault(); setDragOver(true);}}
+        onDragLeave={()=>setDragOver(false)}
+        onDrop={onDrop}
+        onClick={()=>fileInputRef.current && fileInputRef.current.click()}>
+        <Ic.Upload color={dragOver?"var(--orange)":"var(--blue)"}/>
+        <p>CSV／バックアップJSONファイルをここにドロップ、またはクリックして選択（複数可）</p>
+        <input ref={fileInputRef} type="file" multiple accept=".csv,.json" style={{display:"none"}}
+          onChange={(e)=>handleFiles(e.target.files)}/>
+      </div>
+
+      {loadErrors.length>0 &&
+        <div className="err-box"><Ic.Warn/><div>{loadErrors.map((e,i)=><div key={i}>{e}</div>)}</div></div>
+      }
+
+      <div className="status-grid">
+        {Object.entries(DATASET_DEFS).map(([key,def])=>{
+          const loaded=!!datasets[key];
+          return (
+            <div key={key} className={"status-card"+(loaded?" on":"")}>
+              {loaded ? <Ic.Check color="var(--green)"/> : <Ic.Circle color="var(--faint)"/>}
+              <div style={{minWidth:0}}>
+                <div className="t">{def.label}</div>
+                <div className="n">{loaded ? datasets[key].records.length+"件" : "未読込"}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- main app ---------------- */
+function App(){
+  const [hasStorage] = useState(()=>storageAvailable());
+  const [datasets,setDatasets]=useState({});
+  const [loading,setLoading]=useState(true);
+  const [showUpdate,setShowUpdate]=useState(false);
+  const [toast,setToast]=useState("");
+
+  const [authReady,setAuthReady]=useState(false);
+  const [role,setRole]=useState(null); // "editor" | "viewer" | null
+  const [authUser,setAuthUser]=useState(null);
+  const [loginId,setLoginId]=useState(""); // メールアドレス
+  const [loginPw,setLoginPw]=useState("");
+  const [loginError,setLoginError]=useState("");
+  const [loginBusy,setLoginBusy]=useState(false);
+  const canEdit = String(role||"").trim().toLowerCase()==="editor";
+
+  useEffect(()=>{
+    let unsub=null;
+    waitForFirebase().then(()=>{
+      if(!window.fb){ setAuthReady(true); return; }
+      const {auth, onAuthStateChanged, db, doc, getDoc} = window.fb;
+      unsub = onAuthStateChanged(auth, async (user)=>{
+        setAuthUser(user);
+        if(user){
+          try{
+            const snap = await getDoc(doc(db, "users", user.uid));
+            if(snap.exists()){
+              const raw=snap.data().role;
+              setRole(raw || "viewer");
+              setToast("取得したrole の値: 「"+JSON.stringify(raw)+"」");
+              setTimeout(()=>setToast(""), 6000);
+            } else {
+              setRole("viewer");
+              console.warn("users/"+user.uid+" ドキュメントが見つかりません。UIDが一致しているか確認してください。");
+              setToast("権限情報(users/"+user.uid+")が見つからないため、閲覧のみとして扱います");
+              setTimeout(()=>setToast(""), 6000);
+            }
+          }catch(e){
+            setRole("viewer");
+            console.error("権限情報の取得に失敗:", e);
+            setToast("権限情報の取得に失敗しました（"+(e.code||e.message)+"）。閲覧のみとして扱います");
+            setTimeout(()=>setToast(""), 6000);
+          }
+        } else {
+          setRole(null);
+        }
+        setAuthReady(true);
+      });
+    });
+    return ()=>{ if(unsub) unsub(); };
+  },[]);
+
+  const doLogin=async ()=>{
+    setLoginError("");
+    if(!window.fb){ setLoginError("Firebaseへの接続に失敗しました。しばらくして再読み込みしてください。"); return; }
+    setLoginBusy(true);
+    try{
+      await window.fb.signInWithEmailAndPassword(window.fb.auth, loginId.trim(), loginPw);
+      // 成功時はonAuthStateChangedがroleをセットする
+    }catch(e){
+      setLoginError("ログインに失敗しました（メールアドレスまたはパスワードが違います）");
+    }
+    setLoginBusy(false);
+  };
+  const doLogout=()=>{
+    if(window.fb) window.fb.signOut(window.fb.auth);
+    setLoginId(""); setLoginPw(""); setLoginError("");
+  };
+
+  useEffect(()=>{
+    if(!authUser) return; // ログインしてから読み込む
+    loadFromStorage()
+      .then((d)=>setDatasets(d))
+      .catch(()=>setDatasets({}))
+      .finally(()=>setLoading(false));
+  },[authUser]);
+
+  const requiredLoaded = ["constrslt","eng","kind"].every((k)=>datasets[k]);
+  const optionalLoaded = ["employee","literals"].every((k)=>datasets[k]);
+
+  const persist=async (next)=>{
+    const prev=datasets;
+    setDatasets(next);
+    const ok = hasStorage ? await saveToStorage(next, prev) : false;
+    setToast(ok ? "データを保存しました（Firestoreに同期済み）"
+                : "保存に失敗しました。通信状況を確認し、必要であれば「バックアップ保存」でJSONを書き出しておいてください");
+    setTimeout(()=>setToast(""), 4500);
+  };
+
+  const exportBackup=()=>{
+    const blob=new Blob([JSON.stringify(datasets)], {type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const now=new Date();
+    const ymd=now.getFullYear()+String(now.getMonth()+1).padStart(2,"0")+String(now.getDate()).padStart(2,"0");
+    const a=document.createElement("a");
+    a.href=url; a.download="配置データバックアップ_"+ymd+".json"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  /* ---------------- search state ---------------- */
+  const now=new Date();
+  const currentFY = now.getMonth()+1>=4 ? now.getFullYear() : now.getFullYear()-1;
+  const [fyFrom,setFyFrom]=useState(currentFY-9);
+  const [fyFromMonth,setFyFromMonth]=useState("04");
+  const [fyTo,setFyTo]=useState(currentFY);
+  const [fyToMonth,setFyToMonth]=useState("04");
+  const [selectedBunya,setSelectedBunya]=useState([]);
+  const [selectedKind,setSelectedKind]=useState([]);
+  const [selectedRoles,setSelectedRoles]=useState([]);
+  const [selectedLicenses,setSelectedLicenses]=useState([]);
+  const [keikMin,setKeikMin]=useState("");
+  const [heighMin,setHeighMin]=useState("");
+  const [suisMin,setSuisMin]=useState("");
+  const [syusMin,setSyusMin]=useState("");
+  const [horyuMin,setHoryuMin]=useState("");
+  const [keyword,setKeyword]=useState("");
+  const [searched,setSearched]=useState(false);
+  const [expanded,setExpanded]=useState({});
+  const [includeRetired,setIncludeRetired]=useState(false);
+  const [activeTab,setActiveTab]=useState("search");
+  const [jumpToConstno,setJumpToConstno]=useState(null);
+  const [jumpNonce,setJumpNonce]=useState(0);
+  const goToConstno=(cn)=>{ setJumpToConstno(cn); setJumpNonce((n)=>n+1); setActiveTab("detail"); };
+  const [jumpToEngcd,setJumpToEngcd]=useState(null);
+  const [jumpEngcdNonce,setJumpEngcdNonce]=useState(0);
+  const goToPersonnel=(engcd)=>{ setJumpToEngcd(engcd); setJumpEngcdNonce((n)=>n+1); setActiveTab("personnel"); };
+
+  const verifiedMap=useMemo(()=>{
+    const map={};
+    (datasets.verified?.records||[]).forEach((r)=>{
+      map[r.ENGCD+"|"+r.CONSTNO+"|"+r.POSICD] = r.STATUS || "ok"; // 旧データ(STATUS無し)は"ok"扱いで互換
+    });
+    return map;
+  },[datasets.verified]);
+  const setVerifyStatus=(engcd, constno, posicd, status)=>{
+    const key=engcd+"|"+constno+"|"+posicd;
+    const existing=datasets.verified?.records||[];
+    const filtered=existing.filter((r)=> !(r.ENGCD===engcd && r.CONSTNO===constno && r.POSICD===posicd));
+    const next = (verifiedMap[key]===status) ? filtered : [...filtered, {ENGCD:engcd, CONSTNO:constno, POSICD:posicd, STATUS:status}];
+    persist({...datasets, verified:{records: next, filename: datasets.verified?.filename || "手動確認"}});
+  };
+
+  const literalMap=useMemo(()=>{
+    const map={};
+    (datasets.literals?.records||[]).forEach((r)=>{
+      const t=r.CDTYP, c=String(parseFloat(r.LTLCD));
+      if(!map[t]) map[t]={};
+      map[t][c]=r.LTLNM;
+    });
+    return map;
+  },[datasets.literals]);
+
+  const lookupLit=(type,code)=>{
+    if(code===undefined||code===null||code==="") return "";
+    const c=String(parseFloat(code));
+    return (literalMap[type] && literalMap[type][c]) || ("(code:"+code+")");
+  };
+
+  const employeeMap=useMemo(()=>{
+    const map={};
+    (datasets.employee?.records||[]).forEach((r)=>{ map[r.ENGCD]=r; });
+    return map;
+  },[datasets.employee]);
+
+  const projectIndex=useMemo(()=>{
+    if(!requiredLoaded) return null;
+    const kindByConst={};
+    (datasets.kind.records||[]).forEach((r)=>{
+      if(!kindByConst[r.CONSTNO]) kindByConst[r.CONSTNO]=[];
+      kindByConst[r.CONSTNO].push(r);
+    });
+    const constMap={};
+    (datasets.constrslt.records||[]).forEach((r)=>{
+      constMap[r.CONSTNO]={...r, kinds:kindByConst[r.CONSTNO]||[]};
+    });
+    return constMap;
+  },[datasets, requiredLoaded]);
+
+  const bunyaOptions=useMemo(()=>{
+    if(!requiredLoaded) return [];
+    const set=new Set();
+    (datasets.constrslt.records||[]).forEach((r)=>{ if(r.BUNYA) set.add(String(parseFloat(r.BUNYA))); });
+    return [...set].sort((a,b)=>a-b).map((code)=>({code, name:(literalMap.BNYA&&literalMap.BNYA[code])||("分野("+code+")")}));
+  },[datasets, requiredLoaded, literalMap]);
+
+  const kindOptions=useMemo(()=>{
+    if(!requiredLoaded) return [];
+    const set=new Set();
+    (datasets.kind.records||[]).forEach((r)=>{ if(r.KIND) set.add(String(parseFloat(r.KIND))); });
+    return [...set]
+      .filter((code)=> !!(literalMap.SHRU && literalMap.SHRU[code])) // マスタに名称が無いコードは非表示
+      .map((code)=>({code, name: literalMap.SHRU[code]}))
+      .sort((a,b)=> parseFloat(a.code) - parseFloat(b.code)); // SHRUコード番号の昇順
+  },[datasets, requiredLoaded, literalMap]);
+
+  const roleOptions=useMemo(()=>{
+    if(!requiredLoaded) return [];
+    const set=new Set();
+    // マスタに定義済みの役割は全て候補に出す（まだ実績が無い役割も選べるように）
+    if(literalMap.TRGT) Object.keys(literalMap.TRGT).forEach((code)=>set.add(code));
+    // マスタに無いコードでも実績データ側に出現していれば候補に加える
+    (datasets.eng.records||[]).forEach((r)=>{ if(r.POSICD) set.add(String(parseFloat(r.POSICD))); });
+    return [...set].sort((a,b)=>a-b).map((code)=>({code, name:(literalMap.TRGT&&literalMap.TRGT[code])||("役割("+code+")")}));
+  },[datasets, requiredLoaded, literalMap]);
+
+  const licenseOptions=useMemo(()=>{
+    return [...(datasets.licenses?.records||[])]
+      .filter((l)=> String(parseFloat(l.LICEFG||"0"))==="1") // 技術者配置使用有無=有りのみ
+      .map((l)=>({code:l.LICCD, name:l.LICNM}))
+      .sort((a,b)=>(a.name||"").localeCompare(b.name||"","ja"));
+  },[datasets.licenses]);
+
+  const licenseNameMap=useMemo(()=>{
+    const map={};
+    (datasets.licenses?.records||[]).forEach((l)=>{ map[l.LICCD]=l.LICNM; });
+    return map;
+  },[datasets.licenses]);
+  const certLinksByEngcd=useMemo(()=>{
+    const map={};
+    (datasets.englicense?.records||[]).forEach((r)=>{
+      if(!r.CERT_URL) return;
+      if(!map[r.ENGCD]) map[r.ENGCD]=[];
+      map[r.ENGCD].push({url:r.CERT_URL, name: licenseNameMap[r.LICCD] || ("資格("+r.LICCD+")")});
+    });
+    return map;
+  },[datasets.englicense, licenseNameMap]);
+  const kanriCertByEngcd=useMemo(()=>{
+    const map={};
+    (datasets.enginfo?.records||[]).forEach((r)=>{ if(r.KANRI_CERT_URL) map[r.ENGCD]=r.KANRI_CERT_URL; });
+    return map;
+  },[datasets.enginfo]);
+
+  const employeeLicMap=useMemo(()=>{
+    const map={};
+    (datasets.englicense?.records||[]).forEach((r)=>{
+      if(!map[r.ENGCD]) map[r.ENGCD]=new Set();
+      map[r.ENGCD].add(r.LICCD);
+    });
+    return map;
+  },[datasets.englicense]);
+
+  const results=useMemo(()=>{
+    if(!requiredLoaded || !searched) return [];
+    const keikMinN = keikMin==="" ? null : parseFloat(keikMin);
+    const heighMinN = heighMin==="" ? null : parseFloat(heighMin);
+    const suisMinN = suisMin==="" ? null : parseFloat(suisMin);
+    const syusMinN = syusMin==="" ? null : parseFloat(syusMin);
+    const horyuMinN = horyuMin==="" ? null : parseFloat(horyuMin);
+    const kw=keyword.trim();
+    const byEngineer={};
+
+    (datasets.eng.records||[]).forEach((engRow)=>{
+      const proj=projectIndex[engRow.CONSTNO];
+      if(!proj) return;
+
+      if(!includeRetired){
+        const emp=employeeMap[engRow.ENGCD];
+        if(emp && emp.STATUS==="retired") return;
+      }
+
+      if(selectedLicenses.length){
+        const held=employeeLicMap[engRow.ENGCD];
+        const hasAll=selectedLicenses.every((code)=> held && held.has(code));
+        if(!hasAll) return;
+      }
+
+      const fy=fiscalYearOf(proj.KOKT);
+      const projYM = proj.KOKT && /^\d{8}$/.test(proj.KOKT) ? parseInt(proj.KOKT.slice(0,6),10) : null;
+      const fromYM = fyFrom*100 + parseInt(fyFromMonth,10);
+      const toYM = fyTo*100 + parseInt(fyToMonth,10);
+      if(projYM===null || projYM<fromYM || projYM>toYM) return;
+      if(selectedRoles.length && !selectedRoles.includes(String(parseFloat(engRow.POSICD||"")))) return;
+      if(selectedBunya.length && !selectedBunya.includes(String(parseFloat(proj.BUNYA||"")))) return;
+      if(kw){
+        const name=(proj.NAM1||"")+(proj.NAM2||"");
+        if(!name.includes(kw)) return;
+      }
+
+      const hasKindFilter = selectedKind.length || keikMinN!==null || heighMinN!==null || suisMinN!==null || syusMinN!==null || horyuMinN!==null;
+      const matchingKinds=(proj.kinds||[]).filter((k)=>{
+        if(selectedKind.length && !selectedKind.includes(String(parseFloat(k.KIND||"")))) return false;
+        const num=(v)=> v==="" || v===undefined ? null : parseFloat(v);
+        const keik=num(k.KEIK), heigh=num(k.HEIGH), suis=num(k.SUIS), syus=num(k.SYUS), horyu=num(k.HORYU);
+        if(keikMinN!==null && (keik===null||keik<keikMinN)) return false;
+        if(heighMinN!==null && (heigh===null||heigh<heighMinN)) return false;
+        if(suisMinN!==null && (suis===null||suis<suisMinN)) return false;
+        if(syusMinN!==null && (syus===null||syus<syusMinN)) return false;
+        if(horyuMinN!==null && (horyu===null||horyu<horyuMinN)) return false;
+        return true;
+      });
+      if(hasKindFilter && matchingKinds.length===0) return;
+
+      const engcd=engRow.ENGCD;
+      if(!byEngineer[engcd]){
+        const emp=employeeMap[engcd];
+        byEngineer[engcd]={
+          engcd,
+          name: emp ? emp.ID_NAME : ("(コード:"+engcd+")"),
+          dept: emp ? emp.DEPT : "",
+          position: emp ? emp.POSITION : "",
+          retired: !!(emp && emp.STATUS==="retired"),
+          entries:[],
+        };
+      }
+      const periods=[];
+      [["KOKF01","KOKT01"],["KOKF02","KOKT02"],["KOKF03","KOKT03"]].forEach(([f,t])=>{
+        if(engRow[f]) periods.push({from:engRow[f], to:engRow[t]});
+      });
+      // 従事期間が「据付開始日〜工期末」にどれだけ重なっているか（割合%）
+      // = 従事期間と据付期間が重なる日数の合計 ÷ 据付期間の日数
+      let installPct = null;
+      if(validYMD(proj.SSDAY) && validYMD(proj.KOKT) && proj.SSDAY<=proj.KOKT && periods.length>0){
+        const installLen = totalDays(proj.SSDAY, proj.KOKT);
+        if(installLen>0){
+          const overlapSum = periods.reduce((sum,p)=> sum + overlapDays(p.from,p.to, proj.SSDAY, proj.KOKT), 0);
+          installPct = Math.min(100, Math.round((overlapSum/installLen)*1000)/10); // 小数点1桁
+        }
+      }
+      const installOK = installPct!==null && installPct>=100;
+
+      const vkey=engcd+"|"+proj.CONSTNO+"|"+engRow.POSICD;
+      const entryKinds=(hasKindFilter?matchingKinds:proj.kinds).map((k)=>({
+        name: lookupLit("SHRU", k.KIND), kbn: lookupLit("SESU", k.KBN), keik:k.KEIK, heigh:k.HEIGH, suis:k.SUIS, syus:k.SYUS, horyu:k.HORYU, gaiyo:k.KGAI,
+      }));
+      // 製据区分が「据付」または「製据」を含み、かつ（据付期間内100% or 従事割合100%＝専任）なら自動で「有」
+      // 逆に据付期間内が80%以下なら自動で「無」（80〜100%未満はどちらとも判定せず、人の目で確認）
+      const isInstallKbn = entryKinds.some((k)=> k.kbn==="据付" || k.kbn==="製据");
+      const jwariFull = engRow.JWARI!==undefined && engRow.JWARI!==null && engRow.JWARI!=="" && parseFloat(engRow.JWARI)>=99.95;
+      const autoOK = isInstallKbn && (installOK || jwariFull);
+      const autoNo = !autoOK && installPct!==null && installPct<=80;
+      const manualStatus = verifiedMap[vkey] || null;
+      const effectiveStatus = manualStatus==="no" ? "no" : (manualStatus==="ok" ? "ok" : (autoOK ? "ok" : (autoNo ? "no" : null)));
+
+      byEngineer[engcd].entries.push({
+        constno: proj.CONSTNO,
+        posicd: engRow.POSICD,
+        vkey,
+        verifyStatus: effectiveStatus,
+        isAutoVerified: manualStatus===null && (autoOK || autoNo),
+        installOK,
+        installPct,
+        point: proj.POINT,
+        corinsUrl: proj.CORINS_URL,
+        ratingPdfUrl: proj.RATING_PDF_URL,
+        awardPdfUrl: proj.AWARD_PDF_URL,
+        name: ((proj.NAM1||"")+" "+(proj.NAM2||"")).trim(),
+        orderer: proj.KYA1, kokf: proj.KOKF, kokt: proj.KOKT, ssday: proj.SSDAY, fy,
+        bunya: lookupLit("BNYA", proj.BUNYA),
+        role: lookupLit("TRGT", engRow.POSICD),
+        isJv: !!proj.JVNM,
+        periods,
+        jwari: engRow.JWARI,
+        kinds: entryKinds,
+      });
+    });
+
+    Object.values(byEngineer).forEach((r)=>{
+      r.hasVerified = r.entries.some((e)=>e.verifyStatus==="ok");
+      r.allRejected = !r.hasVerified && r.entries.length>0 && r.entries.every((e)=>e.verifyStatus==="no");
+      const okPoints = r.entries.filter((e)=>e.verifyStatus==="ok" && e.point!==undefined && e.point!=="" && !isNaN(parseFloat(e.point))).map((e)=>parseFloat(e.point));
+      r.bestPoint = okPoints.length>0 ? Math.max(...okPoints) : null;
+      r.certLinks = certLinksByEngcd[r.engcd] || [];
+      r.kanriCertUrl = kanriCertByEngcd[r.engcd] || null;
+    });
+
+    return Object.values(byEngineer).sort((a,b)=>b.entries.length-a.entries.length);
+  },[requiredLoaded, searched, datasets, projectIndex, fyFrom, fyFromMonth, fyTo, fyToMonth, selectedRoles,
+     selectedBunya, selectedKind, keikMin, heighMin, suisMin, syusMin, horyuMin, keyword, employeeMap, literalMap, includeRetired,
+     selectedLicenses, employeeLicMap, verifiedMap, certLinksByEngcd, kanriCertByEngcd]);
+
+  const resetFilters=()=>{
+    setFyFrom(currentFY-9); setFyFromMonth("04"); setFyTo(currentFY); setFyToMonth("04");
+    setSelectedBunya([]); setSelectedKind([]); setSelectedRoles([]); setSelectedLicenses([]);
+    setKeikMin(""); setHeighMin(""); setSuisMin(""); setSyusMin(""); setHoryuMin("");
+    setKeyword(""); setSearched(false); setExpanded({});
+  };
+
+  if(!authReady){
+    return <div className="wrap"><div className="onboard"><p>認証状態を確認中…</p></div></div>;
+  }
+
+  if(!role){
+    return (
+      <div className="wrap">
+        <div className="onboard">
+          <h2>ログイン</h2>
+          <p>メールアドレスとパスワードを入力してください（編集権限／閲覧のみの2種類があります）</p>
+          <div style={{textAlign:"left", maxWidth:340, margin:"0 auto"}}>
+            <input className="kw-input" type="email" style={{marginBottom:10, width:"100%"}} placeholder="メールアドレス"
+              value={loginId} onChange={(e)=>setLoginId(e.target.value)}
+              onKeyDown={(e)=>{ if(e.key==="Enter") doLogin(); }}/>
+            <input className="kw-input" type="password" style={{marginBottom:14, width:"100%"}} placeholder="パスワード"
+              value={loginPw} onChange={(e)=>setLoginPw(e.target.value)}
+              onKeyDown={(e)=>{ if(e.key==="Enter") doLogin(); }}/>
+            {loginError && <p style={{color:"var(--red)", fontSize:12, margin:"0 0 12px"}}>{loginError}</p>}
+            <button className="btn-primary" style={{width:"100%", justifyContent:"center"}} onClick={doLogin} disabled={loginBusy}>
+              {loginBusy ? "ログイン中…" : "ログイン"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if(loading){
+    return <div className="wrap"><div className="onboard"><p>読み込み中…</p></div></div>;
+  }
+
+  /* ---------------- onboarding screen ---------------- */
+  if(!requiredLoaded){
+    return (
+      <div className="wrap">
+        <div className="onboard">
+          <h2>初期セットアップ</h2>
+          <p>工事実績データ・技術者情報・種別情報の3ファイル（社員データ／コードマスタは任意）を読み込んでください。一度読み込めば、次回からはこの画面は表示されず検索画面が直接開きます。<br/>
+          以前「バックアップ保存」で書き出した.jsonファイルがあれば、それをドロップするだけで即座に復元できます。</p>
+          <Uploader datasets={datasets} onMerged={(next)=>persist(next)} />
+          {!hasStorage &&
+            <div className="storage-warn">
+              <Ic.Warn/> このブラウザ／開き方（file://での直接オープンなど）では自動保存が利用できない可能性があります。読み込み後は右上の「バックアップ保存」でJSONを書き出し、次回はそのファイルを読み込んでください。
+            </div>
+          }
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------------- main search screen ---------------- */
+  return (
+    <div className="wrap">
+      <div className="topbar" style={{padding:0, marginBottom:18}}>
+        <div className="brand">
+          <div>
+            <div className="eyebrow">ENGINEERING RECORDS — CANDIDATE SEARCH</div>
+            <h1>新営業工事実績システム２</h1>
+          </div>
+        </div>
+        <div style={{display:"flex", gap:8, alignItems:"center"}}>
+          {authUser && <span style={{fontSize:11, color:"var(--muted2)"}}>{authUser.email}</span>}
+          <span className={"role-pill"+(canEdit?" editor":"")}>{canEdit ? "編集権限" : "閲覧のみ"}</span>
+          <button className="link-btn" onClick={exportBackup}><Ic.Download/> バックアップ保存</button>
+          {canEdit && <button className="link-btn" onClick={()=>setShowUpdate(true)}><Ic.Refresh/> データ更新</button>}
+          <button className="link-btn" onClick={doLogout}><Ic.X size={13}/> ログアウト</button>
+        </div>
+      </div>
+
+      {!optionalLoaded &&
+        <p className="note" style={{marginBottom:14}}>※ 社員データ／コードマスタが未読込のため、氏名や種別名の一部がコード表示になっています。{canEdit ? "「データ更新」から追加できます。" : ""}</p>
+      }
+
+      <div className="tabs">
+        <button className={"tab-btn"+(activeTab==="search"?" active":"")} onClick={()=>setActiveTab("search")}>配置候補検索</button>
+        <button className={"tab-btn"+(activeTab==="detail"?" active":"")} onClick={()=>setActiveTab("detail")}>工事詳細データ</button>
+        <button className={"tab-btn"+(activeTab==="personnel"?" active":"")} onClick={()=>setActiveTab("personnel")}>人事資格検索</button>
+        {canEdit &&
+          <button className={"tab-btn"+(activeTab==="master"?" active":"")} onClick={()=>setActiveTab("master")}>技術者情報メンテナンス</button>
+        }
+      </div>
+
+      {activeTab==="detail" &&
+        <ConstructionDetail
+          constrsltRecords={datasets.constrslt.records}
+          kindByConst={(()=>{
+            const map={};
+            (datasets.kind.records||[]).forEach((r)=>{
+              if(!map[r.CONSTNO]) map[r.CONSTNO]=[];
+              map[r.CONSTNO].push(r);
+            });
+            return map;
+          })()}
+          engRecords={datasets.eng.records}
+          literalMap={literalMap}
+          employeeMap={employeeMap}
+          initialConstno={jumpToConstno}
+          jumpNonce={jumpNonce}
+          canEdit={canEdit}
+          onSaveProject={(constno, updated)=>{
+            const next={...datasets, constrslt:{
+              records: datasets.constrslt.records.map((r)=> r.CONSTNO===constno ? {...r, ...updated, CONSTNO:constno} : r),
+              filename: datasets.constrslt.filename,
+            }};
+            persist(next);
+          }}
+          onSaveKinds={(constno, newKinds)=>{
+            const next={...datasets, kind:{
+              records: [...datasets.kind.records.filter((r)=>r.CONSTNO!==constno), ...newKinds],
+              filename: datasets.kind.filename,
+            }};
+            persist(next);
+          }}
+          onSaveEng={(constno, newEng)=>{
+            const next={...datasets, eng:{
+              records: [...datasets.eng.records.filter((r)=>r.CONSTNO!==constno), ...newEng],
+              filename: datasets.eng.filename,
+            }};
+            persist(next);
+          }}
+          onCreateProject={(newProj)=>{
+            const next={...datasets, constrslt:{
+              records: [...datasets.constrslt.records, newProj],
+              filename: datasets.constrslt.filename,
+            }};
+            persist(next);
+          }}
+        />
+      }
+
+      {activeTab==="personnel" &&
+        <PersonnelQualification
+          employees={datasets.employee?.records || []}
+          enginfoRecords={datasets.enginfo?.records || []}
+          licenses={datasets.licenses?.records || []}
+          engLicenses={datasets.englicense?.records || []}
+          literalMap={literalMap}
+          canEdit={canEdit}
+          initialEngcd={jumpToEngcd}
+          jumpNonce={jumpEngcdNonce}
+          onSaveCertLink={(engcd, liccd, url)=>{
+            const next={...datasets, englicense:{
+              records: datasets.englicense.records.map((r)=> (r.ENGCD===engcd && r.LICCD===liccd) ? {...r, CERT_URL:url} : r),
+              filename: datasets.englicense.filename,
+            }};
+            persist(next);
+          }}
+          onSaveKanriCert={(engcd, url)=>{
+            const existing=datasets.enginfo?.records || [];
+            const has=existing.some((r)=>r.ENGCD===engcd);
+            const nextRecords = has
+              ? existing.map((r)=> r.ENGCD===engcd ? {...r, KANRI_CERT_URL:url} : r)
+              : [...existing, {ENGCD:engcd, KANRI_CERT_URL:url}];
+            const next={...datasets, enginfo:{records: nextRecords, filename: datasets.enginfo?.filename || "手動編集"}};
+            persist(next);
+          }}
+          onSaveEngInfo={(engcd, draft)=>{
+            const existing=datasets.enginfo?.records || [];
+            const has=existing.some((r)=>r.ENGCD===engcd);
+            const nextRecords = has
+              ? existing.map((r)=> r.ENGCD===engcd ? {...r, ...draft, ENGCD:engcd} : r)
+              : [...existing, {...draft, ENGCD:engcd}];
+            const next={...datasets, enginfo:{records: nextRecords, filename: datasets.enginfo?.filename || "手動編集"}};
+            persist(next);
+          }}
+          onCreateEmployee={(rec)=>{
+            const next={...datasets, employee:{
+              records: [...(datasets.employee?.records||[]), rec],
+              filename: datasets.employee?.filename || "手動編集",
+            }};
+            persist(next);
+          }}
+          onSaveLicenseRow={(engcd, originalLiccd, fields)=>{
+            const norm=normLicCode(fields.LICCD);
+            const existing=datasets.englicense?.records || [];
+            let records;
+            if(originalLiccd){
+              records = existing.map((r)=> (r.ENGCD===engcd && r.LICCD===originalLiccd) ? {...r, ...fields, ENGCD:engcd, LICCD:norm} : r);
+            } else {
+              records = [...existing, {...fields, ENGCD:engcd, LICCD:norm}];
+            }
+            persist({...datasets, englicense:{records, filename: datasets.englicense?.filename || "手動編集"}});
+          }}
+          onDeleteLicenseRow={(engcd, liccd)=>{
+            const records=(datasets.englicense?.records||[]).filter((r)=> !(r.ENGCD===engcd && r.LICCD===liccd));
+            persist({...datasets, englicense:{records, filename: datasets.englicense?.filename}});
+          }}
+        />
+      }
+
+      {activeTab==="master" && canEdit &&
+        <EmployeeMaster
+          employees={datasets.employee?.records || []}
+          onSave={(records)=>{
+            const next={...datasets, employee:{records, filename: datasets.employee?.filename || "手動編集"}};
+            persist(next);
+          }}
+          licenses={datasets.licenses?.records || []}
+          engLicenses={datasets.englicense?.records || []}
+          onSaveEngLicenses={(records)=>{
+            const next={...datasets, englicense:{records, filename: datasets.englicense?.filename || "手動編集"}};
+            persist(next);
+          }}
+        />
+      }
+
+      {activeTab==="search" && <React.Fragment>
+
+      {/* search panel */}
+      <div className="search-panel">
+        <div className="search-header"><Ic.Filter/> 配置候補技術者の検索</div>
+        <div className="search-body">
+
+          <div className="field-row pair-row">
+            <div className="pair-group-grow top">
+              <div className="field-label">年度</div>
+              <div className="field-control">
+                <div className="yr-inline">
+                  <input type="number" value={fyFrom} onChange={(e)=>setFyFrom(parseInt(e.target.value||0,10))}/>
+                  <span>年</span>
+                  <select value={fyFromMonth} onChange={(e)=>setFyFromMonth(e.target.value)}>
+                    {Array.from({length:12},(_,i)=>String(i+1).padStart(2,"0")).map((m)=>(
+                      <option key={m} value={m}>{parseInt(m,10)}月</option>
+                    ))}
+                  </select>
+                  <span className="yr-era">{eraLabel(fyFrom)}年度</span>
+                  <span>〜</span>
+                  <input type="number" value={fyTo} onChange={(e)=>setFyTo(parseInt(e.target.value||0,10))}/>
+                  <span>年</span>
+                  <select value={fyToMonth} onChange={(e)=>setFyToMonth(e.target.value)}>
+                    {Array.from({length:12},(_,i)=>String(i+1).padStart(2,"0")).map((m)=>(
+                      <option key={m} value={m}>{parseInt(m,10)}月</option>
+                    ))}
+                  </select>
+                  <span className="yr-era">{eraLabel(fyTo)}年度</span>
+                </div>
+                <div className="yr-presets">
+                  {[5,10,15].map((n)=>(
+                    <button key={n} onClick={()=>{ setFyFrom(currentFY-(n-1)); setFyFromMonth("04"); setFyTo(currentFY); setFyToMonth("04"); }}>直近{n}年度</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="pair-group top">
+              <div className="field-label">退職者</div>
+              <label className="chk-inline" style={{width:"fit-content"}}>
+                <input type="checkbox" checked={includeRetired} onChange={(e)=>setIncludeRetired(e.target.checked)}/>
+                <span style={{color:"var(--muted)"}}>退職者も候補に含める</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="field-row pair-row">
+            <div className="pair-group-grow">
+              <div className="field-label">種別</div>
+              <div className="field-control">
+                <MultiSelect options={kindOptions} selected={selectedKind} onChange={setSelectedKind} searchable placeholder="選択してください（複数可）"/>
+              </div>
+            </div>
+            <div className="pair-group-grow">
+              <div className="field-label">役割</div>
+              <div className="field-control">
+                <MultiSelect options={roleOptions} selected={selectedRoles} onChange={setSelectedRoles} placeholder="選択してください（複数可）"/>
+              </div>
+            </div>
+          </div>
+
+          <div className="field-row pair-row">
+            <div className="pair-group-grow">
+              <div className="field-label">所持資格</div>
+              <div className="field-control">
+                <MultiSelect options={licenseOptions} selected={selectedLicenses} onChange={setSelectedLicenses} searchable placeholder="選択してください（複数可・すべて保有する人が対象）"/>
+              </div>
+            </div>
+            <div className="pair-group-grow" aria-hidden="true" style={{visibility:"hidden"}}>
+              <div className="field-label">-</div>
+              <div className="field-control"></div>
+            </div>
+          </div>
+
+          <div className="field-row pair-row">
+            <div className="pair-group">
+              <div className="field-label">径間以上</div>
+              <div className="field-control narrow small"><input type="number" value={keikMin} onChange={(e)=>setKeikMin(e.target.value)} placeholder="0"/></div>
+              <div className="field-unit">m</div>
+            </div>
+            <div className="pair-group">
+              <div className="field-label">高さ以上</div>
+              <div className="field-control narrow small"><input type="number" value={heighMin} onChange={(e)=>setHeighMin(e.target.value)} placeholder="0"/></div>
+              <div className="field-unit">m</div>
+            </div>
+          </div>
+
+          <div className="field-row pair-row">
+            <div className="pair-group">
+              <div className="field-label">水深以上</div>
+              <div className="field-control narrow small"><input type="number" value={suisMin} onChange={(e)=>setSuisMin(e.target.value)} placeholder="0"/></div>
+              <div className="field-unit">m</div>
+            </div>
+            <div className="pair-group">
+              <div className="field-label">取水量以上</div>
+              <div className="field-control narrow small"><input type="number" value={syusMin} onChange={(e)=>setSyusMin(e.target.value)} placeholder="0"/></div>
+              <div className="field-unit">m³/s</div>
+            </div>
+            <div className="pair-group">
+              <div className="field-label">放流量以上</div>
+              <div className="field-control narrow small"><input type="number" value={horyuMin} onChange={(e)=>setHoryuMin(e.target.value)} placeholder="0"/></div>
+              <div className="field-unit">m³/s</div>
+            </div>
+          </div>
+
+          <FieldRow label="工事件名">
+            <div className="field-control"><input type="text" value={keyword} onChange={(e)=>setKeyword(e.target.value)} placeholder="キーワード（任意）例）ダム、水門"/></div>
+          </FieldRow>
+
+        </div>
+        <div className="actions-row">
+          <button className="btn-ghost" onClick={resetFilters}><Ic.Reset/> クリア</button>
+          <button className="btn-search" onClick={()=>setSearched(true)}><Ic.Search/> 検索する</button>
+        </div>
+      </div>
+
+      {/* results */}
+      {searched &&
+        <div className="card">
+          <div className="res-hd">
+            <div>
+              <h2>配置候補技術者</h2>
+              <p className="sub">{results.length}名が該当しました</p>
+            </div>
+          </div>
+
+          {results.length===0 &&
+            <div className="empty">条件に合致する技術者が見つかりませんでした。条件を緩めて再検索してください。</div>
+          }
+
+          {results.map((r)=>{
+            const isOpen=!!expanded[r.engcd];
+            return (
+              <div key={r.engcd} className={"eng-item"+(r.hasVerified?" verified":"")+(r.allRejected?" rejected":"")}>
+                <div className="eng-hd" role="button" tabIndex={0}
+                  onClick={()=>setExpanded((e)=>({...e,[r.engcd]:!e[r.engcd]}))}
+                  onKeyDown={(e)=>{ if(e.key==="Enter"||e.key===" ") setExpanded((ex)=>({...ex,[r.engcd]:!ex[r.engcd]})); }}>
+                  <div className="left">
+                    {isOpen ? <Ic.Down/> : <Ic.Right/>}
+                    <button type="button" className="name name-link" onClick={(e)=>{ e.stopPropagation(); goToPersonnel(r.engcd); }}>{r.name}</button>
+                    {(r.dept || r.position) &&
+                      <span className="code">{[r.dept, r.position].filter(Boolean).join(" ／ ")}</span>
+                    }
+                    {r.retired && <span className="m-badge retired">退職</span>}
+                    {r.hasVerified && <span className="verified-badge"><Ic.Check size={12}/> 確認済み</span>}
+                    {r.allRejected && <span className="rejected-badge"><Ic.X size={12}/> 据付実績なし</span>}
+                    {r.kanriCertUrl &&
+                      <a className="corins-link" href={r.kanriCertUrl} target="_blank" rel="noopener noreferrer"
+                        title="監理技術者資格証" onClick={(e)=>e.stopPropagation()}>
+                        <Ic.Link size={12}/> 監理技術者資格証
+                      </a>
+                    }
+                    {r.certLinks.map((cl,ci)=>(
+                      <a key={ci} className="corins-link" href={cl.url} target="_blank" rel="noopener noreferrer"
+                        title={cl.name+"の証明書"} onClick={(e)=>e.stopPropagation()}>
+                        <Ic.Link size={12}/> {cl.name}
+                      </a>
+                    ))}
+                  </div>
+                  <span style={{display:"flex", alignItems:"center", gap:8}}>
+                    {r.bestPoint!==null && <span className="point-badge" title="据付実績「有」の中での最高工事点数"><Ic.Star size={12}/> 最高点 {r.bestPoint}点</span>}
+                    <span className="badge-count">該当 {r.entries.length} 件</span>
+                  </span>
+                </div>
+                {isOpen &&
+                  <div className="eng-body">
+                    {r.entries.map((en,i)=>(
+                      <div key={i} className={"entry"+(en.verifyStatus==="ok"?" verified":"")+(en.verifyStatus==="no"?" rejected":"")}>
+                        <div className="row1">
+                          <div className="row1-left">
+                            <div className="verify-toggle" onClick={(e)=>e.stopPropagation()}>
+                              <button type="button"
+                                className={"vt-btn vt-ok"+(en.verifyStatus==="ok"?" active":"")}
+                                title="据付実績あり（実績として認める）"
+                                onClick={()=>setVerifyStatus(r.engcd, en.constno, en.posicd, "ok")}>
+                                <Ic.Check size={13}/> 有
+                              </button>
+                              <button type="button"
+                                className={"vt-btn vt-no"+(en.verifyStatus==="no"?" active":"")}
+                                title="据付実績なし（実績として認めない）"
+                                onClick={()=>setVerifyStatus(r.engcd, en.constno, en.posicd, "no")}>
+                                <Ic.X size={13}/> 無
+                              </button>
+                              {en.isAutoVerified && <span className="auto-tag" title="製据区分が「据付/製据」かつ据付期間内100%または専任100%のため自動判定">自動</span>}
+                            </div>
+                            <button type="button" className="constno-link" onClick={()=>goToConstno(en.constno)}>{en.constno}</button>
+                            <span className="pname">{en.name || "(工事名なし)"}</span>
+                            <span className="role-badge">{en.role||"役割不明"}</span>
+                            {en.isJv && <span className="jv-badge">JV</span>}
+                            {en.installPct!==null && (
+                              <span className={"install-badge"+(en.installOK?" full":"")} title="従事期間のうち、据付開始日〜工期末と重なっている日数の割合">
+                                据付期間内 {en.installPct}%
+                              </span>
+                            )}
+                            {en.point!==undefined && en.point!==null && en.point!=="" &&
+                              <span className="score-badge" title="この工事の工事点数">
+                                <Ic.Star size={12}/> 工事点数 {en.point}点
+                              </span>
+                            }
+                          </div>
+                          <div className="row1-right">
+                            {en.corinsUrl &&
+                              <a className="corins-link" href={en.corinsUrl} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()}>
+                                <Ic.Link size={12}/> コリンズ証明書
+                              </a>
+                            }
+                            {en.ratingPdfUrl &&
+                              <a className="corins-link" href={en.ratingPdfUrl} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()}>
+                                <Ic.Link size={12}/> 工事評定点PDF
+                              </a>
+                            }
+                            {en.awardPdfUrl &&
+                              <a className="corins-link" href={en.awardPdfUrl} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()}>
+                                <Ic.Link size={12}/> 工事表彰PDF
+                              </a>
+                            }
+                          </div>
+                        </div>
+                        <div className="meta">
+                          発注者: {en.orderer||"-"} ／ 工期: {fmtDate(en.kokf)} 〜 {fmtDate(en.kokt)}（{eraLabel(en.fy)}年度） ／ 分野: {en.bunya||"-"}
+                          {en.ssday && <span> ／ 据付開始日: <b>{fmtDate(en.ssday)}</b></span>}
+                        </div>
+                        <div className="meta">
+                          従事期間: {en.periods.length>0 ? en.periods.map((p,pi)=>(
+                            <span key={pi}>{pi>0 && "、"}{fmtDate(p.from)}〜{fmtDate(p.to)}</span>
+                          )) : "-"}
+                          {" ／ 従事割合: "}
+                          {en.jwari!==undefined && en.jwari!==null && en.jwari!=="" ? (
+                            parseFloat(en.jwari)>=99.95
+                              ? <span className="jwari-full">専任(100%)</span>
+                              : <span>{en.jwari}%</span>
+                          ) : "-"}
+                        </div>
+                        {en.kinds.length>0 &&
+                          <div className="kinds-list">
+                            {en.kinds.map((k,ki)=>(
+                              <div key={ki} className="kind-item">
+                                <span className="kind-tag">
+                                  {k.kbn && <span className="kbn-prefix">{k.kbn}</span>}
+                                  {k.name}
+                                  {(k.keik||k.heigh||k.suis||k.syus||k.horyu) ?
+                                    " ("+[
+                                      k.keik && ("径間"+k.keik),
+                                      k.heigh && ("高さ"+k.heigh),
+                                      k.suis && ("水深"+k.suis),
+                                      k.syus && ("取水量"+k.syus),
+                                      k.horyu && ("放流量"+k.horyu),
+                                    ].filter(Boolean).join(" / ")+")" : ""}
+                                </span>
+                                {k.gaiyo &&
+                                  <span className="kind-gaiyo">
+                                    <span className="gaiyo-label">概要</span>
+                                    <span className="gaiyo-text">{k.gaiyo}</span>
+                                  </span>
+                                }
+                              </div>
+                            ))}
+                          </div>
+                        }
+                      </div>
+                    ))}
+                  </div>
+                }
+              </div>
+            );
+          })}
+        </div>
+      }
+
+      </React.Fragment>}
+
+      {/* update overlay */}
+      {showUpdate &&
+        <div className="overlay-bg" onClick={(e)=>{ if(e.target===e.currentTarget) setShowUpdate(false); }}>
+          <div className="overlay-card">
+            <div className="overlay-hd">
+              <h3>データ更新（追加・上書き）</h3>
+              <button className="icon-btn" onClick={()=>setShowUpdate(false)}><Ic.X/></button>
+            </div>
+            <p style={{fontSize:12,color:"var(--muted)",marginTop:0}}>
+              新しいCSVを読み込むと、同じ工事番号／コードのデータは上書きされ、新規分は追加されます。
+            </p>
+            <Uploader datasets={datasets} onMerged={(next)=>persist(next)} />
+          </div>
+        </div>
+      }
+
+      {toast && <div className="toast">{toast}</div>}
+    </div>
+  );
+}
+
+const root=ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App/>);
+</script>
+</body>
+</html>
