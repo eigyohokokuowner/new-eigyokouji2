@@ -322,6 +322,9 @@
   .master-add-form input{border:1px solid var(--line);background:var(--panel-sunk);color:var(--ink);
     border-radius:8px;padding:8px 10px;font-size:13px;}
   .m-form-err{font-size:12px;color:var(--red);}
+  .xml-textarea{width:100%;border:1.5px solid var(--line);background:var(--panel-sunk);color:var(--ink);
+    border-radius:9px;padding:10px 13px;font-size:11.5px;font-family:var(--mono);resize:vertical;}
+  .xml-textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
   .master-group-label{font-family:var(--mono);font-size:11.5px;font-weight:700;letter-spacing:.03em;
     color:var(--green);margin:18px 0 8px;}
   .master-group-label:first-of-type{margin-top:14px;}
@@ -809,6 +812,155 @@ function optionsFromLiteral(literalMap, type){
     .sort((a,b)=>parseFloat(a.code)-parseFloat(b.code));
 }
 
+/* ---------------- コリンズXML取込 ---------------- */
+function xmlFind(root, ...tagPath){
+  let cur=root;
+  for(const tag of tagPath){
+    if(!cur) return null;
+    const found=cur.getElementsByTagName(tag);
+    if(!found.length) return null;
+    cur=found[0];
+  }
+  return cur;
+}
+function xmlFindText(root, ...tagPath){
+  const el=xmlFind(root, ...tagPath);
+  return el ? (el.textContent||"").trim() : "";
+}
+function xmlAll(root, tag){
+  return root ? Array.from(root.getElementsByTagName(tag)) : [];
+}
+const DAKUTEN_MAP={"ガ":"カ","ギ":"キ","グ":"ク","ゲ":"ケ","ゴ":"コ","ザ":"サ","ジ":"シ","ズ":"ス","ゼ":"セ","ゾ":"ソ",
+  "ダ":"タ","ヂ":"チ","ヅ":"ツ","デ":"テ","ド":"ト","バ":"ハ","ビ":"ヒ","ブ":"フ","ベ":"ヘ","ボ":"ホ",
+  "パ":"ハ","ピ":"ヒ","プ":"フ","ペ":"ヘ","ポ":"ホ","ヴ":"ウ"};
+function dakutenNormalize(s){
+  return (s||"").split("").map((c)=>DAKUTEN_MAP[c]||c).join("");
+}
+// 氏名の「姓 名」のスペース有無・全角半角の表記ゆれを無視して比較するための正規化
+function normName(s){
+  return (s||"").replace(/[\s　]/g,"");
+}
+function findCodeByName(literalMap, type, name){
+  if(!name) return "";
+  const map=literalMap[type]||{};
+  for(const code of Object.keys(map)){ if(map[code]===name) return code; }
+  for(const code of Object.keys(map)){ if(map[code] && (map[code].includes(name) || name.includes(map[code]))) return code; }
+  const normName=dakutenNormalize(name);
+  for(const code of Object.keys(map)){ if(map[code] && dakutenNormalize(map[code])===normName) return code; }
+  return "";
+}
+function findEigyoCodeByName(name){
+  for(const code of Object.keys(EIGYCD_MAP)){ if(EIGYCD_MAP[code]===name) return code; }
+  return "";
+}
+// 「国の機関　　農林水産省　　東海農政局　　○○事務所」のような分類名を
+// 発注者（KYA1）／担当事務所（KYA2）に分割する
+function splitOrderer(bunruimei){
+  const parts=(bunruimei||"").split(/　　+/).map((s)=>s.trim()).filter(Boolean);
+  if(parts.length>=3) return {kya1: parts.slice(1,-1).join(""), kya2: parts[parts.length-1]};
+  if(parts.length===2) return {kya1: parts[0], kya2: parts[1]};
+  if(parts.length===1) return {kya1: parts[0], kya2: ""};
+  return {kya1:"", kya2:""};
+}
+
+function parseCorinsXml(xmlString, literalMap, employeeMap){
+  let doc;
+  try{
+    doc=new DOMParser().parseFromString(xmlString, "application/xml");
+  }catch(e){
+    return {error:"XMLとして読み取れませんでした"};
+  }
+  if(doc.getElementsByTagName("parsererror").length){
+    return {error:"XMLの形式が正しくありません（貼り付けた内容を確認してください）"};
+  }
+  const root=doc.documentElement;
+  if(!root || root.tagName!=="コリンズ"){
+    return {error:"コリンズ形式のXMLではないようです（ルート要素が<コリンズ>ではありません）"};
+  }
+
+  const {kya1, kya2}=splitOrderer(xmlFindText(root,"発注機関情報","発注機関分類名"));
+  const tkindText=xmlFindText(root,"登録種別","登録種別");
+  const tkind = tkindText.includes("竣工") ? findCodeByName(literalMap,"TSBT","竣工")
+              : tkindText.includes("変更") ? findCodeByName(literalMap,"TSBT","変更")
+              : tkindText.includes("受注") ? findCodeByName(literalMap,"TSBT","受注") : "";
+
+  const kyknIncl=parseFloat(xmlFindText(root,"請負金額"));
+  const header={
+    TNO: xmlFindText(root,"登録番号"),
+    TKIND: tkind,
+    NAM1: xmlFindText(root,"件名"),
+    NAM2: "",
+    KYKN: isNaN(kyknIncl) ? "" : String(Math.round(kyknIncl/1.1)), // コリンズの請負金額は税込のため税抜きに変換
+    KOKF: xmlFindText(root,"契約工期","開始年月日"),
+    KOKT: xmlFindText(root,"契約工期","完了年月日"),
+    KYA1: kya1,
+    KYA2: kya2,
+    SEAD: xmlFindText(root,"施工場所等","施工場所","起点","住所"),
+    BUNYA: findCodeByName(literalMap,"BNYA", xmlFindText(root,"公共事業の分野","公共事業の分野")),
+    KKGY: findCodeByName(literalMap,"KKGS", xmlFindText(root,"本件登録工事の受注に対応した建設業許可業種","本件登録工事の受注に対応した建設業許可業種")),
+    NSKBN: findCodeByName(literalMap,"NSKB", xmlFindText(root,"本件登録工事の入札参加資格区分","本件登録工事の入札参加資格区分")),
+    KTYP: findCodeByName(literalMap,"KYKT", xmlFindText(root,"契約方式","契約方式")),
+    JTYP: findCodeByName(literalMap,"JCKT", xmlFindText(root,"受注形態","受注形態")),
+    KKIND01: findCodeByName(literalMap,"KOSY", xmlFindText(root,"工種_工法_型式","工種")),
+    KMETH01: findCodeByName(literalMap,"KATA", xmlFindText(root,"工種_工法_型式","工法_型式")),
+    EIGYCD: findEigyoCodeByName(xmlFindText(root,"請負者情報","請負者","幹事企業","事業所","事業所名") || xmlFindText(root,"請負者情報","幹事企業","事業所","事業所名")),
+    JVNM: xmlFindText(root,"受注形態","受注形態")==="単独" ? "" : xmlFindText(root,"件名"),
+  };
+
+  const engBlocks=xmlAll(root,"技術者情報");
+  const projTotalDays=totalDays(header.KOKF, header.KOKT);
+  const engRows=engBlocks.map((el)=>{
+    const name=xmlFindText(el,"氏名");
+    const roleText=xmlFindText(el,"役割");
+    const emp=Object.values(employeeMap||{}).find((e)=>normName(e.ID_NAME)===normName(name));
+    const kokf01=xmlFindText(el,"従事期間","開始年月日");
+    const kokt01=xmlFindText(el,"従事期間","完了年月日");
+    // 従事割合はXMLに無いため、従事期間1の日数 ÷ 工期全体の日数 から算出する
+    const periodDays=totalDays(kokf01, kokt01);
+    const jwari=(projTotalDays>0 && periodDays>0)
+      ? String(Math.min(100, Math.round((periodDays/projTotalDays)*1000)/10))
+      : "";
+    return {
+      role: roleText,
+      POSICD: findCodeByName(literalMap,"TRGT",roleText),
+      name,
+      ENGCD: emp ? emp.ENGCD : "",
+      matched: !!emp,
+      KOKF01: kokf01,
+      KOKT01: kokt01,
+      KOKF02:"", KOKT02:"", KOKF03:"", KOKT03:"",
+      JWARI: jwari,
+    };
+  });
+
+  const kindRows=[];
+  const suimon=xmlFind(root,"詳細技術情報","水門扉等工事","河川用水門扉工");
+  if(suimon){
+    const suis=xmlFindText(suimon,"設計水深");
+    const gateType=xmlFindText(suimon,"ゲートの種類","ゲートの種類") || xmlFindText(suimon,"ゲートの種類");
+    const items=xmlAll(suimon,"扉体_開閉機の種類");
+    items.forEach((item)=>{
+      const keik=xmlFindText(item,"扉体の純径間");
+      const heigh=xmlFindText(item,"扉体の有効高さ");
+      if(!keik && !heigh) return; // 空の予備枠は無視
+      const kouzou=xmlFindText(item,"扉体構造","扉体構造") || xmlFindText(item,"扉体構造");
+      const kaihei=(xmlFindText(item,"開閉機の種類","開閉機の種類") || xmlFindText(item,"開閉機の種類")).replace(/^その他[\u3000 ]*/,"");
+      const nameGuess="河川（"+gateType.replace("ローラーゲート","ローラゲート")+(kouzou?"・"+kouzou:"")+"）";
+      kindRows.push({
+        KBN:"", KIND: findCodeByName(literalMap,"SHRU",nameGuess), KIND_GUESS: nameGuess,
+        KGAI:"", KIKA: findCodeByName(literalMap,"KHKI",kaihei), ZAIS:"",
+        KEIK: keik, HEIGH: heigh, INZU:"", SUIS: suis, SYUS:"", HORYU:"",
+      });
+    });
+  }
+
+  return {
+    header, engRows, kindRows,
+    rawGaiyo: xmlFindText(root,"工事概要"),
+    unsupportedKind: !suimon,
+  };
+}
+
 function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalMap, employeeMap, initialConstno, jumpNonce, canEdit, onSaveProject, onSaveKinds, onSaveEng, onCreateProject}){
   const [query,setQuery]=useState("");
   const [selected,setSelected]=useState(null);
@@ -959,6 +1111,56 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
     setQuery(cn);
   };
 
+  const [showXml,setShowXml]=useState(false);
+  const [xmlConstno,setXmlConstno]=useState("");
+  const [xmlRaw,setXmlRaw]=useState("");
+  const [xmlError,setXmlError]=useState("");
+  const [xmlResultMsg,setXmlResultMsg]=useState("");
+  const [xmlDragOver,setXmlDragOver]=useState(false);
+  const xmlFileInputRef=useRef(null);
+  const readXmlFile=(file)=>{
+    setXmlError("");
+    const reader=new FileReader();
+    reader.onload=(ev)=>setXmlRaw(String(ev.target.result||""));
+    reader.onerror=()=>setXmlError("ファイルを読み取れませんでした");
+    reader.readAsText(file, "UTF-8");
+  };
+  const importCorinsXml=()=>{
+    setXmlError(""); setXmlResultMsg("");
+    const cn=xmlConstno.trim();
+    if(!cn){ setXmlError("工番を入力してください（XMLには工番の情報が含まれていないため）"); return; }
+    if(!xmlRaw.trim()){ setXmlError("XMLの内容を貼り付けてください"); return; }
+    const parsed=parseCorinsXml(xmlRaw, literalMap, employeeMap);
+    if(parsed.error){ setXmlError(parsed.error); return; }
+
+    const exists=constrsltRecords.some((r)=>r.CONSTNO===cn);
+    if(exists){
+      onSaveProject(cn, parsed.header);
+    } else {
+      onCreateProject({CONSTNO:cn, ...parsed.header});
+    }
+
+    const existingKinds=kindByConst[cn]||[];
+    const newKinds=parsed.kindRows.map((k)=>({CONSTNO:cn, SEQNO:"", KBN:k.KBN, KIND:k.KIND, KGAI:k.KGAI, KIKA:k.KIKA, ZAIS:k.ZAIS, KEIK:k.KEIK, HEIGH:k.HEIGH, INZU:k.INZU, SUIS:k.SUIS, SYUS:k.SYUS, HORYU:k.HORYU}));
+    onSaveKinds(cn, [...existingKinds, ...newKinds].map((k,i)=>({...k, CONSTNO:cn, SEQNO:String(i+1)})));
+
+    const existingEng=engRecords.filter((r)=>r.CONSTNO===cn);
+    const newEng=parsed.engRows.map((e)=>({CONSTNO:cn, SEQNO:"", POSICD:e.POSICD, ENGCD:e.ENGCD, KOKF01:e.KOKF01, KOKT01:e.KOKT01, KOKF02:"", KOKT02:"", KOKF03:"", KOKT03:"", JWARI:e.JWARI}));
+    onSaveEng(cn, [...existingEng, ...newEng].map((e,i)=>({...e, CONSTNO:cn, SEQNO:String(i+1)})));
+
+    const unmatched=parsed.engRows.filter((e)=>!e.matched).map((e)=>e.name);
+    let msg=(exists?"既存の工事に追加取込みしました。":"新規登録しました。")
+      +"種別"+parsed.kindRows.length+"件、技術者"+parsed.engRows.length+"件を取り込みました。";
+    if(parsed.unsupportedKind) msg+=" ※この工種カテゴリの種別自動判定には対応していないため、種別は0件です。手動で追加してください。";
+    if(unmatched.length) msg+=" ※社員データに見つからなかった技術者："+unmatched.join("、")+"（技術者情報メンテナンスで先に登録してから、種別・技術者の編集でコードを入力してください）";
+    msg+=" 必ず内容を確認・修正してください（従事割合は従事期間1÷工期全体日数から自動算出した参考値、製据区分などXMLに無い項目は空欄になっています。金額は税込→税抜きに換算済みです）。";
+    setXmlResultMsg(msg);
+    setSelected(cn);
+    setQuery(cn);
+    setEditingHeader(false);
+    setEditingRows(false);
+  };
+
   return (
     <div className="card detail-card">
       <div className="res-hd">
@@ -967,9 +1169,45 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
           <p className="sub">条件を指定して検索してください</p>
         </div>
         {canEdit &&
-          <button className="btn-outline" onClick={openNewForm}><Ic.Plus/> 新規工事を登録</button>
+          <span style={{display:"flex", gap:8}}>
+            <button className="btn-outline" onClick={()=>{ setShowXml((v)=>!v); setXmlError(""); setXmlResultMsg(""); }}><Ic.Upload/> コリンズXMLから取込</button>
+            <button className="btn-outline" onClick={openNewForm}><Ic.Plus/> 新規工事を登録</button>
+          </span>
         }
       </div>
+
+      {showXml &&
+        <div className="master-add-form" style={{flexDirection:"column", alignItems:"stretch", marginBottom:18}}>
+          <p style={{fontSize:12,color:"var(--muted)",margin:"0 0 10px"}}>
+            コリンズから出力したXMLを貼り付けると、工事情報・種別・技術者を自動で取り込みます。
+            工番はXMLに含まれないため、既存の工番なら追加取込み、新しい工番なら新規登録になります。
+            取り込み後は必ず内容を確認・修正してください（従事割合は従事期間1と工期全体から自動算出した参考値、製据区分などXMLに無い項目は空欄になります。金額は税込→税抜きに換算します）。
+          </p>
+          <DTInput value={xmlConstno} onChange={setXmlConstno} placeholder="工番（例：99G-9999）" mono/>
+          <div className={"drop xml-drop"+(xmlDragOver?" over":"")} style={{marginTop:10, padding:"18px"}}
+            onDragOver={(e)=>{ e.preventDefault(); setXmlDragOver(true); }}
+            onDragLeave={()=>setXmlDragOver(false)}
+            onDrop={(e)=>{
+              e.preventDefault(); setXmlDragOver(false);
+              const file=e.dataTransfer.files && e.dataTransfer.files[0];
+              if(file) readXmlFile(file);
+            }}
+            onClick={()=>xmlFileInputRef.current && xmlFileInputRef.current.click()}>
+            <Ic.Upload color={xmlDragOver?"var(--accent)":"var(--blue)"} size={22}/>
+            <p style={{margin:"6px 0 0", fontSize:12}}>XMLファイルをここにドロップ、またはクリックして選択</p>
+            <input ref={xmlFileInputRef} type="file" accept=".xml" style={{display:"none"}}
+              onChange={(e)=>{ if(e.target.files[0]) readXmlFile(e.target.files[0]); }}/>
+          </div>
+          <textarea className="xml-textarea" style={{marginTop:10}} rows={6} value={xmlRaw}
+            onChange={(e)=>setXmlRaw(e.target.value)} placeholder="またはここにXMLの内容を直接貼り付け"/>
+          <div style={{display:"flex", gap:10, marginTop:10}}>
+            <button className="btn-primary" onClick={importCorinsXml}>取り込む</button>
+            <button className="btn-ghost" onClick={()=>setShowXml(false)}>キャンセル</button>
+          </div>
+          {xmlError && <div className="m-form-err" style={{marginTop:8}}>{xmlError}</div>}
+          {xmlResultMsg && <div className="storage-warn" style={{marginTop:10}}>{xmlResultMsg}</div>}
+        </div>
+      }
 
       {showNew &&
         <div className="master-add-form" style={{flexDirection:"column", alignItems:"stretch", marginBottom:18}}>
