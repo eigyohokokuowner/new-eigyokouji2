@@ -15,7 +15,7 @@
     getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
   import {
-    getFirestore, collection, doc, getDoc, getDocs, writeBatch
+    getFirestore, collection, doc, getDoc, getDocs, setDoc, writeBatch, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const firebaseConfig = {
@@ -34,7 +34,7 @@
   window.fb = {
     auth, db,
     signInWithEmailAndPassword, onAuthStateChanged, signOut,
-    collection, doc, getDoc, getDocs, writeBatch,
+    collection, doc, getDoc, getDocs, setDoc, writeBatch, serverTimestamp,
   };
   window.dispatchEvent(new Event("firebase-ready"));
 </script>
@@ -254,10 +254,14 @@
   .entry .constno{font-family:var(--mono);font-size:10.5px;color:var(--accent);}
   .eng-item.verified{background:#EAF7EE;border-color:#BEE3C6;}
   .eng-item.verified .eng-hd:hover{background:#DFF2E4;}
+  .eng-item.partial{background:#FFF9E6;border-color:#F3E2A0;}
+  .eng-item.partial .eng-hd:hover{background:#FFF3CC;}
   .eng-item.rejected{background:#FBEEEE;border-color:#EFC7C7;}
   .eng-item.rejected .eng-hd:hover{background:#F7E4E4;}
   .verified-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;
     color:var(--green);background:var(--green-soft);padding:3px 9px;border-radius:999px;}
+  .partial-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;
+    color:#B4650A;background:#FFF3CC;padding:3px 9px;border-radius:999px;}
   .rejected-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;
     color:var(--red);background:var(--red-soft);padding:3px 9px;border-radius:999px;}
   .point-badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:800;
@@ -275,6 +279,8 @@
   .vt-btn:hover{background:var(--panel-raised);}
   .vt-btn.vt-ok.active{background:var(--green);color:#fff;}
   .vt-btn.vt-no.active{background:var(--red);color:#fff;}
+  .vt-btn:disabled{opacity:.4;cursor:not-allowed;}
+  .vt-btn:disabled:hover{background:var(--panel);}
   .auto-tag{font-size:9.5px;font-weight:700;color:var(--cyan);background:var(--cyan-soft);
     padding:2px 7px;border-radius:999px;align-self:center;}
   .role-badge{font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:999px;
@@ -282,6 +288,10 @@
   .install-badge{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;
     background:var(--cyan-soft);color:var(--cyan);}
   .install-badge.full{background:var(--green-soft);color:var(--green);}
+  .sched-badge{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;
+    padding:2px 8px;border-radius:999px;}
+  .sched-badge.ok{background:var(--green-soft);color:var(--green);}
+  .sched-badge.warn{background:var(--amber-soft);color:#B4650A;border:1px solid rgba(180,101,10,.25);}
   .constno-link{font-family:var(--mono);font-size:10.5px;color:var(--accent);background:none;border:none;
     padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px;}
   .constno-link:hover{color:var(--accent2);}
@@ -619,29 +629,92 @@ function storageAvailable(){
   return true;
 }
 
+/* ---- ローカルキャッシュ（ブラウザ内、IndexedDB）----
+   Firestoreから取得した各データ種別を、更新日時と一緒にこの端末のブラウザ内に保存しておく。
+   次回読み込み時は、まずFirestore側の「meta（更新日時）」だけを安く確認し、
+   前回から変わっていない種別はここに保存したキャッシュをそのまま使う。 */
+const LCACHE_DB="engSearchLocalCache", LCACHE_STORE="cache";
+function lcacheOpen(){
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open(LCACHE_DB,1);
+    req.onupgradeneeded=()=>{ req.result.createObjectStore(LCACHE_STORE); };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+}
+async function lcacheGetAll(){
+  try{
+    const db=await lcacheOpen();
+    return await new Promise((resolve)=>{
+      const tx=db.transaction(LCACHE_STORE,"readonly");
+      const req=tx.objectStore(LCACHE_STORE).get("all");
+      req.onsuccess=()=>resolve(req.result || {});
+      req.onerror=()=>resolve({});
+    });
+  }catch(e){ return {}; }
+}
+async function lcacheSetAll(cacheObj){
+  try{
+    const db=await lcacheOpen();
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction(LCACHE_STORE,"readwrite");
+      tx.objectStore(LCACHE_STORE).put(cacheObj, "all");
+      tx.oncomplete=()=>resolve();
+      tx.onerror=()=>reject(tx.error);
+    });
+  }catch(e){ /* キャッシュ保存に失敗しても致命的ではないので無視 */ }
+}
+
 async function loadFromStorage(){
   await waitForFirebase();
   if(!window.fb) return {};
-  const {db, collection, getDocs}=window.fb;
+  const {db, collection, doc, getDoc, getDocs}=window.fb;
+  const localCache=await lcacheGetAll(); // { [type]: {records:[...], updatedAtMs:number} }
+  const nextCache={...localCache};
   const out={};
+
   for(const type of FS_TYPES){
+    let serverUpdatedMs=null;
+    try{
+      const metaSnap=await getDoc(doc(db,"meta",type));
+      if(metaSnap.exists()){
+        const ts=metaSnap.data().updatedAt;
+        // 新形式：数値のミリ秒。旧形式（serverTimestamp()で書かれたTimestamp型）にも一応対応。
+        serverUpdatedMs = typeof ts==="number" ? ts : (ts && ts.toMillis ? ts.toMillis() : null);
+      }
+    }catch(e){ /* metaが読めない場合はキャッシュを信用せず必ず取得し直す */ }
+
+    const cached=localCache[type];
+    const cacheIsFresh = cached && serverUpdatedMs!==null && cached.updatedAtMs===serverUpdatedMs;
+
+    if(cacheIsFresh){
+      if(cached.records.length>0) out[type]={records: cached.records, filename:"firestore(cache)"};
+      continue;
+    }
+
     try{
       const snap=await getDocs(collection(db, type));
       const records=[];
       snap.forEach((d)=>{ const data={...d.data()}; delete data.__seq; records.push(data); });
       if(records.length>0) out[type]={records, filename:"firestore"};
+      nextCache[type]={records, updatedAtMs: serverUpdatedMs};
     }catch(e){
       // 未作成のコレクション・権限不足は無視して次へ
     }
   }
+
+  lcacheSetAll(nextCache); // 完了を待たずに進めてよい
   return out;
 }
 
 async function saveToStorage(next, prev){
   await waitForFirebase();
   if(!window.fb) return false;
-  const {db, doc, writeBatch}=window.fb;
+  const {db, doc, setDoc, writeBatch}=window.fb;
   try{
+    const localCache=await lcacheGetAll();
+    const nextCache={...localCache};
+
     for(const type of FS_TYPES){
       const nextRecordsRaw=next[type]?.records || [];
       const prevRecordsRaw=(prev && prev[type]?.records) || [];
@@ -673,7 +746,17 @@ async function saveToStorage(next, prev){
         });
         await batch.commit();
       }
+
+      // この種別の更新日時を、サーバーとローカルキャッシュの両方に「同じ数値」で記録する。
+      // （以前はサーバー側をserverTimestamp()、ローカル側をDate.now()で別々に記録しており、
+      // 　両者がミリ秒単位で一致することはほぼ無いため、保存した本人のキャッシュまで
+      // 　毎回無効化されて無駄なフル再読み込みが発生するバグがあった）
+      const updatedAtMs=Date.now();
+      await setDoc(doc(db,"meta",type), {updatedAt: updatedAtMs});
+      nextCache[type]={records: nextRecordsRaw, updatedAtMs};
     }
+
+    lcacheSetAll(nextCache);
     return true;
   }catch(e){
     console.error("Firestore save error:", e);
@@ -767,6 +850,33 @@ function lit(literalMap, type, code){
   if(code===undefined || code===null || code==="") return "";
   const c=String(parseFloat(code));
   return (literalMap[type] && literalMap[type][c]) || ("(code:"+code+")");
+}
+// ゲートカテゴリ／ゲート種類／ゲート構造の3階層分類
+// 「ダム（ローラゲート・ガーダ）」「河川（ローラゲート・ガーダ）」のような命名規則の種別名を
+// カテゴリ（ダム／河川）・種類・構造に分解する。ダム／河川以外は「その他」カテゴリとし、
+// 名称全体をそのまま「ゲート種類」として扱う（構造は空欄）。
+// 下記リストの名称は、命名規則がまちまちで自動分解になじまないため、今回の分類対象からは除外する。
+const GATE_HIERARCHY_EXCLUDED = new Set([
+  "ゴム引布製起伏堰","ウオッチマンゲート","壁付円形多段ゲート","多孔式（斜樋）ゲート","ラジアルゲート","ラジアルゲート（高圧）","ローラゲート（ガーター）","ローラゲート（シェル式）",
+  "ローラゲート（高圧）","ライジングセクターゲート","スライドゲート","起伏ゲート","スイング式ゲート",
+  "門柱レスゲート","フラップゲート","横引き式ゲート","角落としゲート","フローティングゲート","魚道ゲート",
+  "ジェットフローゲート","高圧スライドバルブ","スルースバルブ","水圧鉄管・放流管・内張管","除塵設備","修繕（水門）",
+  "開閉装置","操作制御設備","ポンプゲート","バタフライバルブ","ダム付属設備","鋼製付属設備","電気設備",
+  "通船ゲート",
+]);
+function parseGateHierarchy(shruName){
+  const n=(shruName||"").trim();
+  if(!n) return null;
+  if(GATE_HIERARCHY_EXCLUDED.has(n)) return null; // 今回の分類対象外
+  const m=n.match(/^(ダム|河川)[（(](.+)[）)]$/);
+  if(m){
+    const category=m[1];
+    const parts=m[2].split("・");
+    const type=(parts[0]||"").trim();
+    const structure=parts.slice(1).join("・").trim();
+    return {category, type, structure};
+  }
+  return {category:"その他", type:n, structure:""};
 }
 function fmtMoney(v){
   if(v===undefined || v===null || v==="") return "-";
@@ -979,12 +1089,18 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
   const [fFyFromMonth,setFFyFromMonth]=useState("04");
   const [fFyTo,setFFyTo]=useState(currentFY);
   const [fFyToMonth,setFFyToMonth]=useState("04");
-  const [fSelectedKind,setFSelectedKind]=useState([]);
+  const [fSelectedGateCategory,setFSelectedGateCategory]=useState([]);
+  const [fSelectedGateType,setFSelectedGateType]=useState([]);
+  const [fSelectedGateStructure,setFSelectedGateStructure]=useState([]);
+  const [fSelectedKaihei,setFSelectedKaihei]=useState([]);
   const [fKeikMin,setFKeikMin]=useState("");
   const [fHeighMin,setFHeighMin]=useState("");
+  const [fAreaMin,setFAreaMin]=useState("");
+  const [fAreaIncludeSuis,setFAreaIncludeSuis]=useState(false);
   const [fSuisMin,setFSuisMin]=useState("");
   const [fSyusMin,setFSyusMin]=useState("");
   const [fHoryuMin,setFHoryuMin]=useState("");
+  const [fPointMin,setFPointMin]=useState("");
   const [filterSearched,setFilterSearched]=useState(false);
 
   useEffect(()=>{
@@ -1004,14 +1120,46 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
       .slice(0,20);
   },[constrsltRecords, query]);
 
-  const filterKindOptions=useMemo(()=>{
+  const filterGateHierarchyByCode=useMemo(()=>{
+    const map={};
     const set=new Set();
     Object.values(kindByConst).forEach((rows)=>{ (rows||[]).forEach((k)=>{ if(k.KIND) set.add(String(parseFloat(k.KIND))); }); });
-    return [...set]
-      .filter((code)=> !!(literalMap.SHRU && literalMap.SHRU[code]))
-      .map((code)=>({code, name: literalMap.SHRU[code]}))
-      .sort((a,b)=>parseFloat(a.code)-parseFloat(b.code));
+    set.forEach((code)=>{
+      const name=literalMap.SHRU && literalMap.SHRU[code];
+      if(name) map[code]=parseGateHierarchy(name);
+    });
+    return map;
   },[kindByConst, literalMap]);
+
+  const FILTER_GATE_CATEGORY_ORDER=["ダム","河川","その他"];
+  const filterGateCategoryOptions=useMemo(()=>{
+    const set=new Set();
+    Object.values(filterGateHierarchyByCode).forEach((h)=>{ if(h) set.add(h.category); });
+    return FILTER_GATE_CATEGORY_ORDER.filter((c)=>set.has(c)).map((c)=>({code:c, name:c}));
+  },[filterGateHierarchyByCode]);
+
+  const filterGateTypeOptions=useMemo(()=>{
+    const set=new Set();
+    Object.values(filterGateHierarchyByCode).forEach((h)=>{
+      if(!h) return;
+      if(fSelectedGateCategory.length && !fSelectedGateCategory.includes(h.category)) return;
+      if(h.type) set.add(h.type);
+    });
+    return [...set].sort((a,b)=>a.localeCompare(b,"ja")).map((t)=>({code:t, name:t}));
+  },[filterGateHierarchyByCode, fSelectedGateCategory]);
+
+  const filterGateStructureOptions=useMemo(()=>{
+    const set=new Set();
+    Object.values(filterGateHierarchyByCode).forEach((h)=>{
+      if(!h || !h.structure) return;
+      if(fSelectedGateCategory.length && !fSelectedGateCategory.includes(h.category)) return;
+      if(fSelectedGateType.length && !fSelectedGateType.includes(h.type)) return;
+      set.add(h.structure);
+    });
+    return [...set].sort((a,b)=>a.localeCompare(b,"ja")).map((s)=>({code:s, name:s}));
+  },[filterGateHierarchyByCode, fSelectedGateCategory, fSelectedGateType]);
+
+  const filterKaiheiOptions=useMemo(()=> optionsFromLiteral(literalMap,"KHKI"), [literalMap]);
 
   const filterResults=useMemo(()=>{
     if(!filterSearched) return [];
@@ -1019,22 +1167,40 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
     const toYM=fFyTo*100+parseInt(fFyToMonth,10);
     const keikMinN=fKeikMin===""?null:parseFloat(fKeikMin);
     const heighMinN=fHeighMin===""?null:parseFloat(fHeighMin);
+    const areaMinN=fAreaMin===""?null:parseFloat(fAreaMin);
     const suisMinN=fSuisMin===""?null:parseFloat(fSuisMin);
     const syusMinN=fSyusMin===""?null:parseFloat(fSyusMin);
     const horyuMinN=fHoryuMin===""?null:parseFloat(fHoryuMin);
-    const hasKindFilter = fSelectedKind.length || keikMinN!==null || heighMinN!==null || suisMinN!==null || syusMinN!==null || horyuMinN!==null;
+    const pointMinN=fPointMin===""?null:parseFloat(fPointMin);
+    const hasKindFilter = fSelectedGateCategory.length || fSelectedGateType.length || fSelectedGateStructure.length || fSelectedKaihei.length || keikMinN!==null || heighMinN!==null || areaMinN!==null || suisMinN!==null || syusMinN!==null || horyuMinN!==null;
 
     return constrsltRecords.filter((r)=>{
       const ym = r.KOKT && /^\d{8}$/.test(r.KOKT) ? parseInt(r.KOKT.slice(0,6),10) : null;
       if(ym===null || ym<fromYM || ym>toYM) return false;
+      if(pointMinN!==null){
+        const pt = (r.POINT===undefined||r.POINT===null||r.POINT==="") ? null : parseFloat(r.POINT);
+        if(pt===null || isNaN(pt) || pt<pointMinN) return false;
+      }
       if(hasKindFilter){
         const kinds=kindByConst[r.CONSTNO]||[];
         const ok=kinds.some((k)=>{
-          if(fSelectedKind.length && !fSelectedKind.includes(String(parseFloat(k.KIND||"")))) return false;
+          if(fSelectedGateCategory.length || fSelectedGateType.length || fSelectedGateStructure.length){
+            const h=filterGateHierarchyByCode[String(parseFloat(k.KIND||""))];
+            if(!h) return false;
+            if(fSelectedGateCategory.length && !fSelectedGateCategory.includes(h.category)) return false;
+            if(fSelectedGateType.length && !fSelectedGateType.includes(h.type)) return false;
+            if(fSelectedGateStructure.length && !fSelectedGateStructure.includes(h.structure)) return false;
+          }
+          if(fSelectedKaihei.length && !fSelectedKaihei.includes(String(parseFloat(k.KIKA||"")))) return false;
           const num=(v)=> v===""||v===undefined ? null : parseFloat(v);
           const keik=num(k.KEIK), heigh=num(k.HEIGH), suis=num(k.SUIS), syus=num(k.SYUS), horyu=num(k.HORYU);
           if(keikMinN!==null && (keik===null||keik<keikMinN)) return false;
           if(heighMinN!==null && (heigh===null||heigh<heighMinN)) return false;
+          if(areaMinN!==null){
+            let area = (keik!==null && heigh!==null) ? keik*heigh : null;
+            if(area!==null && fAreaIncludeSuis){ area = (suis!==null) ? area*suis : null; }
+            if(area===null || area<areaMinN) return false;
+          }
           if(suisMinN!==null && (suis===null||suis<suisMinN)) return false;
           if(syusMinN!==null && (syus===null||syus<syusMinN)) return false;
           if(horyuMinN!==null && (horyu===null||horyu<horyuMinN)) return false;
@@ -1046,11 +1212,15 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
       if(kw && !(r.CONSTNO.includes(kw) || ((r.NAM1||"")+(r.NAM2||"")).includes(kw))) return false;
       return true;
     }).sort((a,b)=>compareConstno(a.CONSTNO,b.CONSTNO)).slice(0,300);
-  },[filterSearched, constrsltRecords, kindByConst, fFyFrom, fFyFromMonth, fFyTo, fFyToMonth, fSelectedKind, fKeikMin, fHeighMin, fSuisMin, fSyusMin, fHoryuMin, query]);
+  },[filterSearched, constrsltRecords, kindByConst, fFyFrom, fFyFromMonth, fFyTo, fFyToMonth,
+     fSelectedGateCategory, fSelectedGateType, fSelectedGateStructure, fSelectedKaihei, filterGateHierarchyByCode,
+     fKeikMin, fHeighMin, fAreaMin, fAreaIncludeSuis, fSuisMin, fSyusMin, fHoryuMin, fPointMin, query]);
 
   const resetFilter=()=>{
     setFFyFrom(currentFY-9); setFFyFromMonth("04"); setFFyTo(currentFY); setFFyToMonth("04");
-    setFSelectedKind([]); setFKeikMin(""); setFHeighMin(""); setFSuisMin(""); setFSyusMin(""); setFHoryuMin(""); setQuery("");
+    setFSelectedGateCategory([]); setFSelectedGateType([]); setFSelectedGateStructure([]); setFSelectedKaihei([]);
+    setFKeikMin(""); setFHeighMin(""); setFAreaMin(""); setFAreaIncludeSuis(false);
+    setFSuisMin(""); setFSyusMin(""); setFHoryuMin(""); setFPointMin(""); setQuery("");
     setFilterSearched(false);
   };
 
@@ -1079,6 +1249,11 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
   const saveHeader=()=>{ onSaveProject(selected, headerDraft); setEditingHeader(false); };
   const hf=(field)=>headerDraft[field]||"";
   const setHf=(field)=>(v)=>setHeaderDraft({...headerDraft, [field]:v});
+  const toggleSchedCheck=()=>{
+    if(!proj || !canEdit) return;
+    const next = parseFloat(proj.SCHED_CHECKED)===1 ? "0" : "1";
+    onSaveProject(selected, {...proj, SCHED_CHECKED: next});
+  };
 
   const startEditRows=()=>{
     setKindsDraft(kinds.map((k)=>({...k})));
@@ -1152,7 +1327,7 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
     let msg=(exists?"既存の工事に追加取込みしました。":"新規登録しました。")
       +"種別"+parsed.kindRows.length+"件、技術者"+parsed.engRows.length+"件を取り込みました。";
     if(parsed.unsupportedKind) msg+=" ※この工種カテゴリの種別自動判定には対応していないため、種別は0件です。手動で追加してください。";
-    if(unmatched.length) msg+=" ※社員データに見つからなかった技術者："+unmatched.join("、")+"（技術者情報メンテナンスで先に登録してから、種別・技術者の編集でコードを入力してください）";
+    if(unmatched.length) msg+=" ※社員データに見つからなかった技術者："+unmatched.join("、")+"（技術者在籍・所属管理で先に登録してから、種別・技術者の編集でコードを入力してください）";
     msg+=" 必ず内容を確認・修正してください（従事割合は従事期間1÷工期全体日数から自動算出した参考値、製据区分などXMLに無い項目は空欄になっています。金額は税込→税抜きに換算済みです）。";
     setXmlResultMsg(msg);
     setSelected(cn);
@@ -1165,7 +1340,7 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
     <div className="card detail-card">
       <div className="res-hd">
         <div>
-          <h2>工事詳細データ</h2>
+          <h2>工事詳細検索</h2>
           <p className="sub">条件を指定して検索してください</p>
         </div>
         {canEdit &&
@@ -1258,11 +1433,39 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
             </div>
           </div>
 
-          <FieldRow label="種別">
-            <div className="field-control">
-              <MultiSelect options={filterKindOptions} selected={fSelectedKind} onChange={setFSelectedKind} searchable placeholder="選択してください（複数可）"/>
+          <div className="field-row pair-row">
+            <div className="pair-group-grow">
+              <div className="field-label">ゲートカテゴリ</div>
+              <div className="field-control">
+                <MultiSelect options={filterGateCategoryOptions} selected={fSelectedGateCategory} onChange={setFSelectedGateCategory} placeholder="選択してください（複数可）"/>
+              </div>
             </div>
-          </FieldRow>
+            <div className="pair-group-grow">
+              <div className="field-label">ゲート種類</div>
+              <div className="field-control">
+                <MultiSelect options={filterGateTypeOptions} selected={fSelectedGateType} onChange={setFSelectedGateType} searchable placeholder="選択してください（複数可）"/>
+              </div>
+            </div>
+            <div className="pair-group-grow">
+              <div className="field-label">ゲート構造</div>
+              <div className="field-control">
+                <MultiSelect options={filterGateStructureOptions} selected={fSelectedGateStructure} onChange={setFSelectedGateStructure} searchable placeholder="選択してください（複数可）"/>
+              </div>
+            </div>
+          </div>
+
+          <div className="field-row pair-row">
+            <div className="pair-group-grow">
+              <div className="field-label">開閉方式</div>
+              <div className="field-control">
+                <MultiSelect options={filterKaiheiOptions} selected={fSelectedKaihei} onChange={setFSelectedKaihei} searchable placeholder="選択してください（複数可）"/>
+              </div>
+            </div>
+            <div className="pair-group-grow">
+              <div className="field-label" style={{flex:"0 0 auto", whiteSpace:"nowrap"}}>工事成績評定点以上</div>
+              <div className="field-control"><input type="number" value={fPointMin} onChange={(e)=>setFPointMin(e.target.value)} placeholder="0点"/></div>
+            </div>
+          </div>
 
           <div className="field-row pair-row">
             <div className="pair-group">
@@ -1274,6 +1477,15 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
               <div className="field-label">高さ以上</div>
               <div className="field-control narrow small"><input type="number" value={fHeighMin} onChange={(e)=>setFHeighMin(e.target.value)} placeholder="0"/></div>
               <div className="field-unit">m</div>
+            </div>
+            <div className="pair-group">
+              <div className="field-label">径間×高さ{fAreaIncludeSuis ? "×水深" : ""}以上</div>
+              <div className="field-control narrow small"><input type="number" value={fAreaMin} onChange={(e)=>setFAreaMin(e.target.value)} placeholder="0"/></div>
+              <div className="field-unit">{fAreaIncludeSuis ? "m²・m" : "m²"}</div>
+              <label className="chk-inline" style={{marginLeft:8, whiteSpace:"nowrap"}}>
+                <input type="checkbox" checked={fAreaIncludeSuis} onChange={(e)=>setFAreaIncludeSuis(e.target.checked)}/>
+                <span style={{color:"var(--muted)", fontSize:12}}>水深も掛ける</span>
+              </label>
             </div>
           </div>
 
@@ -1312,9 +1524,13 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
           <p className="sub" style={{marginBottom:10}}>{filterResults.length}件が該当しました{filterResults.length>=300 && "（上位300件を表示）"}</p>
           <div className="master-list">
             {filterResults.map((r)=>(
-              <div key={r.CONSTNO} className="master-row" style={{gridTemplateColumns:"110px 1fr 140px 140px", cursor:"pointer"}} onClick={()=>pickFromFilter(r.CONSTNO)}>
+              <div key={r.CONSTNO} className="master-row" style={{gridTemplateColumns:"110px 1fr 90px 140px 140px", cursor:"pointer"}} onClick={()=>pickFromFilter(r.CONSTNO)}>
                 <span className="m-code">{r.CONSTNO}</span>
                 <span className="m-name">{r.NAM1}{r.NAM2}</span>
+                <span className="m-comp" style={{textAlign:"right", whiteSpace:"nowrap"}}>
+                  {r.POINT ? r.POINT+"点" : "-"}
+                  {parseFloat(r.HYOSYO)===1 && <span style={{marginLeft:6}} title="工事表彰あり">🏆</span>}
+                </span>
                 <span className="m-comp">{r.KYA1||"-"}</span>
                 <span className="m-comp">{fmtDate(r.KOKF)}〜{fmtDate(r.KOKT)}</span>
               </div>
@@ -1349,7 +1565,20 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
                   <th></th><td></td>
                 </tr>
                 <tr>
-                  <th>据付開始日</th><td>{editingHeader ? <DTInput value={hf("SSDAY")} onChange={setHf("SSDAY")} placeholder="YYYYMMDD" mono/> : (proj.SSDAY ? fmtDate(proj.SSDAY) : "-")}</td>
+                  <th>据付開始日</th>
+                  <td>
+                    <span style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+                      {editingHeader ? <DTInput value={hf("SSDAY")} onChange={setHf("SSDAY")} placeholder="YYYYMMDD" mono/> : (proj.SSDAY ? fmtDate(proj.SSDAY) : "-")}
+                      {canEdit &&
+                        <button type="button" onClick={toggleSchedCheck}
+                          className={parseFloat(proj.SCHED_CHECKED)===1 ? "btn-primary" : "btn-outline"}
+                          style={{padding:"4px 8px", fontSize:11.5, whiteSpace:"nowrap"}}
+                          title="実施工程表との整合性を確認したかどうかを記録します">
+                          {parseFloat(proj.SCHED_CHECKED)===1 ? "✓ 実施工程表と整合性確認済み" : "実施工程表と整合性未確認"}
+                        </button>
+                      }
+                    </span>
+                  </td>
                   <th>金額</th><td className="num">{editingHeader ? <DTInput value={hf("KYKN")} onChange={setHf("KYKN")}/> : (fmtMoney(proj.KYKN)+" 円")}</td>
                   <th>工期</th><td>{editingHeader ? <span style={{display:"flex",gap:6}}><DTInput value={hf("KOKF")} onChange={setHf("KOKF")} placeholder="YYYYMMDD" mono/><span>〜</span><DTInput value={hf("KOKT")} onChange={setHf("KOKT")} placeholder="YYYYMMDD" mono/></span> : (fmtDate(proj.KOKF)+" 〜 "+fmtDate(proj.KOKT))}</td>
                   <th>支店</th><td>{editingHeader ? <DTSelect value={hf("EIGYCD")} onChange={setHf("EIGYCD")} options={eigyoOpts}/> : (branchName(proj.EIGYCD) || "-")}</td>
@@ -1361,12 +1590,22 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
                 <tr><th>JV名称</th><td colSpan="7">{editingHeader ? <DTInput value={hf("JVNM")} onChange={setHf("JVNM")} placeholder="JVでなければ空欄"/> : (proj.JVNM || "-")}</td></tr>
                 <tr>
                   <th>コリンズ証明書</th>
-                  <td colSpan="7">
+                  <td colSpan="3">
                     {editingHeader ? (
                       <DTInput value={hf("CORINS_URL")} onChange={setHf("CORINS_URL")} placeholder="PDFの保存先URLを貼り付け"/>
                     ) : (
                       proj.CORINS_URL
                         ? <a className="corins-link" href={proj.CORINS_URL} target="_blank" rel="noopener noreferrer"><Ic.Link size={13}/> 証明書PDFを開く</a>
+                        : "-"
+                    )}
+                  </td>
+                  <th>実施工程表</th>
+                  <td colSpan="3">
+                    {editingHeader ? (
+                      <DTInput value={hf("SCHEDULE_URL")} onChange={setHf("SCHEDULE_URL")} placeholder="実施工程表の保存先URLを貼り付け"/>
+                    ) : (
+                      proj.SCHEDULE_URL
+                        ? <a className="corins-link" href={proj.SCHEDULE_URL} target="_blank" rel="noopener noreferrer"><Ic.Link size={13}/> 実施工程表を開く</a>
                         : "-"
                     )}
                   </td>
@@ -1615,10 +1854,10 @@ function PersonnelCard({emp, info, heldLicenses, licenses, literalMap, onRemove,
         <table className="detail-info-table">
           <tbody>
             <tr>
-              <th>初回交付日</th><td>{editingInfo ? <DTInput value={inf("KFKBI")} onChange={setInf("KFKBI")} placeholder="YYYYMMDD" mono/> : (info ? fmtDate(info.KFKBI) : "-")}</td>
-              <th>交付日</th><td>{editingInfo ? <DTInput value={inf("KFBI")} onChange={setInf("KFBI")} placeholder="YYYYMMDD" mono/> : (info ? fmtDate(info.KFBI) : "-")}</td>
+              <th>初回交付日</th><td>{editingInfo ? <DTInput value={inf("KFKBI")} onChange={setInf("KFKBI")} placeholder="YYYYMMDD" mono/> : (info ? fmtDateEra(info.KFKBI) : "-")}</td>
+              <th>交付日</th><td>{editingInfo ? <DTInput value={inf("KFBI")} onChange={setInf("KFBI")} placeholder="YYYYMMDD" mono/> : (info ? fmtDateEra(info.KFBI) : "-")}</td>
               <th>交付番号</th><td>{editingInfo ? <DTInput value={inf("KFNO")} onChange={setInf("KFNO")} mono/> : (info ? (info.KFNO||"-") : "-")}</td>
-              <th>有効期限</th><td>{editingInfo ? <DTInput value={inf("KLIMIT")} onChange={setInf("KLIMIT")} placeholder="YYYYMMDD" mono/> : (info ? fmtDate(info.KLIMIT) : "-")}</td>
+              <th>有効期限</th><td>{editingInfo ? <DTInput value={inf("KLIMIT")} onChange={setInf("KLIMIT")} placeholder="YYYYMMDD" mono/> : (info ? fmtDateEra(info.KLIMIT) : "-")}</td>
             </tr>
           </tbody>
         </table>
@@ -1650,7 +1889,7 @@ function PersonnelCard({emp, info, heldLicenses, licenses, literalMap, onRemove,
           <tbody>
             <tr>
               <th>修了証番号</th><td colSpan="3">{editingInfo ? <DTInput value={inf("KSNO")} onChange={setInf("KSNO")} mono/> : (info ? (info.KSNO||"-") : "-")}</td>
-              <th>終了年月日</th><td colSpan="3">{editingInfo ? <DTInput value={inf("KSYMD")} onChange={setInf("KSYMD")} placeholder="YYYYMMDD" mono/> : (info ? fmtDate(info.KSYMD) : "-")}</td>
+              <th>終了年月日</th><td colSpan="3">{editingInfo ? <DTInput value={inf("KSYMD")} onChange={setInf("KSYMD")} placeholder="YYYYMMDD" mono/> : (info ? fmtDateEra(info.KSYMD) : "-")}</td>
             </tr>
             <tr>
               <th>監理技術者資格証</th>
@@ -1793,7 +2032,7 @@ function PersonnelQualification({employees, enginfoRecords, licenses, engLicense
       liccd: r.LICCD,
       name: licenseMap[r.LICCD] || ("資格("+r.LICCD+")"),
       licno: r.LICNO || "-",
-      acquired: r.SDAY ? fmtDate(r.SDAY) : "-",
+      acquired: r.SDAY ? fmtDateEra(r.SDAY) : "-",
       kbn: lit(literalMap,"KGHO",r.KBN) || "-",
       certUrl: r.CERT_URL || "",
       rawLicno: r.LICNO || "",
@@ -1819,7 +2058,7 @@ function PersonnelQualification({employees, enginfoRecords, licenses, engLicense
       <div className="res-hd">
         <div>
           <h2>人事資格検索</h2>
-          <p className="sub">氏名または技術者コードで検索し、複数人まとめて表示できます</p>
+          <p className="sub">氏名または社員番号で検索し、複数人まとめて表示できます</p>
         </div>
         <span style={{display:"flex", gap:8}}>
           {canEdit && <button className="btn-outline" onClick={openNewForm}><Ic.Plus/> 新規技術者を登録</button>}
@@ -1843,7 +2082,7 @@ function PersonnelQualification({employees, enginfoRecords, licenses, engLicense
       <div className="msel" style={{maxWidth:560}}>
         <input type="text" className="kw-input" value={query}
           onChange={(e)=>setQuery(e.target.value)}
-          placeholder="例）小西 昭裕 または 625167"/>
+          placeholder="例）豊国太郎 または 123456"/>
         {query.trim() &&
           <div className="msel-panel" style={{maxHeight:260}}>
             <div className="msel-list">
@@ -2076,7 +2315,7 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
     <div className="card">
       <div className="res-hd">
         <div>
-          <h2>技術者情報メンテナンス</h2>
+          <h2>技術者在籍・所属管理</h2>
           <p className="sub">{employees.length}名登録中（在職 {activeCount}名 ／ 退職 {retiredCount}名）</p>
         </div>
         <div style={{display:"flex", gap:8}}>
@@ -2148,7 +2387,7 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
       }
 
       <input type="text" className="kw-input" style={{marginTop:14, marginBottom:12, maxWidth:320}}
-        value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="氏名・技術者コードで検索"/>
+        value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="氏名・社員番号で検索"/>
 
       {(()=>{
         const renderRow=(emp)=>{
@@ -2423,7 +2662,17 @@ function App(){
   useEffect(()=>{
     if(!authUser) return; // ログインしてから読み込む
     loadFromStorage()
-      .then((d)=>setDatasets(d))
+      .then((d)=>{
+        setDatasets(d);
+        // デバッグ用：ブラウザのコンソールで window.debugCounts() を実行すると
+        // 各コレクションの読み込み件数が確認できます（本番挙動には影響しません）
+        window.debugCounts = ()=>{
+          const counts={};
+          FS_TYPES.forEach((t)=>{ counts[t] = (d[t] && d[t].records ? d[t].records.length : 0); });
+          console.table(counts);
+          return counts;
+        };
+      })
       .catch(()=>setDatasets({}))
       .finally(()=>setLoading(false));
   },[authUser]);
@@ -2458,15 +2707,21 @@ function App(){
   const [fyTo,setFyTo]=useState(currentFY);
   const [fyToMonth,setFyToMonth]=useState("04");
   const [selectedBunya,setSelectedBunya]=useState([]);
-  const [selectedKind,setSelectedKind]=useState([]);
+  const [selectedGateCategory,setSelectedGateCategory]=useState([]);
+  const [selectedGateType,setSelectedGateType]=useState([]);
+  const [selectedGateStructure,setSelectedGateStructure]=useState([]);
   const [selectedRoles,setSelectedRoles]=useState([]);
+  const [selectedKaihei,setSelectedKaihei]=useState([]);
   const [selectedLicenses,setSelectedLicenses]=useState([]);
+  const [licenseMode,setLicenseMode]=useState("or"); // "or"=いずれか一つ保有 / "and"=すべて保有
   const [keikMin,setKeikMin]=useState("");
   const [heighMin,setHeighMin]=useState("");
+  const [areaMin,setAreaMin]=useState(""); // 径間×高さ（×水深）以上
+  const [areaIncludeSuis,setAreaIncludeSuis]=useState(false);
   const [suisMin,setSuisMin]=useState("");
   const [syusMin,setSyusMin]=useState("");
   const [horyuMin,setHoryuMin]=useState("");
-  const [keyword,setKeyword]=useState("");
+  const [pointMin,setPointMin]=useState(""); // 工事成績評定点 以上
   const [searched,setSearched]=useState(false);
   const [expanded,setExpanded]=useState({});
   const [includeRetired,setIncludeRetired]=useState(false);
@@ -2536,15 +2791,48 @@ function App(){
     return [...set].sort((a,b)=>a-b).map((code)=>({code, name:(literalMap.BNYA&&literalMap.BNYA[code])||("分野("+code+")")}));
   },[datasets, requiredLoaded, literalMap]);
 
-  const kindOptions=useMemo(()=>{
-    if(!requiredLoaded) return [];
+  // KINDコード → {category, type, structure} の対応表
+  const gateHierarchyByCode=useMemo(()=>{
+    if(!requiredLoaded) return {};
+    const map={};
     const set=new Set();
     (datasets.kind.records||[]).forEach((r)=>{ if(r.KIND) set.add(String(parseFloat(r.KIND))); });
-    return [...set]
-      .filter((code)=> !!(literalMap.SHRU && literalMap.SHRU[code])) // マスタに名称が無いコードは非表示
-      .map((code)=>({code, name: literalMap.SHRU[code]}))
-      .sort((a,b)=> parseFloat(a.code) - parseFloat(b.code)); // SHRUコード番号の昇順
+    set.forEach((code)=>{
+      const name=literalMap.SHRU && literalMap.SHRU[code];
+      if(name) map[code]=parseGateHierarchy(name);
+    });
+    return map;
   },[datasets, requiredLoaded, literalMap]);
+
+  const GATE_CATEGORY_ORDER=["ダム","河川","その他"];
+  const gateCategoryOptions=useMemo(()=>{
+    const set=new Set();
+    Object.values(gateHierarchyByCode).forEach((h)=>{ if(h) set.add(h.category); });
+    return GATE_CATEGORY_ORDER.filter((c)=>set.has(c)).map((c)=>({code:c, name:c}));
+  },[gateHierarchyByCode]);
+
+  const gateTypeOptions=useMemo(()=>{
+    const set=new Set();
+    Object.values(gateHierarchyByCode).forEach((h)=>{
+      if(!h) return;
+      if(selectedGateCategory.length && !selectedGateCategory.includes(h.category)) return;
+      if(h.type) set.add(h.type);
+    });
+    return [...set].sort((a,b)=>a.localeCompare(b,"ja")).map((t)=>({code:t, name:t}));
+  },[gateHierarchyByCode, selectedGateCategory]);
+
+  const gateStructureOptions=useMemo(()=>{
+    const set=new Set();
+    Object.values(gateHierarchyByCode).forEach((h)=>{
+      if(!h || !h.structure) return;
+      if(selectedGateCategory.length && !selectedGateCategory.includes(h.category)) return;
+      if(selectedGateType.length && !selectedGateType.includes(h.type)) return;
+      set.add(h.structure);
+    });
+    return [...set].sort((a,b)=>a.localeCompare(b,"ja")).map((s)=>({code:s, name:s}));
+  },[gateHierarchyByCode, selectedGateCategory, selectedGateType]);
+
+  const kaiheiOptions=useMemo(()=> optionsFromLiteral(literalMap,"KHKI"), [literalMap]);
 
   const roleOptions=useMemo(()=>{
     if(!requiredLoaded) return [];
@@ -2596,10 +2884,11 @@ function App(){
     if(!requiredLoaded || !searched) return [];
     const keikMinN = keikMin==="" ? null : parseFloat(keikMin);
     const heighMinN = heighMin==="" ? null : parseFloat(heighMin);
+    const areaMinN = areaMin==="" ? null : parseFloat(areaMin);
     const suisMinN = suisMin==="" ? null : parseFloat(suisMin);
     const syusMinN = syusMin==="" ? null : parseFloat(syusMin);
     const horyuMinN = horyuMin==="" ? null : parseFloat(horyuMin);
-    const kw=keyword.trim();
+    const pointMinN = pointMin==="" ? null : parseFloat(pointMin);
     const byEngineer={};
 
     (datasets.eng.records||[]).forEach((engRow)=>{
@@ -2613,8 +2902,15 @@ function App(){
 
       if(selectedLicenses.length){
         const held=employeeLicMap[engRow.ENGCD];
-        const hasAll=selectedLicenses.every((code)=> held && held.has(code));
-        if(!hasAll) return;
+        const matched = licenseMode==="and"
+          ? selectedLicenses.every((code)=> held && held.has(code))
+          : selectedLicenses.some((code)=> held && held.has(code));
+        if(!matched) return;
+      }
+
+      if(pointMinN!==null){
+        const pt = (proj.POINT===undefined||proj.POINT===null||proj.POINT==="") ? null : parseFloat(proj.POINT);
+        if(pt===null || isNaN(pt) || pt<pointMinN) return;
       }
 
       const fy=fiscalYearOf(proj.KOKT);
@@ -2624,18 +2920,26 @@ function App(){
       if(projYM===null || projYM<fromYM || projYM>toYM) return;
       if(selectedRoles.length && !selectedRoles.includes(String(parseFloat(engRow.POSICD||"")))) return;
       if(selectedBunya.length && !selectedBunya.includes(String(parseFloat(proj.BUNYA||"")))) return;
-      if(kw){
-        const name=(proj.NAM1||"")+(proj.NAM2||"");
-        if(!name.includes(kw)) return;
-      }
 
-      const hasKindFilter = selectedKind.length || keikMinN!==null || heighMinN!==null || suisMinN!==null || syusMinN!==null || horyuMinN!==null;
+      const hasKindFilter = selectedGateCategory.length || selectedGateType.length || selectedGateStructure.length || selectedKaihei.length || keikMinN!==null || heighMinN!==null || areaMinN!==null || suisMinN!==null || syusMinN!==null || horyuMinN!==null;
       const matchingKinds=(proj.kinds||[]).filter((k)=>{
-        if(selectedKind.length && !selectedKind.includes(String(parseFloat(k.KIND||"")))) return false;
+        if(selectedGateCategory.length || selectedGateType.length || selectedGateStructure.length){
+          const h=gateHierarchyByCode[String(parseFloat(k.KIND||""))];
+          if(!h) return false; // 分類対象外（今回除外）の種別は階層フィルタにヒットさせない
+          if(selectedGateCategory.length && !selectedGateCategory.includes(h.category)) return false;
+          if(selectedGateType.length && !selectedGateType.includes(h.type)) return false;
+          if(selectedGateStructure.length && !selectedGateStructure.includes(h.structure)) return false;
+        }
+        if(selectedKaihei.length && !selectedKaihei.includes(String(parseFloat(k.KIKA||"")))) return false;
         const num=(v)=> v==="" || v===undefined ? null : parseFloat(v);
         const keik=num(k.KEIK), heigh=num(k.HEIGH), suis=num(k.SUIS), syus=num(k.SYUS), horyu=num(k.HORYU);
         if(keikMinN!==null && (keik===null||keik<keikMinN)) return false;
         if(heighMinN!==null && (heigh===null||heigh<heighMinN)) return false;
+        if(areaMinN!==null){
+          let area = (keik!==null && heigh!==null) ? keik*heigh : null;
+          if(area!==null && areaIncludeSuis){ area = (suis!==null) ? area*suis : null; }
+          if(area===null || area<areaMinN) return false;
+        }
         if(suisMinN!==null && (suis===null||suis<suisMinN)) return false;
         if(syusMinN!==null && (syus===null||syus<syusMinN)) return false;
         if(horyuMinN!==null && (horyu===null||horyu<horyuMinN)) return false;
@@ -2679,9 +2983,15 @@ function App(){
       // 逆に据付期間内が80%以下なら自動で「無」（80〜100%未満はどちらとも判定せず、人の目で確認）
       const isInstallKbn = entryKinds.some((k)=> k.kbn==="据付" || k.kbn==="製据");
       const jwariFull = engRow.JWARI!==undefined && engRow.JWARI!==null && engRow.JWARI!=="" && parseFloat(engRow.JWARI)>=99.95;
-      const autoOK = isInstallKbn && (installOK || jwariFull);
+      const schedChecked = parseFloat(proj.SCHED_CHECKED)===1;
+      // 実施工程表との整合性が未確認の場合は「据付実績あり」と判定できない（自動・手動とも）。
+      // ただし従事割合が100%（専任）の場合のみ、整合性未確認でも「有」と判定できる例外とする。
+      const canMarkOk = schedChecked || jwariFull;
+      const autoOK = isInstallKbn && (installOK || jwariFull) && canMarkOk;
       const autoNo = !autoOK && installPct!==null && installPct<=80;
-      const manualStatus = verifiedMap[vkey] || null;
+      const manualStatusRaw = verifiedMap[vkey] || null;
+      // 条件（整合性確認 or 従事割合100%）を満たさない手動「有」は無効化する
+      const manualStatus = (manualStatusRaw==="ok" && !canMarkOk) ? null : manualStatusRaw;
       const effectiveStatus = manualStatus==="no" ? "no" : (manualStatus==="ok" ? "ok" : (autoOK ? "ok" : (autoNo ? "no" : null)));
 
       byEngineer[engcd].entries.push({
@@ -2696,6 +3006,10 @@ function App(){
         corinsUrl: proj.CORINS_URL,
         ratingPdfUrl: proj.RATING_PDF_URL,
         awardPdfUrl: proj.AWARD_PDF_URL,
+        scheduleUrl: proj.SCHEDULE_URL,
+        schedChecked,
+        isInstallKbn,
+        canMarkOk,
         name: ((proj.NAM1||"")+" "+(proj.NAM2||"")).trim(),
         orderer: proj.KYA1, kokf: proj.KOKF, kokt: proj.KOKT, ssday: proj.SSDAY, fy,
         bunya: lookupLit("BNYA", proj.BUNYA),
@@ -2708,7 +3022,11 @@ function App(){
     });
 
     Object.values(byEngineer).forEach((r)=>{
-      r.hasVerified = r.entries.some((e)=>e.verifyStatus==="ok");
+      r.okCount = r.entries.filter((e)=>e.verifyStatus==="ok").length;
+      r.totalCount = r.entries.length;
+      r.hasVerified = r.okCount>0;
+      r.allVerified = r.totalCount>0 && r.okCount===r.totalCount;
+      r.partialVerified = r.okCount>0 && r.okCount<r.totalCount;
       r.allRejected = !r.hasVerified && r.entries.length>0 && r.entries.every((e)=>e.verifyStatus==="no");
       const okPoints = r.entries.filter((e)=>e.verifyStatus==="ok" && e.point!==undefined && e.point!=="" && !isNaN(parseFloat(e.point))).map((e)=>parseFloat(e.point));
       r.bestPoint = okPoints.length>0 ? Math.max(...okPoints) : null;
@@ -2718,14 +3036,19 @@ function App(){
 
     return Object.values(byEngineer).sort((a,b)=>b.entries.length-a.entries.length);
   },[requiredLoaded, searched, datasets, projectIndex, fyFrom, fyFromMonth, fyTo, fyToMonth, selectedRoles,
-     selectedBunya, selectedKind, keikMin, heighMin, suisMin, syusMin, horyuMin, keyword, employeeMap, literalMap, includeRetired,
-     selectedLicenses, employeeLicMap, verifiedMap, certLinksByEngcd, kanriCertByEngcd]);
+     selectedBunya, selectedGateCategory, selectedGateType, selectedGateStructure, selectedKaihei, gateHierarchyByCode,
+     keikMin, heighMin, areaMin, areaIncludeSuis, suisMin, syusMin, horyuMin, pointMin,
+     employeeMap, literalMap, includeRetired,
+     selectedLicenses, licenseMode, employeeLicMap, verifiedMap, certLinksByEngcd, kanriCertByEngcd]);
 
   const resetFilters=()=>{
     setFyFrom(currentFY-9); setFyFromMonth("04"); setFyTo(currentFY); setFyToMonth("04");
-    setSelectedBunya([]); setSelectedKind([]); setSelectedRoles([]); setSelectedLicenses([]);
-    setKeikMin(""); setHeighMin(""); setSuisMin(""); setSyusMin(""); setHoryuMin("");
-    setKeyword(""); setSearched(false); setExpanded({});
+    setSelectedBunya([]); setSelectedGateCategory([]); setSelectedGateType([]); setSelectedGateStructure([]);
+    setSelectedKaihei([]);
+    setSelectedRoles([]); setSelectedLicenses([]); setLicenseMode("or");
+    setKeikMin(""); setHeighMin(""); setAreaMin(""); setAreaIncludeSuis(false);
+    setSuisMin(""); setSyusMin(""); setHoryuMin(""); setPointMin("");
+    setSearched(false); setExpanded({});
   };
 
   if(!authReady){
@@ -2803,10 +3126,10 @@ function App(){
 
       <div className="tabs">
         <button className={"tab-btn"+(activeTab==="search"?" active":"")} onClick={()=>setActiveTab("search")}>配置候補検索</button>
-        <button className={"tab-btn"+(activeTab==="detail"?" active":"")} onClick={()=>setActiveTab("detail")}>工事詳細データ</button>
+        <button className={"tab-btn"+(activeTab==="detail"?" active":"")} onClick={()=>setActiveTab("detail")}>工事詳細検索</button>
         <button className={"tab-btn"+(activeTab==="personnel"?" active":"")} onClick={()=>setActiveTab("personnel")}>人事資格検索</button>
         {canEdit &&
-          <button className={"tab-btn"+(activeTab==="master"?" active":"")} onClick={()=>setActiveTab("master")}>技術者情報メンテナンス</button>
+          <button className={"tab-btn"+(activeTab==="master"?" active":"")} style={{marginLeft:"auto"}} onClick={()=>setActiveTab("master")}>技術者在籍・所属管理</button>
         }
       </div>
 
@@ -2982,29 +3305,35 @@ function App(){
 
           <div className="field-row pair-row">
             <div className="pair-group-grow">
-              <div className="field-label">種別</div>
+              <div className="field-label">ゲートカテゴリ</div>
               <div className="field-control">
-                <MultiSelect options={kindOptions} selected={selectedKind} onChange={setSelectedKind} searchable placeholder="選択してください（複数可）"/>
+                <MultiSelect options={gateCategoryOptions} selected={selectedGateCategory} onChange={setSelectedGateCategory} placeholder="選択してください（複数可）"/>
               </div>
             </div>
             <div className="pair-group-grow">
-              <div className="field-label">役割</div>
+              <div className="field-label">ゲート種類</div>
               <div className="field-control">
-                <MultiSelect options={roleOptions} selected={selectedRoles} onChange={setSelectedRoles} placeholder="選択してください（複数可）"/>
+                <MultiSelect options={gateTypeOptions} selected={selectedGateType} onChange={setSelectedGateType} searchable placeholder="選択してください（複数可）"/>
+              </div>
+            </div>
+            <div className="pair-group-grow">
+              <div className="field-label">ゲート構造</div>
+              <div className="field-control">
+                <MultiSelect options={gateStructureOptions} selected={selectedGateStructure} onChange={setSelectedGateStructure} searchable placeholder="選択してください（複数可）"/>
               </div>
             </div>
           </div>
 
           <div className="field-row pair-row">
             <div className="pair-group-grow">
-              <div className="field-label">所持資格</div>
+              <div className="field-label">開閉方式</div>
               <div className="field-control">
-                <MultiSelect options={licenseOptions} selected={selectedLicenses} onChange={setSelectedLicenses} searchable placeholder="選択してください（複数可・すべて保有する人が対象）"/>
+                <MultiSelect options={kaiheiOptions} selected={selectedKaihei} onChange={setSelectedKaihei} searchable placeholder="選択してください（複数可）"/>
               </div>
             </div>
-            <div className="pair-group-grow" aria-hidden="true" style={{visibility:"hidden"}}>
-              <div className="field-label">-</div>
-              <div className="field-control"></div>
+            <div className="pair-group-grow">
+              <div className="field-label" style={{flex:"0 0 auto", whiteSpace:"nowrap"}}>工事成績評定点以上</div>
+              <div className="field-control"><input type="number" value={pointMin} onChange={(e)=>setPointMin(e.target.value)} placeholder="0点"/></div>
             </div>
           </div>
 
@@ -3018,6 +3347,15 @@ function App(){
               <div className="field-label">高さ以上</div>
               <div className="field-control narrow small"><input type="number" value={heighMin} onChange={(e)=>setHeighMin(e.target.value)} placeholder="0"/></div>
               <div className="field-unit">m</div>
+            </div>
+            <div className="pair-group">
+              <div className="field-label">径間×高さ{areaIncludeSuis ? "×水深" : ""}以上</div>
+              <div className="field-control narrow small"><input type="number" value={areaMin} onChange={(e)=>setAreaMin(e.target.value)} placeholder="0"/></div>
+              <div className="field-unit">{areaIncludeSuis ? "m²・m" : "m²"}</div>
+              <label className="chk-inline" style={{marginLeft:8, whiteSpace:"nowrap"}}>
+                <input type="checkbox" checked={areaIncludeSuis} onChange={(e)=>setAreaIncludeSuis(e.target.checked)}/>
+                <span style={{color:"var(--muted)", fontSize:12}}>水深も掛ける</span>
+              </label>
             </div>
           </div>
 
@@ -3039,9 +3377,29 @@ function App(){
             </div>
           </div>
 
-          <FieldRow label="工事件名">
-            <div className="field-control"><input type="text" value={keyword} onChange={(e)=>setKeyword(e.target.value)} placeholder="キーワード（任意）例）ダム、水門"/></div>
-          </FieldRow>
+          <div className="field-row pair-row">
+            <div className="pair-group-grow">
+              <div className="field-label">役割</div>
+              <div className="field-control">
+                <MultiSelect options={roleOptions} selected={selectedRoles} onChange={setSelectedRoles} placeholder="選択してください（複数可）"/>
+              </div>
+            </div>
+            <div className="pair-group-grow">
+              <div className="field-label">必要資格</div>
+              <div className="field-control" style={{display:"flex", gap:8, alignItems:"center"}}>
+                <div style={{flex:1}}>
+                  <MultiSelect options={licenseOptions} selected={selectedLicenses} onChange={setSelectedLicenses} searchable
+                    placeholder={licenseMode==="and" ? "選択（複数可・すべて保有）" : "選択（複数可・いずれか保有）"}/>
+                </div>
+                <div className="seg-toggle" style={{display:"flex", flexShrink:0, border:"1px solid var(--line)", borderRadius:8, overflow:"hidden"}}>
+                  <button type="button" onClick={()=>setLicenseMode("or")}
+                    className={licenseMode==="or" ? "btn-primary" : "btn-ghost"} style={{borderRadius:0, padding:"6px 10px"}}>いずれか</button>
+                  <button type="button" onClick={()=>setLicenseMode("and")}
+                    className={licenseMode==="and" ? "btn-primary" : "btn-ghost"} style={{borderRadius:0, padding:"6px 10px"}}>すべて</button>
+                </div>
+              </div>
+            </div>
+          </div>
 
         </div>
         <div className="actions-row">
@@ -3067,7 +3425,7 @@ function App(){
           {results.map((r)=>{
             const isOpen=!!expanded[r.engcd];
             return (
-              <div key={r.engcd} className={"eng-item"+(r.hasVerified?" verified":"")+(r.allRejected?" rejected":"")}>
+              <div key={r.engcd} className={"eng-item"+(r.allRejected?" rejected":(r.allVerified?" verified":(r.partialVerified?" partial":"")))}>
                 <div className="eng-hd" role="button" tabIndex={0}
                   onClick={()=>setExpanded((e)=>({...e,[r.engcd]:!e[r.engcd]}))}
                   onKeyDown={(e)=>{ if(e.key==="Enter"||e.key===" ") setExpanded((ex)=>({...ex,[r.engcd]:!ex[r.engcd]})); }}>
@@ -3078,7 +3436,8 @@ function App(){
                       <span className="code">{[r.dept, r.position].filter(Boolean).join(" ／ ")}</span>
                     }
                     {r.retired && <span className="m-badge retired">退職</span>}
-                    {r.hasVerified && <span className="verified-badge"><Ic.Check size={12}/> 確認済み</span>}
+                    {r.allVerified && <span className="verified-badge"><Ic.Check size={12}/> 確認済み（{r.okCount}/{r.totalCount}）</span>}
+                    {r.partialVerified && <span className="partial-badge"><Ic.Check size={12}/> 一部確認済み（{r.okCount}/{r.totalCount}）</span>}
                     {r.allRejected && <span className="rejected-badge"><Ic.X size={12}/> 据付実績なし</span>}
                     {r.kanriCertUrl &&
                       <a className="corins-link" href={r.kanriCertUrl} target="_blank" rel="noopener noreferrer"
@@ -3107,8 +3466,9 @@ function App(){
                             <div className="verify-toggle" onClick={(e)=>e.stopPropagation()}>
                               <button type="button"
                                 className={"vt-btn vt-ok"+(en.verifyStatus==="ok"?" active":"")}
-                                title="据付実績あり（実績として認める）"
-                                onClick={()=>setVerifyStatus(r.engcd, en.constno, en.posicd, "ok")}>
+                                title={en.canMarkOk ? "据付実績あり（実績として認める）" : "実施工程表との整合性が未確認のため選択できません（従事割合100%の場合を除く）"}
+                                disabled={!en.canMarkOk}
+                                onClick={()=>{ if(en.canMarkOk) setVerifyStatus(r.engcd, en.constno, en.posicd, "ok"); }}>
                                 <Ic.Check size={13}/> 有
                               </button>
                               <button type="button"
@@ -3128,6 +3488,11 @@ function App(){
                                 据付期間内 {en.installPct}%
                               </span>
                             )}
+                            {en.isInstallKbn && (
+                              en.schedChecked
+                                ? <span className="sched-badge ok" title="実施工程表との整合性を確認済み"><Ic.Check size={12}/> 実施工程表 整合性確認済み</span>
+                                : <span className="sched-badge warn" title="実施工程表との整合性が未確認のため、自動での「据付実績あり」判定は行いません">実施工程表 整合性未確認</span>
+                            )}
                             {en.point!==undefined && en.point!==null && en.point!=="" &&
                               <span className="score-badge" title="この工事の工事点数">
                                 <Ic.Star size={12}/> 工事点数 {en.point}点
@@ -3143,6 +3508,11 @@ function App(){
                             {en.ratingPdfUrl &&
                               <a className="corins-link" href={en.ratingPdfUrl} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()}>
                                 <Ic.Link size={12}/> 工事評定点PDF
+                              </a>
+                            }
+                            {en.scheduleUrl &&
+                              <a className="corins-link" href={en.scheduleUrl} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()}>
+                                <Ic.Link size={12}/> 実施工程表
                               </a>
                             }
                             {en.awardPdfUrl &&
