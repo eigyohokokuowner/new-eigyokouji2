@@ -727,11 +727,22 @@ async function saveToStorage(next, prev){
       const prevIds=prevRecords.map((r)=>docIdFor(type,r)).filter(Boolean);
       const toDelete=prevIds.filter((id)=>!nextIds.has(id));
 
+      // 変更検知のため、id→内容(JSON文字列)のマップを作っておく
+      const prevById={};
+      prevRecords.forEach((r)=>{
+        const id=docIdFor(type,r);
+        if(!id) return;
+        const {__seq, ...data}=r;
+        prevById[id]=JSON.stringify(data);
+      });
+
       const ops=[];
       nextRecords.forEach((r)=>{
         const id=docIdFor(type,r);
         if(!id) return;
         const {__seq, ...data}=r;
+        const dataStr=JSON.stringify(data);
+        if(prevById[id]===dataStr) return; // 内容が変わっていないレコードは書き込まない
         ops.push({op:"set", id, data});
       });
       toDelete.forEach((id)=>ops.push({op:"delete", id}));
