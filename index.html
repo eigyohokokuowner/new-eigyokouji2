@@ -439,6 +439,10 @@
   }
   ::-webkit-scrollbar{width:8px;height:8px;}
   ::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px;}
+  /* 配置状況ガントの本体は、上部に工事名列ぶんオフセットした専用の横スクロールバー（topScrollRef）を別に用意しているため、
+     本体自体の横スクロールバーは重複表示・位置ズレを避けるため非表示にする（縦スクロールバーは表示したまま）。
+     横スクロール自体は引き続き可能（ホイール・トラックパッド・上部バーからの連動で動く）。 */
+  .gantt-main-scroll::-webkit-scrollbar:horizontal{display:none;height:0;}
 </style>
 </head>
 <body>
@@ -1408,10 +1412,10 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
 
   const now=new Date();
   const currentFY = now.getMonth()+1>=4 ? now.getFullYear() : now.getFullYear()-1;
-  const [fFyFrom,setFFyFrom]=useState(currentFY-9);
-  const [fFyFromMonth,setFFyFromMonth]=useState("04");
-  const [fFyTo,setFFyTo]=useState(currentFY);
-  const [fFyToMonth,setFFyToMonth]=useState("04");
+  const [fFyFrom,setFFyFrom]=useState("");
+  const [fFyFromMonth,setFFyFromMonth]=useState("");
+  const [fFyTo,setFFyTo]=useState("");
+  const [fFyToMonth,setFFyToMonth]=useState("");
   const [fSelectedGateCategory,setFSelectedGateCategory]=useState([]);
   const [fSelectedGateType,setFSelectedGateType]=useState([]);
   const [fSelectedGateStructure,setFSelectedGateStructure]=useState([]);
@@ -1496,8 +1500,11 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
 
   const filterResults=useMemo(()=>{
     if(!filterSearched) return [];
-    const fromYM=fFyFrom*100+parseInt(fFyFromMonth,10);
-    const toYM=fFyTo*100+parseInt(fFyToMonth,10);
+    // 年度が未入力（空欄）の側は制限なし。両方空欄なら日付での絞り込みは行わない（＝すべてのデータが対象）。
+    const fHasFrom = fFyFrom!=="" && fFyFrom!==null && fFyFrom!==undefined && !isNaN(parseInt(fFyFrom,10));
+    const fHasTo = fFyTo!=="" && fFyTo!==null && fFyTo!==undefined && !isNaN(parseInt(fFyTo,10));
+    const fromYM = fHasFrom ? parseInt(fFyFrom,10)*100 + parseInt(fFyFromMonth||"1",10) : null;
+    const toYM = fHasTo ? parseInt(fFyTo,10)*100 + parseInt(fFyToMonth||"12",10) : null;
     const keikMinN=fKeikMin===""?null:parseFloat(fKeikMin);
     const heighMinN=fHeighMin===""?null:parseFloat(fHeighMin);
     const areaMinN=fAreaMin===""?null:parseFloat(fAreaMin);
@@ -1510,7 +1517,11 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
     return constrsltRecords.filter((r)=>{
       const ymDigits = normDigits8(r.KOKT);
       const ym = ymDigits ? parseInt(ymDigits.slice(0,6),10) : null;
-      if(ym===null || ym<fromYM || ym>toYM) return false;
+      if(fromYM!==null || toYM!==null){
+        if(ym===null) return false;
+        if(fromYM!==null && ym<fromYM) return false;
+        if(toYM!==null && ym>toYM) return false;
+      }
       if(pointMinN!==null){
         const pt = (r.POINT===undefined||r.POINT===null||r.POINT==="") ? null : parseFloat(r.POINT);
         if(pt===null || isNaN(pt) || pt<pointMinN) return false;
@@ -1615,6 +1626,14 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
   const addEngRow=()=>setEngDraft([...engDraft, {CONSTNO:selected, SEQNO:"", POSICD:"", ENGCD:"", KOKF01:"",KOKT01:"",KOKF02:"",KOKT02:"",KOKF03:"",KOKT03:"", JWARI:""}]);
   const removeEngRow=(i)=>setEngDraft(engDraft.filter((_,idx)=>idx!==i));
   const updEng=(i,field)=>(v)=>setEngDraft(engDraft.map((e,idx)=> idx===i ? {...e,[field]:v} : e));
+  // 技術者コード欄に氏名が入力された場合、社員データの氏名と突き合わせてコードに変換する（数字ならそのまま）
+  const resolveEngcdByName=(inputVal)=>{
+    const s=String(inputVal||"").trim();
+    if(!s || /^\d+$/.test(s)) return null;
+    const key=s.replace(/\s+/g,"");
+    const found=Object.values(employeeMap||{}).find((e)=>(e.ID_NAME||"").replace(/\s+/g,"")===key);
+    return found ? found.ENGCD : null;
+  };
 
   const openNewForm=()=>{ setNewDraft({}); setNewError(""); setShowNew(true); };
   const nf=(field)=>newDraft[field]||"";
@@ -1749,28 +1768,31 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
               <div className="field-label">年度</div>
               <div className="field-control">
                 <div className="yr-inline">
-                  <input type="number" value={fFyFrom} onChange={(e)=>setFFyFrom(parseInt(e.target.value||0,10))}/>
+                  <input type="number" placeholder="指定なし" value={fFyFrom} onChange={(e)=>setFFyFrom(e.target.value)}/>
                   <span>年</span>
                   <select value={fFyFromMonth} onChange={(e)=>setFFyFromMonth(e.target.value)}>
+                    <option value="">指定なし</option>
                     {Array.from({length:12},(_,i)=>String(i+1).padStart(2,"0")).map((m)=>(
                       <option key={m} value={m}>{parseInt(m,10)}月</option>
                     ))}
                   </select>
-                  <span className="yr-era">{eraLabel(fFyFrom)}年度</span>
+                  <span className="yr-era">{eraLabel(parseInt(fFyFrom,10))}{fFyFrom!==""?"年度":""}</span>
                   <span>〜</span>
-                  <input type="number" value={fFyTo} onChange={(e)=>setFFyTo(parseInt(e.target.value||0,10))}/>
+                  <input type="number" placeholder="指定なし" value={fFyTo} onChange={(e)=>setFFyTo(e.target.value)}/>
                   <span>年</span>
                   <select value={fFyToMonth} onChange={(e)=>setFFyToMonth(e.target.value)}>
+                    <option value="">指定なし</option>
                     {Array.from({length:12},(_,i)=>String(i+1).padStart(2,"0")).map((m)=>(
                       <option key={m} value={m}>{parseInt(m,10)}月</option>
                     ))}
                   </select>
-                  <span className="yr-era">{eraLabel(fFyTo)}年度</span>
+                  <span className="yr-era">{eraLabel(parseInt(fFyTo,10))}{fFyTo!==""?"年度":""}</span>
                 </div>
                 <div className="yr-presets">
                   {[5,10,15].map((n)=>(
-                    <button key={n} onClick={()=>{ setFFyFrom(currentFY-(n-1)); setFFyFromMonth("04"); setFFyTo(currentFY); setFFyToMonth("04"); }}>直近{n}年度</button>
+                    <button key={n} onClick={()=>{ setFFyFrom(currentFY-(n-1)); setFFyFromMonth("04"); setFFyTo(""); setFFyToMonth(""); }}>直近{n}年度</button>
                   ))}
+                  <button onClick={()=>{ setFFyFrom(""); setFFyFromMonth(""); setFFyTo(""); setFFyToMonth(""); }}>指定なし（すべて）</button>
                 </div>
               </div>
             </div>
@@ -1778,7 +1800,7 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
               <div className="field-label">退職者</div>
               <label className="chk-inline" style={{width:"fit-content"}}>
                 <input type="checkbox" checked={fIncludeRetired} onChange={(e)=>setFIncludeRetired(e.target.checked)}/>
-                <span style={{color:"var(--muted)"}}>技術者欄に退職者も表示する（編集中は常に全員表示）</span>
+                <span style={{color:"var(--muted)"}}>技術者欄に退職者も表示する</span>
               </label>
             </div>
           </div>
@@ -2114,7 +2136,12 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
                   return (
                     <tr key={i}>
                       <td>{editingRows ? <DTSelect value={r.POSICD} onChange={updEng(i,"POSICD")} options={trgtOpts}/> : lit(literalMap,"TRGT",r.POSICD)}</td>
-                      {editingRows && <td><DTInput value={r.ENGCD} onChange={updEng(i,"ENGCD")} mono/></td>}
+                      {editingRows && <td>
+                        <input className="dt-input mono" value={r.ENGCD||""} placeholder="コードまたは氏名"
+                          autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false"
+                          onChange={(e)=>updEng(i,"ENGCD")(e.target.value)}
+                          onBlur={(e)=>{ const resolved=resolveEngcdByName(e.target.value); if(resolved) updEng(i,"ENGCD")(resolved); }}/>
+                      </td>}
                       <td>{emp ? emp.ID_NAME : (editingRows ? "" : "(コード:"+r.ENGCD+")")}</td>
                       {editingRows ? (
                         <React.Fragment>
@@ -3076,7 +3103,7 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
   // 期間は①CORINS従事期間（技術者情報）があれば優先し、無ければ②配置実績（配置期間）を使う。
   // 同一工事内での掛け持ち（複数役割）は対象外。管理技術者どうしの重複は許容する。
   // また、両方とも「案件」（未受注）どうしの重複は対象外（少なくとも一方が「工事」なら対象）。
-  const dutyConflicts=useMemo(()=>{
+  const dutyConflictResult=useMemo(()=>{
     const entries=[];
     projects.forEach((p)=>{
       const sesu=classifySesu(p.kubun);
@@ -3134,8 +3161,10 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
       }
     });
     conflicts.sort((x,y)=>(x.person||"").localeCompare(y.person||"","ja"));
-    return conflicts;
+    return {conflicts, entries};
   },[projects, engcdByName, engIndex, literalMap]);
+  const dutyConflicts=dutyConflictResult.conflicts;
+  const dutyEntries=dutyConflictResult.entries;
 
   // 重複が見つかった「人×工事インスタンス（ID）」の組み合わせを高速判定できるようにしたセット。
   // 工番テキストではなくID単位で持つのは、同じ工番が複数期間・複数件に分かれて登録されているとき、
@@ -3154,6 +3183,41 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
     const sesu=classifySesu(kubun);
     if(sesu!=="据" && sesu!=="製据") return false;
     return conflictKeySet.has((name||"").replace(/\s+/g,"")+"|"+projId);
+  };
+
+  // 「工番×役職区分」ごとに、配置されている人物と期間の一覧を持つ索引。赤字の行について、
+  // 同じ工事・同じ据付時期・同じ役割に自分を含めて何人配置されているかを数えるのに使う。
+  const entryByPersonProj=useMemo(()=>{
+    const m={};
+    dutyEntries.forEach((e)=>{ m[e.personKey+"|"+e.projId]=e; });
+    return m;
+  },[dutyEntries]);
+  const dutyCountIndex=useMemo(()=>{
+    const idx={};
+    dutyEntries.forEach((e)=>{
+      const key=e.koban+"|"+e.category;
+      if(!idx[key]) idx[key]=[];
+      idx[key].push({personKey:e.personKey, periods:e.periods});
+    });
+    return idx;
+  },[dutyEntries]);
+  const CIRCLED_NUM=["","①","②","③","④","⑤","⑥","⑦","⑧","⑨","⑩","⑪","⑫","⑬","⑭","⑮","⑯","⑰","⑱","⑲","⑳"];
+  const circledNum=(n)=> CIRCLED_NUM[n] || ("("+n+")");
+  // 赤字（isDutyConflict）になっている行だけ、自分を含めて同じ工事・同じ据付時期・同じ役割の人数を返す。
+  // 対象外や1人（自分だけ）の場合は0（表示しない）。
+  const getDutyOverlapCount=(name, projId, kubun)=>{
+    if(!isDutyConflict(name, projId, kubun)) return 0;
+    const personKey=(name||"").replace(/\s+/g,"");
+    const entry=entryByPersonProj[personKey+"|"+projId];
+    if(!entry) return 0;
+    const list=dutyCountIndex[entry.koban+"|"+entry.category] || [];
+    const personSet=new Set();
+    list.forEach((item)=>{
+      const overlaps=item.periods.some((ip)=> entry.periods.some((p)=> overlapDays(ip.from, ip.to, p.from, p.to)>0));
+      if(overlaps) personSet.add(item.personKey);
+    });
+    const count=personSet.size;
+    return count>=2 ? count : 0;
   };
 
   const q=query.trim();
@@ -3351,7 +3415,7 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
               <div style={{width:timelineWidth, height:1}}/>
             </div>
           </div>
-          <div ref={mainScrollRef} onScroll={onMainScroll}
+          <div ref={mainScrollRef} onScroll={onMainScroll} className="gantt-main-scroll"
             style={{overflow:"auto", maxHeight:640, border:"1px solid var(--line)", borderRadius:"0 0 10px 10px"}}>
           {/* 月ヘッダー（年・月の2段） */}
           <div style={{display:"flex", position:"sticky", top:0, zIndex:3}}>
@@ -3403,7 +3467,17 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
                     label={p.name} title={p.name+"（"+fmtDate(p.kokf)+"〜"+fmtDate(p.kokt)+"）"}/>
                 </Row>
                 {p.techs.map((t,ti)=>(
-                  <Row key={ti} height={TECH_ROW_H} label={<span style={{paddingLeft:14, color:isDutyConflict(t.name,p.id,p.kubun)?"var(--red)":"inherit", fontWeight:isDutyConflict(t.name,p.id,p.kubun)?800:500}}>{t.name}</span>} sub={t.role}>
+                  <Row key={ti} height={TECH_ROW_H} label={
+                    <span
+                      onClick={(e)=>{ e.stopPropagation(); setViewMode("person"); setQuery(t.name); }}
+                      title="クリックで配置一覧(技術者別)のこの技術者を表示"
+                      style={{paddingLeft:14, cursor:"pointer", textDecoration:"underline", textDecorationColor:"transparent",
+                        color:isDutyConflict(t.name,p.id,p.kubun)?"var(--red)":"inherit", fontWeight:isDutyConflict(t.name,p.id,p.kubun)?800:500}}
+                      onMouseEnter={(e)=>{ e.currentTarget.style.textDecorationColor="currentColor"; }}
+                      onMouseLeave={(e)=>{ e.currentTarget.style.textDecorationColor="transparent"; }}>
+                      {t.name}
+                    </span>
+                  } sub={t.role}>
                     <CorinsStrip periods={corinsPeriodsFor(p.koban, t.name)} top={3} height={10}/>
                     <Bar rect={barRect(t.from,t.to)} color="#6B7280" top={15} height={TECH_ROW_H-18}
                       label={t.name+"（"+(t.role||"")+"）"} title={t.name+" "+(t.kubun||"")+"/"+(t.role||"")+" "+fmtDate(t.from)+"〜"+fmtDate(t.to)}/>
@@ -3416,11 +3490,19 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
             filteredPersons.map((p,pi)=>(
               <React.Fragment key={pi}>
                 <Row header label={<span>{p.name}{p.retired && <span className="m-badge retired" style={{marginLeft:6, fontSize:8.5, padding:"1px 5px"}}>退職</span>}</span>} sub={p.dept}/>
-                {p.assigns.map((a,ai)=>(
+                {p.assigns.map((a,ai)=>{
+                  const dupCount=getDutyOverlapCount(p.name, a.projId, a.kubun);
+                  return (
                   <Row key={ai} height={TECH_ROW_H} label={<span style={{paddingLeft:14, display:"flex", alignItems:"center", gap:6}}>
                       <span style={{color:"var(--muted2)", fontWeight:600, flex:"0 0 auto"}}>{a.role}</span>
                       <SesuBadge sesu={classifySesu(a.kubun)}/>
                       <KobanText koban={a.koban}/>
+                      {dupCount>=2 &&
+                        <span style={{color:"var(--red)", fontWeight:900, flex:"0 0 auto"}}
+                          title={"自分を含めて同じ工事・同じ据付時期・同じ役割で"+dupCount+"人が配置されています"}>
+                          {circledNum(dupCount)}
+                        </span>
+                      }
                       <span style={{color:isDutyConflict(p.name,a.projId,a.kubun)?"var(--red)":"inherit", fontWeight:isDutyConflict(p.name,a.projId,a.kubun)?800:500}}>{a.name}</span>
                       <AmountTag koban={a.koban}/>
                     </span>}>
@@ -3428,7 +3510,8 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
                     <Bar rect={barRect(a.from,a.to)} color={ganttBarColor(a.kobanType,a.kubun)} top={15} height={TECH_ROW_H-18}
                       label={a.name} title={(a.koban||"")+" "+a.name+"（"+(a.kobanType||"")+"） "+(a.kubun||"")+"/"+(a.role||"")+" "+fmtDate(a.from)+"〜"+fmtDate(a.to)}/>
                   </Row>
-                ))}
+                  );
+                })}
               </React.Fragment>
             ))
           )}
@@ -4931,7 +5014,7 @@ function App(){
                 </div>
                 <div className="yr-presets">
                   {[5,10,15].map((n)=>(
-                    <button key={n} onClick={()=>{ setFyFrom(currentFY-(n-1)); setFyFromMonth("04"); setFyTo(currentFY); setFyToMonth("04"); }}>直近{n}年度</button>
+                    <button key={n} onClick={()=>{ setFyFrom(currentFY-(n-1)); setFyFromMonth("04"); setFyTo(""); setFyToMonth(""); }}>直近{n}年度</button>
                   ))}
                   <button onClick={()=>{ setFyFrom(""); setFyFromMonth(""); setFyTo(""); setFyToMonth(""); }}>指定なし（すべて）</button>
                 </div>
@@ -5045,30 +5128,26 @@ function App(){
           </div>
 
           <div className="field-row pair-row">
-            <div className="pair-group-grow top">
+            <div className="pair-group-grow">
               <div className="field-label">年齢条件</div>
-              <div className="field-control" style={{display:"flex", flexDirection:"column", gap:8}}>
-                <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
-                  <span style={{color:"var(--muted)", whiteSpace:"nowrap"}}>基準日</span>
-                  <input type="date" style={{maxWidth:160}} value={ageAsOf} onChange={(e)=>setAgeAsOf(e.target.value)}/>
-                  <span style={{color:"var(--muted2)", fontSize:11, whiteSpace:"nowrap"}}>（未指定なら本日）</span>
-                </div>
-                <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
-                  <input type="number" style={{maxWidth:90}} value={ageMin} onChange={(e)=>setAgeMin(e.target.value)} placeholder="0"/>
-                  <span style={{color:"var(--muted)", whiteSpace:"nowrap"}}>歳以上</span>
-                  <input type="number" style={{maxWidth:90}} value={ageMax} onChange={(e)=>setAgeMax(e.target.value)} placeholder="0"/>
-                  <span style={{color:"var(--muted)", whiteSpace:"nowrap"}}>歳以下</span>
-                </div>
+              <div className="field-control" style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+                <span style={{color:"var(--muted)", whiteSpace:"nowrap"}}>基準日</span>
+                <input type="date" style={{maxWidth:160}} value={ageAsOf} onChange={(e)=>setAgeAsOf(e.target.value)}/>
+                <span style={{color:"var(--muted2)", fontSize:11, whiteSpace:"nowrap"}}>（未指定なら本日）</span>
+                <input type="number" style={{maxWidth:70}} value={ageMin} onChange={(e)=>setAgeMin(e.target.value)} placeholder="0"/>
+                <span style={{color:"var(--muted)", whiteSpace:"nowrap"}}>歳以上</span>
+                <input type="number" style={{maxWidth:70}} value={ageMax} onChange={(e)=>setAgeMax(e.target.value)} placeholder="0"/>
+                <span style={{color:"var(--muted)", whiteSpace:"nowrap"}}>歳以下</span>
               </div>
             </div>
-            <div className="pair-group" style={{alignSelf:"stretch"}}>
+            <div className="pair-group">
               <div className="field-label">性別</div>
               <label className="chk-inline" style={{width:"fit-content"}}>
                 <input type="checkbox" checked={femaleOnly} onChange={(e)=>setFemaleOnly(e.target.checked)}/>
                 <span style={{color:"var(--muted)"}}>女性のみ</span>
               </label>
             </div>
-            <div className="pair-group-grow top">
+            <div className="pair-group-grow">
               <div className="field-label">所属部</div>
               <div className="field-control">
                 <MultiSelect options={deptOptions} selected={selectedDept} onChange={setSelectedDept} placeholder="選択してください（複数可）"/>
