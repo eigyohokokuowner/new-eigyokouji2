@@ -3503,7 +3503,15 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
                           {circledNum(dupCount)}
                         </span>
                       }
-                      <span style={{color:isDutyConflict(p.name,a.projId,a.kubun)?"var(--red)":"inherit", fontWeight:isDutyConflict(p.name,a.projId,a.kubun)?800:500}}>{a.name}</span>
+                      <span
+                        onClick={(e)=>{ e.stopPropagation(); setViewMode("project"); setQuery(a.koban); }}
+                        title="クリックで配置一覧(工事別)のこの工事を表示"
+                        style={{cursor:"pointer", textDecoration:"underline", textDecorationColor:"transparent",
+                          color:isDutyConflict(p.name,a.projId,a.kubun)?"var(--red)":"inherit", fontWeight:isDutyConflict(p.name,a.projId,a.kubun)?800:500}}
+                        onMouseEnter={(e)=>{ e.currentTarget.style.textDecorationColor="currentColor"; }}
+                        onMouseLeave={(e)=>{ e.currentTarget.style.textDecorationColor="transparent"; }}>
+                        {a.name}
+                      </span>
                       <AmountTag koban={a.koban}/>
                     </span>}>
                     <CorinsStrip periods={corinsPeriodsFor(a.koban, p.name)} top={3} height={10}/>
@@ -5127,7 +5135,7 @@ function App(){
             </div>
           </div>
 
-          <div className="field-row pair-row">
+          <div className="field-row pair-row" style={{alignItems:"stretch"}}>
             <div className="pair-group-grow">
               <div className="field-label">年齢条件</div>
               <div className="field-control" style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
@@ -5163,15 +5171,16 @@ function App(){
                   <input type="date" style={{maxWidth:160}} value={assignDateFrom} onChange={(e)=>setAssignDateFrom(e.target.value)}/>
                   <span style={{color:"var(--muted)"}}>〜</span>
                   <input type="date" style={{maxWidth:160}} value={assignDateTo} onChange={(e)=>setAssignDateTo(e.target.value)}/>
-                  <span style={{color:"var(--muted2)", fontSize:11, whiteSpace:"nowrap"}}>（配置データと突き合わせて重複を表示。除外はしません）</span>
+                  <span style={{color:"var(--muted2)", fontSize:11, whiteSpace:"nowrap"}}>（配置データと突き合わせて重複を表示）</span>
                 </div>
               </div>
             </div>
             <div className="pair-group-grow">
-              <div className="field-label">重複案件除外フィルタ</div>
-              <label className="chk-inline" style={{width:"fit-content"}}>
+              <div className="field-label">重複の絞り込み</div>
+              <label className="chk-inline" style={{width:"fit-content"}}
+                title="製作の配置や、据付でも担当技術者などの重複は対象から除きます">
                 <input type="checkbox" checked={dutyOnlyFilter} onChange={(e)=>setDutyOnlyFilter(e.target.checked)}/>
-                <span style={{color:"var(--muted)"}}>「据付時期＋監理・主任・管理技術者」以外を除去</span>
+                <span style={{color:"var(--muted)"}}>専任性のある重複のみ表示（据付の監理・主任・管理技術者）</span>
               </label>
             </div>
           </div>
