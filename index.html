@@ -369,13 +369,15 @@
   .master-group-label:first-of-type{margin-top:14px;}
   .master-group-label.retired{color:var(--red);}
   .master-list{border:1px solid var(--line);border-radius:10px;overflow-x:auto;overflow-y:hidden;}
-  .master-row{display:grid;grid-template-columns:90px 64px 150px 1fr 92px 76px 138px;align-items:center;gap:10px;
+  .master-row{display:grid;grid-template-columns:90px 64px 150px 1fr 120px 92px 76px 138px;align-items:center;gap:10px;
     padding:10px 14px;border-bottom:1px solid var(--line-soft);font-size:13px;background:var(--panel);}
   .master-row:last-child{border-bottom:none;}
   .master-row.retired{background:var(--panel-raised);opacity:.75;}
   .master-row-head{background:var(--panel-raised);font-family:var(--mono);font-size:10.5px;color:var(--muted2);
     letter-spacing:.04em;padding:8px 14px;}
   .m-code{font-family:var(--mono);color:var(--cyan);font-size:12px;}
+  .m-office{display:flex;align-items:center;justify-content:center;}
+  .m-office input[type="checkbox"]{width:16px;height:16px;cursor:pointer;}
   .m-name{font-weight:700;color:var(--ink);}
   .m-comp{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
   .m-badge{font-family:var(--mono);font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;
@@ -435,6 +437,7 @@
     .master-row{grid-template-columns:70px 1fr 70px;}
     .master-row .m-comp{display:none;}
     .master-row .m-gender{display:none;}
+    .master-row .m-office{display:none;}
     .m-lic-panel{padding-left:16px;}
   }
   ::-webkit-scrollbar{width:8px;height:8px;}
@@ -2600,11 +2603,11 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
 
   const startEdit=(emp)=>{
     setEditingCode(emp.ENGCD);
-    setEditDraft({ID_NAME:emp.ID_NAME||"", COMPCD:emp.COMPCD||"", GENDER:emp.GENDER||""});
+    setEditDraft({ID_NAME:emp.ID_NAME||"", COMPCD:emp.COMPCD||"", GENDER:emp.GENDER||"", OFFICE_TECH:emp.OFFICE_TECH||""});
   };
   const cancelEdit=()=>{ setEditingCode(null); setEditDraft({}); };
   const saveEdit=(engcd)=>{
-    const next=employees.map((e)=> e.ENGCD===engcd ? {...e, ID_NAME:editDraft.ID_NAME, COMPCD:editDraft.COMPCD, GENDER:editDraft.GENDER} : e);
+    const next=employees.map((e)=> e.ENGCD===engcd ? {...e, ID_NAME:editDraft.ID_NAME, COMPCD:editDraft.COMPCD, GENDER:editDraft.GENDER, OFFICE_TECH:editDraft.OFFICE_TECH} : e);
     onSave(next);
     setEditingCode(null);
   };
@@ -2831,6 +2834,11 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
                     onChange={(e)=>setEditDraft({...editDraft, ID_NAME:e.target.value})}/>
                   <input className="m-input" value={editDraft.COMPCD}
                     onChange={(e)=>setEditDraft({...editDraft, COMPCD:e.target.value})}/>
+                  <span className="m-office">
+                    <input type="checkbox" checked={!!editDraft.OFFICE_TECH}
+                      onChange={(e)=>setEditDraft({...editDraft, OFFICE_TECH:e.target.checked ? "1" : ""})}
+                      title="営業所専任技術者"/>
+                  </span>
                   <span></span>
                   <span></span>
                   <span className="m-actions">
@@ -2846,6 +2854,9 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
                     {(emp.DEPT || emp.POSITION)
                       ? [emp.DEPT, emp.POSITION].filter(Boolean).join(" ／ ")
                       : (emp.COMPCD || "-")}
+                  </span>
+                  <span className="m-office">
+                    <input type="checkbox" checked={!!emp.OFFICE_TECH} disabled title="営業所専任技術者（編集モードで変更できます）"/>
                   </span>
                   <button type="button" className="m-lic-toggle" onClick={()=>setExpandedLic(licOpen?null:emp.ENGCD)}>
                     資格 {licCodes.length}件 {licOpen ? <Ic.Down/> : <Ic.Right/>}
@@ -2894,6 +2905,7 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
             <span className="m-gender">性別</span>
             <span className="m-name">氏名</span>
             <span className="m-comp">所属</span>
+            <span className="m-office">営業所専任技術者</span>
             <span>資格</span>
             <span className="m-status">状態</span>
             <span></span>
@@ -3978,6 +3990,7 @@ function App(){
   // 検索結果の並び替え：既定（該当件数順）／年齢の昇順・降順／配置予定と重複件数の昇順・降順
   const [sortMode,setSortMode]=useState("default");
   const [includeRetired,setIncludeRetired]=useState(false);
+  const [includeOfficeTech,setIncludeOfficeTech]=useState(false); // OFF=営業所専任技術者は候補から除外（デフォルト）
   const [activeTab,setActiveTab]=useState("search");
   const [jumpToConstno,setJumpToConstno]=useState(null);
   const [jumpNonce,setJumpNonce]=useState(0);
@@ -4326,6 +4339,11 @@ function App(){
         if(emp && emp.STATUS==="retired") return;
       }
 
+      if(!includeOfficeTech){
+        const emp=employeeMap[engRow.ENGCD];
+        if(emp && emp.OFFICE_TECH) return;
+      }
+
       if(ageMinN!==null || ageMaxN!==null){
         const kinfo=enginfoByEngcd[engRow.ENGCD];
         const age=kinfo ? calcAge(kinfo.BDAY, ageAsOf) : null;
@@ -4519,7 +4537,7 @@ function App(){
      selectedBunya, selectedGateCategory, selectedGateType, selectedGateStructure, selectedKaihei, gateHierarchyByCode,
      keikMin, heighMin, areaMin, areaIncludeSuis, suisMin, syusMin, horyuMin, pointMin, ageMin, ageMax, ageAsOf, selectedDept,
      assignDateFrom, assignDateTo, dutyOnlyFilter, excludeAwardedDutyOverlap, assignRowsByEngcd, dutyAssignIndex, selectedEngcds,
-     employeeMap, literalMap, includeRetired, femaleOnly,
+     employeeMap, literalMap, includeRetired, includeOfficeTech, femaleOnly,
      selectedLicenses, licenseMode, enginfoByEngcd, liccdByNormName, employeeLicMap, verifiedMap, sessionVerified, certLinksByEngcd, kanriCertByEngcd]);
 
   const sortedResults=useMemo(()=>{
@@ -5191,6 +5209,13 @@ function App(){
               <div className="field-control">
                 <MultiSelect options={employeeOptions} selected={selectedEngcds} onChange={setSelectedEngcds} searchable placeholder="氏名で検索して選択してください（複数可・未選択＝全員対象）"/>
               </div>
+            </div>
+            <div className="pair-group">
+              <div className="field-label">営業所専任技術者</div>
+              <label className="chk-inline" style={{width:"fit-content"}}>
+                <input type="checkbox" checked={includeOfficeTech} onChange={(e)=>setIncludeOfficeTech(e.target.checked)}/>
+                <span style={{color:"var(--muted)"}}>配置候補技術者に含める</span>
+              </label>
             </div>
           </div>
 
