@@ -15,7 +15,7 @@
     getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
   import {
-    getFirestore, collection, doc, getDoc, getDocs, setDoc, writeBatch, serverTimestamp
+    getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
   const firebaseConfig = {
@@ -34,7 +34,7 @@
   window.fb = {
     auth, db,
     signInWithEmailAndPassword, onAuthStateChanged, signOut,
-    collection, doc, getDoc, getDocs, setDoc, writeBatch, serverTimestamp,
+    collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch, serverTimestamp,
   };
   window.dispatchEvent(new Event("firebase-ready"));
 </script>
@@ -130,10 +130,15 @@
   .overlay-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
   .overlay-hd h3{font-family:var(--display);font-size:16px;font-weight:900;margin:0;}
   .icon-btn{background:none;border:none;cursor:pointer;color:var(--muted);}
-  .saved-list-item{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;
+  .saved-list-item{display:flex;align-items:center;gap:8px;width:100%;}
+  .saved-list-open{display:flex;flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:0;text-align:left;
     padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel-raised);cursor:pointer;position:relative;}
-  .saved-list-item:hover{border-color:#AAB4CC;background:var(--panel);}
-  .saved-list-item:disabled{opacity:.6;cursor:default;}
+  .saved-list-open:hover{border-color:#AAB4CC;background:var(--panel);}
+  .saved-list-open:disabled{opacity:.6;cursor:default;}
+  .saved-list-delete{flex:0 0 auto;width:34px;height:34px;border-radius:8px;border:1px solid var(--line);
+    background:var(--panel-raised);display:flex;align-items:center;justify-content:center;color:var(--muted);cursor:pointer;}
+  .saved-list-delete:hover{background:var(--red-soft);color:var(--red);border-color:var(--red);}
+  .saved-list-delete:disabled{opacity:.5;cursor:default;}
   .saved-list-title{font-weight:800;font-size:13px;color:var(--ink);}
   .saved-list-meta{font-size:11px;color:var(--muted2);}
   .saved-list-loading{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--accent);}
@@ -1077,6 +1082,12 @@ async function loadConsiderListFromFirestore(id){
   if(!snap.exists()) throw new Error("見つかりませんでした");
   const data=snap.data();
   return {title: data.title||id, candidates: data.candidates||[], roles: data.roles||{}};
+}
+async function deleteConsiderListFromFirestore(id){
+  await waitForFirebase();
+  if(!window.fb) throw new Error("Firestoreに接続できません");
+  const {db, doc, deleteDoc}=window.fb;
+  await deleteDoc(doc(db,"considerLists",id));
 }
 
 /* ---------------- small components ---------------- */
@@ -3987,6 +3998,22 @@ function App(){
     setLoadingListId(null);
     setTimeout(()=>setToast(""),4500);
   };
+  const [deletingListId,setDeletingListId]=useState(null);
+  const doDeleteConsiderList=async(it)=>{
+    if(!window.confirm("「"+it.title+"」を削除します。元に戻せません。よろしいですか？")) return;
+    setDeletingListId(it.id);
+    try{
+      await deleteConsiderListFromFirestore(it.id);
+      setSavedListsIndex((prev)=> (prev||[]).filter((x)=>x.id!==it.id));
+      if(currentListTitle===it.title) setCurrentListTitle("");
+      setToast("「"+it.title+"」を削除しました");
+    }catch(e){
+      console.error("配置検討リスト削除エラー:", e);
+      setToast("削除に失敗しました（"+(e.code||e.message||"不明なエラー")+"）");
+    }
+    setDeletingListId(null);
+    setTimeout(()=>setToast(""),4500);
+  };
   // 検索結果の並び替え：既定（該当件数順）／年齢の昇順・降順／配置予定と重複件数の昇順・降順
   const [sortMode,setSortMode]=useState("default");
   const [includeRetired,setIncludeRetired]=useState(false);
@@ -5325,14 +5352,20 @@ function App(){
             ) : (
               <div style={{display:"flex", flexDirection:"column", gap:8, maxHeight:420, overflowY:"auto"}}>
                 {(savedListsIndex||[]).map((it)=>(
-                  <button key={it.id} className="saved-list-item" onClick={()=>doLoadConsiderList(it.id)} disabled={loadingListId!==null}>
-                    <span className="saved-list-title">{it.title}</span>
-                    <span className="saved-list-meta">
-                      {it.updatedAt ? new Date(it.updatedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "-"}
-                      　更新・{it.count}名
-                    </span>
-                    {loadingListId===it.id && <span className="saved-list-loading">開いています…</span>}
-                  </button>
+                  <div key={it.id} className="saved-list-item">
+                    <button type="button" className="saved-list-open" onClick={()=>doLoadConsiderList(it.id)} disabled={loadingListId!==null || deletingListId!==null}>
+                      <span className="saved-list-title">{it.title}</span>
+                      <span className="saved-list-meta">
+                        {it.updatedAt ? new Date(it.updatedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "-"}
+                        　更新・{it.count}名
+                      </span>
+                      {loadingListId===it.id && <span className="saved-list-loading">開いています…</span>}
+                    </button>
+                    <button type="button" className="saved-list-delete" title="このリストを削除"
+                      onClick={()=>doDeleteConsiderList(it)} disabled={loadingListId!==null || deletingListId!==null}>
+                      {deletingListId===it.id ? "…" : <Ic.X size={14}/>}
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
