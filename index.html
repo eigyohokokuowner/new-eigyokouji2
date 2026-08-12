@@ -513,6 +513,13 @@ function fmtDate(yyyymmdd){
   if(!s) return "-";
   return s.slice(0,4)+"/"+s.slice(4,6)+"/"+s.slice(6,8);
 }
+// データ更新日時の表示用（例：2026.08.12.15:12）
+function fmtDataUpdatedAt(ms){
+  if(!ms) return null;
+  const d=new Date(ms);
+  const pad=(n)=>String(n).padStart(2,"0");
+  return d.getFullYear()+"."+pad(d.getMonth()+1)+"."+pad(d.getDate())+"."+pad(d.getHours())+":"+pad(d.getMinutes());
+}
 // 資格の正式名称を候補カード用の略称に変換する（例：土木施工管理技士（１級）→1土施）。
 // 該当しない資格名はそのまま返す。ツールチップでは正式名称を表示するので情報は失われない。
 function abbreviateLicenseName(name){
@@ -945,7 +952,7 @@ async function loadFromStorage(){
     const cacheIsFresh = cached && serverUpdatedMs!==null && cached.updatedAtMs===serverUpdatedMs;
 
     if(cacheIsFresh){
-      if(cached.records.length>0) out[type]={records: cached.records, filename:"firestore(cache)"};
+      if(cached.records.length>0) out[type]={records: cached.records, filename:"firestore(cache)", updatedAt: serverUpdatedMs};
       continue;
     }
 
@@ -953,7 +960,7 @@ async function loadFromStorage(){
       const snap=await getDocs(collection(db, type));
       const records=[];
       snap.forEach((d)=>{ const data={...d.data()}; delete data.__seq; records.push(data); });
-      if(records.length>0) out[type]={records, filename:"firestore"};
+      if(records.length>0) out[type]={records, filename:"firestore", updatedAt: serverUpdatedMs};
       nextCache[type]={records, updatedAtMs: serverUpdatedMs};
     }catch(e){
       // 未作成のコレクション・権限不足は無視して次へ
@@ -3724,6 +3731,7 @@ function Uploader({datasets, onMerged, compact}){
         // 差分マージ（追加・更新のみ）ではなく毎回まるごと入れ替える
         records: type==="assign" ? data.records : mergeRecords(datasets[type]?.records, data.records, MERGE_KEY[type]),
         filename: data.filename,
+        updatedAt: Date.now(),
       };
     });
     // 資格コード(LICCD)は過去のデータで桁数の表記ゆれ（先頭ゼロなし）が残っている場合があるため、
@@ -3760,12 +3768,13 @@ function Uploader({datasets, onMerged, compact}){
       <div className="status-grid">
         {Object.entries(DATASET_DEFS).map(([key,def])=>{
           const loaded=!!datasets[key];
+          const updatedAtStr = loaded ? fmtDataUpdatedAt(datasets[key].updatedAt) : null;
           return (
             <div key={key} className={"status-card"+(loaded?" on":"")}>
               {loaded ? <Ic.Check color="var(--green)"/> : <Ic.Circle color="var(--faint)"/>}
               <div style={{minWidth:0}}>
                 <div className="t">{def.label}</div>
-                <div className="n">{loaded ? datasets[key].records.length+"件" : "未読込"}</div>
+                <div className="n">{loaded ? datasets[key].records.length+"件"+(updatedAtStr ? " / "+updatedAtStr : "") : "未読込"}</div>
               </div>
             </div>
           );
