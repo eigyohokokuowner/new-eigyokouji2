@@ -388,6 +388,11 @@
   .m-badge{font-family:var(--mono);font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;
     background:var(--green-soft);color:var(--green);width:fit-content;}
   .m-badge.retired{background:var(--red-soft);color:var(--red);}
+  .proof-badge{display:inline-flex;align-items:center;font-family:var(--mono);font-size:10.5px;font-weight:700;
+    padding:3px 9px;border-radius:999px;white-space:nowrap;background:var(--panel-raised);color:var(--muted);}
+  .proof-badge.cert{background:var(--green-soft);color:var(--green);}
+  .proof-badge.notice{background:var(--cyan-soft);color:var(--cyan);}
+  .proof-badge.none{background:var(--red-soft);color:var(--red);}
   .m-actions{display:flex;gap:6px;justify-content:flex-start;}
   .m-actions .btn-ghost,.m-actions .btn-outline{padding:6px 10px;font-size:11.5px;}
   .m-input{width:100%;border:1px solid var(--line);background:var(--panel-sunk);color:var(--ink);
@@ -2204,6 +2209,20 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
 function fmtYMD8(s){ // BDAY等(YYYYMMDD)を年/月/日に
   return fmtDate(s);
 }
+// 学科区分（土木／機械器具）用の固定選択肢
+const GAKU_KBN_OPTS=[{code:"指定学科",name:"指定学科"},{code:"指定学科以外",name:"指定学科以外"}];
+// 保有資格「取得日の判断材料」用の固定選択肢
+const LIC_PROOF_OPTS=[{code:"合格通知書",name:"合格通知書"},{code:"合格証明書",name:"合格証明書"},{code:"資料なし",name:"資料なし"}];
+function proofBadgeClass(v){
+  if(v==="合格証明書") return "cert";
+  if(v==="合格通知書") return "notice";
+  if(v==="資料なし") return "none";
+  return "";
+}
+function ProofBadge({value}){
+  if(!value) return <span style={{color:"var(--faint)"}}>-</span>;
+  return <span className={"proof-badge "+proofBadgeClass(value)}>{value}</span>;
+}
 function KindMark({on}){
   return <span className={"kindmark"+(on?" on":"")}>{on ? "○" : ""}</span>;
 }
@@ -2219,9 +2238,10 @@ function PersonnelCard({emp, info, heldLicenses, licenses, literalMap, onRemove,
     [...(licenses||[])].map((l)=>({code:l.LICCD, name:l.LICNM})).sort((a,b)=>(a.name||"").localeCompare(b.name||"","ja"))
   ,[licenses]);
   const kghoOpts=useMemo(()=>optionsFromLiteral(literalMap,"KGHO"),[literalMap]);
+  const proofOpts=LIC_PROOF_OPTS;
 
-  const startEditLic=(l)=>{ setEditingLic(l.liccd); setLicDraft({LICCD:l.liccd, LICNO:l.rawLicno, SDAY:l.rawSday, KBN:l.rawKbn, CERT_URL:l.certUrl}); };
-  const startAddLic=()=>{ setEditingLic("__new__"); setLicDraft({LICCD:"", LICNO:"", SDAY:"", KBN:"", CERT_URL:""}); };
+  const startEditLic=(l)=>{ setEditingLic(l.liccd); setLicDraft({LICCD:l.liccd, LICNO:l.rawLicno, SDAY:l.rawSday, KBN:l.rawKbn, CERT_URL:l.certUrl, PROOF:l.rawProof}); };
+  const startAddLic=()=>{ setEditingLic("__new__"); setLicDraft({LICCD:"", LICNO:"", SDAY:"", KBN:"", CERT_URL:"", PROOF:""}); };
   const saveLic=(originalLiccd)=>{
     if(!licDraft.LICCD){ return; }
     onSaveLicenseRow(emp.ENGCD, originalLiccd==="__new__" ? null : originalLiccd, licDraft);
@@ -2235,7 +2255,7 @@ function PersonnelCard({emp, info, heldLicenses, licenses, literalMap, onRemove,
   const saveInfo=()=>{ onSaveEngInfo(emp.ENGCD, infoDraft); setEditingInfo(false); };
   const inf=(field)=>infoDraft[field]||"";
   const setInf=(field)=>(v)=>setInfoDraft({...infoDraft, [field]:v});
-  const gakaOpts=useMemo(()=>optionsFromLiteral(literalMap,"GAKA"),[literalMap]);
+  const gakuKbnOpts=GAKU_KBN_OPTS;
 
   const kindFields=[
     [["土","KDO"],["鋼","KKOU"]],
@@ -2280,7 +2300,18 @@ function PersonnelCard({emp, info, heldLicenses, licenses, literalMap, onRemove,
               <th>学部名</th><td>{editingInfo ? <DTInput value={inf("GAKUB")} onChange={setInf("GAKUB")}/> : (info ? (info.GAKUB||"-") : "-")}</td>
               <th>学科名</th><td colSpan="3">{editingInfo ? <DTInput value={inf("GAKKA")} onChange={setInf("GAKKA")}/> : (info ? (info.GAKKA||"-") : "-")}</td>
             </tr>
-            <tr><th>学科区分</th><td colSpan="7">{editingInfo ? <DTSelect value={inf("KBN")} onChange={setInf("KBN")} options={gakaOpts}/> : (info ? (lit(literalMap,"GAKA",info.KBN) || "-") : "-")}</td></tr>
+            <tr>
+              <th>学科区分（土木）</th>
+              <td>{editingInfo ? <DTSelect value={inf("KBN_DOBOKU")} onChange={setInf("KBN_DOBOKU")} options={gakuKbnOpts}/> : (info ? (info.KBN_DOBOKU || "-") : "-")}</td>
+              <th>メモ</th>
+              <td colSpan="5">{editingInfo ? <DTInput value={inf("KBN_DOBOKU_MEMO")} onChange={setInf("KBN_DOBOKU_MEMO")} placeholder="メモ"/> : (info ? (info.KBN_DOBOKU_MEMO || "-") : "-")}</td>
+            </tr>
+            <tr>
+              <th>学科区分（機械器具）</th>
+              <td>{editingInfo ? <DTSelect value={inf("KBN_KIKAI")} onChange={setInf("KBN_KIKAI")} options={gakuKbnOpts}/> : (info ? (info.KBN_KIKAI || "-") : "-")}</td>
+              <th>メモ</th>
+              <td colSpan="5">{editingInfo ? <DTInput value={inf("KBN_KIKAI_MEMO")} onChange={setInf("KBN_KIKAI_MEMO")} placeholder="メモ"/> : (info ? (info.KBN_KIKAI_MEMO || "-") : "-")}</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -2354,7 +2385,7 @@ function PersonnelCard({emp, info, heldLicenses, licenses, literalMap, onRemove,
       <div className="table-wrap">
         <table className="detail-table">
           <thead>
-            <tr><th>資格名称</th><th>免許No</th><th>取得日</th><th>建設業法の資格区分</th><th>証明書</th>{canEdit && <th></th>}</tr>
+            <tr><th>資格名称</th><th>免許No</th><th>取得日</th><th>取得日の判断材料</th><th>建設業法の資格区分</th><th>証明書</th>{canEdit && <th></th>}</tr>
           </thead>
           <tbody>
             {heldLicenses.map((l,i)=>{
@@ -2366,6 +2397,7 @@ function PersonnelCard({emp, info, heldLicenses, licenses, literalMap, onRemove,
                       <td><DTSelect value={licDraft.LICCD} onChange={(v)=>setLicDraft({...licDraft, LICCD:v})} options={licenseSelectOpts}/></td>
                       <td><DTInput value={licDraft.LICNO} onChange={(v)=>setLicDraft({...licDraft, LICNO:v})}/></td>
                       <td><DTInput value={licDraft.SDAY} onChange={(v)=>setLicDraft({...licDraft, SDAY:v})} placeholder="YYYYMMDD" mono/></td>
+                      <td><DTSelect value={licDraft.PROOF} onChange={(v)=>setLicDraft({...licDraft, PROOF:v})} options={proofOpts}/></td>
                       <td><DTSelect value={licDraft.KBN} onChange={(v)=>setLicDraft({...licDraft, KBN:v})} options={kghoOpts}/></td>
                       <td><DTInput value={licDraft.CERT_URL} onChange={(v)=>setLicDraft({...licDraft, CERT_URL:v})} placeholder="証明書PDFのURL"/></td>
                       <td>
@@ -2377,7 +2409,9 @@ function PersonnelCard({emp, info, heldLicenses, licenses, literalMap, onRemove,
                     </React.Fragment>
                   ) : (
                     <React.Fragment>
-                      <td>{l.name}</td><td>{l.licno}</td><td>{l.acquired}</td><td>{l.kbn}</td>
+                      <td>{l.name}</td><td>{l.licno}</td><td>{l.acquired}</td>
+                      <td><ProofBadge value={l.proof}/></td>
+                      <td>{l.kbn}</td>
                       <td>
                         {l.certUrl
                           ? <a className="corins-link" href={l.certUrl} target="_blank" rel="noopener noreferrer"><Ic.Link size={12}/> 証明書を開く</a>
@@ -2401,6 +2435,7 @@ function PersonnelCard({emp, info, heldLicenses, licenses, literalMap, onRemove,
                 <td><DTSelect value={licDraft.LICCD} onChange={(v)=>setLicDraft({...licDraft, LICCD:v})} options={licenseSelectOpts}/></td>
                 <td><DTInput value={licDraft.LICNO} onChange={(v)=>setLicDraft({...licDraft, LICNO:v})}/></td>
                 <td><DTInput value={licDraft.SDAY} onChange={(v)=>setLicDraft({...licDraft, SDAY:v})} placeholder="YYYYMMDD" mono/></td>
+                <td><DTSelect value={licDraft.PROOF} onChange={(v)=>setLicDraft({...licDraft, PROOF:v})} options={proofOpts}/></td>
                 <td><DTSelect value={licDraft.KBN} onChange={(v)=>setLicDraft({...licDraft, KBN:v})} options={kghoOpts}/></td>
                 <td><DTInput value={licDraft.CERT_URL} onChange={(v)=>setLicDraft({...licDraft, CERT_URL:v})} placeholder="証明書PDFのURL"/></td>
                 <td>
@@ -2411,7 +2446,7 @@ function PersonnelCard({emp, info, heldLicenses, licenses, literalMap, onRemove,
                 </td>
               </tr>
             }
-            {heldLicenses.length===0 && editingLic!=="__new__" && <tr><td colSpan={canEdit?6:5} className="empty">保有資格の登録がありません</td></tr>}
+            {heldLicenses.length===0 && editingLic!=="__new__" && <tr><td colSpan={canEdit?7:6} className="empty">保有資格の登録がありません</td></tr>}
           </tbody>
         </table>
       </div>
@@ -2469,11 +2504,13 @@ function PersonnelQualification({employees, enginfoRecords, licenses, engLicense
       name: licenseMap[r.LICCD] || ("資格("+r.LICCD+")"),
       licno: r.LICNO || "-",
       acquired: r.SDAY ? fmtDateEra(r.SDAY) : "-",
+      proof: r.PROOF || "",
       kbn: lit(literalMap,"KGHO",r.KBN) || "-",
       certUrl: r.CERT_URL || "",
       rawLicno: r.LICNO || "",
       rawSday: r.SDAY || "",
       rawKbn: r.KBN || "",
+      rawProof: r.PROOF || "",
     }));
 
   const openNewForm=()=>{ setNewDraft({}); setNewError(""); setShowNew(true); };
