@@ -1184,9 +1184,17 @@ function branchName(code){
   const c=String(parseFloat(code));
   return EIGYCD_MAP[c] || ("(code:"+code+")");
 }
+// コードの正規化：
+// - 完全に数字だけのコード（例:"01"）は前ゼロ表記ゆれを吸収するため数値化して比較する
+// - 英字が混じるコード（例:"13A"）は数値化すると別コードと衝突する（parseFloatが英字部分を無視するため）ので、
+//   前後空白のみ除去した文字列としてそのまま扱う
+function normCode(code){
+  const s=String(code===undefined || code===null ? "" : code).trim();
+  return /^\d+$/.test(s) ? String(parseInt(s,10)) : s;
+}
 function lit(literalMap, type, code){
   if(code===undefined || code===null || code==="") return "";
-  const c=String(parseFloat(code));
+  const c=normCode(code);
   return (literalMap[type] && literalMap[type][c]) || ("(code:"+code+")");
 }
 // ゲートカテゴリ／ゲート種類／ゲート構造の3階層分類
@@ -3162,7 +3170,7 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
 
   const lookupLitLocal=(type,code)=>{
     if(code===undefined||code===null||code==="") return "";
-    const c=String(parseFloat(code));
+    const c=normCode(code);
     return (literalMap && literalMap[type] && literalMap[type][c]) || "";
   };
 
@@ -3638,7 +3646,7 @@ function MasterMaintenance({literals, onSaveLiterals}){
     const code=newCode.trim();
     const name=newName.trim();
     if(!/^\d+$/.test(code)){ setFormError("コードは数字で入力してください"); return; }
-    if((literals||[]).some((r)=> r.CDTYP===activeMaster && String(parseFloat(r.LTLCD))===String(parseFloat(code)))){
+    if((literals||[]).some((r)=> r.CDTYP===activeMaster && normCode(r.LTLCD)===normCode(code))){
       setFormError("そのコードは既に登録されています"); return;
     }
     if(!name){ setFormError("名称を入力してください"); return; }
@@ -4101,7 +4109,7 @@ function App(){
   const literalMap=useMemo(()=>{
     const map={};
     (datasets.literals?.records||[]).forEach((r)=>{
-      const t=r.CDTYP, c=String(parseFloat(r.LTLCD));
+      const t=r.CDTYP, c=normCode(r.LTLCD);
       if(!map[t]) map[t]={};
       map[t][c]=r.LTLNM;
     });
@@ -4110,7 +4118,7 @@ function App(){
 
   const lookupLit=(type,code)=>{
     if(code===undefined||code===null||code==="") return "";
-    const c=String(parseFloat(code));
+    const c=normCode(code);
     return (literalMap[type] && literalMap[type][c]) || ("(code:"+code+")");
   };
 
