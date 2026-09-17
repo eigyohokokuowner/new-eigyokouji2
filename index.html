@@ -492,6 +492,17 @@ function eraLabel(y){
   if(y>=1926) return "昭和"+(y-1925===1?"元":y-1925);
   return String(y);
 }
+// 重複行判定などの「値の一致比較」用に文字列を正規化する。
+// 半角/全角スペースやゼロ幅スペース・BOMなど見た目には分からない差異を除去し、
+// 全角英数字は半角に、大文字小文字も揃えることで、見た目は同じなのに文字コードが
+// 微妙に違うために「別の行」と誤判定されるのを防ぐ。
+function normKeyStr(v){
+  if(v===null||v===undefined) return "";
+  return String(v)
+    .replace(/[\s\u3000\u200B\uFEFF]/g,"")
+    .replace(/[０-９Ａ-Ｚａ-ｚ]/g, (ch)=>String.fromCharCode(ch.charCodeAt(0)-0xFEE0))
+    .toUpperCase();
+}
 // "20130522" のほか "2013/05/22" "2013-05-22" のように区切り文字が混ざっていても、
 // 数字だけを取り出して8桁ならYYYYMMDDとして解釈する（入力欄に書式チェックが無いための保険）
 function normDigits8(v){
@@ -2154,7 +2165,7 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
               <tbody>
                 {(()=>{
                   const src=editingRows ? engDraft : engRows;
-                  const seenKeys = editingRows ? null : new Set();
+                  const seenKeys = new Set();
                   const rowsToRender=[];
                   src.forEach((r,i)=>{
                     const emp=employeeMap[r.ENGCD];
@@ -2172,19 +2183,16 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
                     // 従事期間が、工期全体（proj.KOKF〜proj.KOKT）に対してどれだけの割合を占めるか（％）を自動計算する
                     const jwariPct = proj ? computeEngagementPct(periods, proj.KOKF, proj.KOKT) : null;
 
-                    // 表示モード（編集中でない場合）は、役割・技術者名・従事期間1〜3・
-                    // 従事割合（据付期間内）・従事割合（全体）が全て一致する行を1件のみ表示する。
-                    // ※編集モードでは各行を個別に削除できる必要があるため重複除去はしない。
-                    if(!editingRows){
-                      const dedupKey=[
-                        r.POSICD,
-                        emp ? emp.ID_NAME : ("(コード:"+r.ENGCD+")"),
-                        per("KOKF01","KOKT01"), per("KOKF02","KOKT02"), per("KOKF03","KOKT03"),
-                        installPct, jwariPct
-                      ].join("§");
-                      if(seenKeys.has(dedupKey)) return;
-                      seenKeys.add(dedupKey);
-                    }
+                    // 役割・技術者名（コード）・従事期間1〜3・従事割合（据付期間内）・従事割合（全体）が
+                    // 全て一致する行は1件のみ表示する（編集モードでも同様。削除・編集は表示中の行に対して行われ、
+                    // 一致するもう一方の行は次の再描画時に個別行として現れる）。
+                    const dedupKey=[
+                      normKeyStr(r.POSICD), normKeyStr(r.ENGCD),
+                      per("KOKF01","KOKT01"), per("KOKF02","KOKT02"), per("KOKF03","KOKT03"),
+                      installPct, jwariPct
+                    ].join("§");
+                    if(seenKeys.has(dedupKey)) return;
+                    seenKeys.add(dedupKey);
 
                     rowsToRender.push({r, i, emp, per, installPct, jwariPct});
                   });
