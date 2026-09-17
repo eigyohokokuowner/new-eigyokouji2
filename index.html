@@ -2152,22 +2152,44 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
                 </tr>
               </thead>
               <tbody>
-                {(editingRows ? engDraft : engRows).map((r,i)=>{
-                  const emp=employeeMap[r.ENGCD];
-                  const per=(f,t)=> r[f] ? (fmtDate(r[f])+"〜"+fmtDate(r[t])) : "-";
-                  const periods=[];
-                  [["KOKF01","KOKT01"],["KOKF02","KOKT02"],["KOKF03","KOKT03"]].forEach(([f,t])=>{
-                    if(r[f]) periods.push({from:r[f], to:r[t]});
+                {(()=>{
+                  const src=editingRows ? engDraft : engRows;
+                  const seenKeys = editingRows ? null : new Set();
+                  const rowsToRender=[];
+                  src.forEach((r,i)=>{
+                    const emp=employeeMap[r.ENGCD];
+                    const per=(f,t)=> r[f] ? (fmtDate(r[f])+"〜"+fmtDate(r[t])) : "-";
+                    const periods=[];
+                    [["KOKF01","KOKT01"],["KOKF02","KOKT02"],["KOKF03","KOKT03"]].forEach(([f,t])=>{
+                      if(r[f]) periods.push({from:r[f], to:r[t]});
+                    });
+                    // 従事期間が「据付開始日〜完工日（未入力なら工期末）」にどれだけ重なっているか（％）
+                    const installPct=(()=>{
+                      const installEndRaw = proj && proj.KOJDAY ? proj.KOJDAY : (proj && proj.KOKT);
+                      if(!proj || !validYMD(proj.SSDAY) || !validYMD(installEndRaw)) return null;
+                      return computeEngagementPct(periods, proj.SSDAY, installEndRaw);
+                    })();
+                    // 従事期間が、工期全体（proj.KOKF〜proj.KOKT）に対してどれだけの割合を占めるか（％）を自動計算する
+                    const jwariPct = proj ? computeEngagementPct(periods, proj.KOKF, proj.KOKT) : null;
+
+                    // 表示モード（編集中でない場合）は、役割・技術者名・従事期間1〜3・
+                    // 従事割合（据付期間内）・従事割合（全体）が全て一致する行を1件のみ表示する。
+                    // ※編集モードでは各行を個別に削除できる必要があるため重複除去はしない。
+                    if(!editingRows){
+                      const dedupKey=[
+                        r.POSICD,
+                        emp ? emp.ID_NAME : ("(コード:"+r.ENGCD+")"),
+                        per("KOKF01","KOKT01"), per("KOKF02","KOKT02"), per("KOKF03","KOKT03"),
+                        installPct, jwariPct
+                      ].join("§");
+                      if(seenKeys.has(dedupKey)) return;
+                      seenKeys.add(dedupKey);
+                    }
+
+                    rowsToRender.push({r, i, emp, per, installPct, jwariPct});
                   });
-                  // 従事期間が「据付開始日〜完工日（未入力なら工期末）」にどれだけ重なっているか（％）
-                  const installPct=(()=>{
-                    const installEndRaw = proj && proj.KOJDAY ? proj.KOJDAY : (proj && proj.KOKT);
-                    if(!proj || !validYMD(proj.SSDAY) || !validYMD(installEndRaw)) return null;
-                    return computeEngagementPct(periods, proj.SSDAY, installEndRaw);
-                  })();
-                  // 従事期間が、工期全体（proj.KOKF〜proj.KOKT）に対してどれだけの割合を占めるか（％）を自動計算する
-                  const jwariPct = proj ? computeEngagementPct(periods, proj.KOKF, proj.KOKT) : null;
-                  return (
+
+                  return rowsToRender.map(({r,i,emp,per,installPct,jwariPct})=>(
                     <tr key={i}>
                       <td>{editingRows ? <DTSelect value={r.POSICD} onChange={updEng(i,"POSICD")} options={trgtOpts}/> : lit(literalMap,"TRGT",r.POSICD)}</td>
                       {editingRows && <td>
@@ -2200,8 +2222,8 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
                         </React.Fragment>
                       )}
                     </tr>
-                  );
-                })}
+                  ));
+                })()}
                 {(editingRows ? engDraft.length : engRows.length)===0 && <tr><td colSpan={editingRows?9:7} className="empty">技術者情報がありません</td></tr>}
               </tbody>
             </table>
