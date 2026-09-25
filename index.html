@@ -3992,6 +3992,8 @@ function App(){
   // 重複案件除外フィルタ：ONのとき「据付時期＋監理・主任・管理技術者」以外の配置は重複判定の対象から除外する
   // （＝製作、および据付でも担当技術者などは対象外にし、専任性が問題になる据付の監理・主任・管理技術者だけを見る）。
   const [dutyOnlyFilter,setDutyOnlyFilter]=useState(false);
+  // クリア時に検索フォームを丸ごと再マウントして確実に初期状態へ戻すためのキー
+  const [filterFormKey,setFilterFormKey]=useState(0);
   // 受注工事（工番）で、据付時期＋監理・主任・管理技術者の専任配置が、配置予定期間と重複している技術者を候補一覧から除外する。
   const [excludeAwardedDutyOverlap,setExcludeAwardedDutyOverlap]=useState(false);
   const [selectedDept,setSelectedDept]=useState([]);
@@ -4679,6 +4681,7 @@ function App(){
     setIncludeRetired(false); setIncludeOfficeTech(false);
     setSortMode("default");
     setSearched(false); setExpanded({});
+    setFilterFormKey((k)=>k+1);
   };
 
   if(!authReady){
@@ -5127,7 +5130,7 @@ function App(){
       {/* search panel */}
       <div className="search-panel">
         <div className="search-header"><Ic.Filter/> 配置候補技術者の検索</div>
-        <div className="search-body">
+        <div className="search-body" key={filterFormKey}>
 
           <div className="field-row pair-row">
             <div className="pair-group-grow top">
