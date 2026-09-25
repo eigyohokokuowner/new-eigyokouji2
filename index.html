@@ -2643,7 +2643,7 @@ function PersonnelQualification({employees, enginfoRecords, licenses, engLicense
   );
 }
 
-function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLicenses}){
+function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLicenses, onGoToPersonnel}){
   const [query,setQuery]=useState("");
   const [editingCode,setEditingCode]=useState(null);
   const [editDraft,setEditDraft]=useState({});
@@ -2914,7 +2914,8 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
           return (
             <React.Fragment key={emp.ENGCD}>
             <div className={"master-row"+(retired?" retired":"")}>
-              <span className="m-code">#{emp.ENGCD}</span>
+              <button type="button" className="m-code name-link" title="人事資格検索でこの社員を表示"
+                onClick={()=>onGoToPersonnel && onGoToPersonnel(emp.ENGCD)}>#{emp.ENGCD}</button>
               {isEditing ? (
                 <React.Fragment>
                   <select className="m-input m-gender" value={editDraft.GENDER||""}
@@ -4591,8 +4592,8 @@ function App(){
       // このセッション（ページを開いている間）だけ有効な一時的な判断として扱う。
       const autoQualifies = isInstallKbn && (installOK || jwariFull);
       const manualStatusRaw = autoQualifies ? (verifiedMap[vkey] || null) : (sessionVerified[vkey] || null);
-      // 条件（整合性確認 or 従事割合100%）を満たさない手動「有」は無効化する
-      const manualStatus = (manualStatusRaw==="ok" && !canMarkOk) ? null : manualStatusRaw;
+      // 実施工程表の整合性が未確認でも、手動で押した「有」はそのまま有効にする
+      const manualStatus = manualStatusRaw;
       const effectiveStatus = manualStatus==="no" ? "no" : (manualStatus==="ok" ? "ok" : (autoOK ? "ok" : (autoNo ? "no" : null)));
 
       byEngineer[engcd].entries.push({
@@ -4829,9 +4830,8 @@ function App(){
                             <div className="verify-toggle" onClick={(e)=>e.stopPropagation()}>
                               <button type="button"
                                 className={"vt-btn vt-ok"+(en.verifyStatus==="ok"?" active":"")}
-                                title={en.canMarkOk ? (en.autoQualifies ? "据付実績あり（実績として認める）" : "据付実績あり（今回の検索セッションのみ有効・保存されません）") : "実施工程表との整合性が未確認のため選択できません（従事割合100%の場合を除く）"}
-                                disabled={!en.canMarkOk}
-                                onClick={()=>{ if(en.canMarkOk) setVerifyStatus(r.engcd, en.constno, en.posicd, "ok", en.autoQualifies); }}>
+                                title={en.autoQualifies ? "据付実績あり（実績として認める）" : "据付実績あり（今回の検索セッションのみ有効・保存されません）"}
+                                onClick={()=>setVerifyStatus(r.engcd, en.constno, en.posicd, "ok", en.autoQualifies)}>
                                 <Ic.Check size={13}/> 有
                               </button>
                               <button type="button"
@@ -5104,6 +5104,7 @@ function App(){
             const next={...datasets, englicense:{records, filename: datasets.englicense?.filename || "手動編集"}};
             persist(next);
           }}
+          onGoToPersonnel={goToPersonnel}
         />
       }
 
