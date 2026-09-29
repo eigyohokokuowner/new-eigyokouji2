@@ -462,7 +462,7 @@
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
 const { useState, useMemo, useCallback, useRef, useEffect } = React;
-console.log("BUILD MARKER: 20260928-keepmanual");
+console.log("BUILD MARKER: 20260928-alwayskeep");
 const STORAGE_KEY = "engSearchSystemData_v1";
 
 /* ---------------- icons ---------------- */
@@ -849,26 +849,31 @@ function parseCsvFile(file){
 }
 
 // 再取り込み時に、CSVには含まれず画面上で手入力した項目を消さないための設定
+// fallback系＝CSV側が空/列なしのときだけ既存値を残す。always系＝CSVに値があっても常に既存値を残す（上書きしない）。
 const MANUAL_KEYS = {
-  constrslt:["SCHEDULE_URL","SCHEDULE_NA","SCHED_CHECKED","CORINS_URL","RATING_PDF_URL","AWARD_PDF_URL"],
   employee:["OFFICE_TECH"],
 };
-function mergeRecords(existing, incoming, keyFn, manualKeys){
+const ALWAYS_KEEP_KEYS = {
+  constrslt:["SSDAY","KOJDAY","CORINS_URL","SCHEDULE_URL","SCHEDULE_NA","SCHED_CHECKED","RATING_PDF_URL","AWARD_PDF_URL"],
+};
+function mergeRecords(existing, incoming, keyFn, fallbackKeys, alwaysKeys){
   const incomingKeys = new Set(incoming.map(keyFn));
   const kept = (existing||[]).filter((r)=>!incomingKeys.has(keyFn(r)));
-  if(!manualKeys || !manualKeys.length) return [...kept, ...incoming];
+  if((!fallbackKeys || !fallbackKeys.length) && (!alwaysKeys || !alwaysKeys.length)) return [...kept, ...incoming];
   // 同じキーの既存行があれば、既存行を土台にCSVの値で上書きする（CSVに無い列は既存の値が残る）。
-  // さらにCSV側に列があっても値が空の場合は、手入力項目に限り既存の値を残す。
   const oldMap = new Map();
   (existing||[]).forEach((r)=>oldMap.set(keyFn(r), r));
   const merged = incoming.map((r)=>{
     const old = oldMap.get(keyFn(r));
     if(!old) return r;
     const out = {...old, ...r};
-    manualKeys.forEach((k)=>{
+    // CSV側に列があっても値が空の場合は、手入力項目に限り既存の値を残す
+    (fallbackKeys||[]).forEach((k)=>{
       const v = r[k];
       if((v===undefined || v===null || v==="") && old[k]!==undefined && old[k]!==null && old[k]!=="") out[k] = old[k];
     });
+    // CSVに値があってもなくても、常に既存値を残す（＝CSVでは一切上書きしない）
+    (alwaysKeys||[]).forEach((k)=>{ out[k] = old[k]; });
     return out;
   });
   return [...kept, ...merged];
@@ -3826,7 +3831,7 @@ function Uploader({datasets, onMerged, compact}){
       merged[type] = {
         // 配置データ(assign)は、配置状況が変わるたびに終了した配置が消える必要があるため、
         // 差分マージ（追加・更新のみ）ではなく毎回まるごと入れ替える
-        records: type==="assign" ? data.records : mergeRecords(datasets[type]?.records, data.records, MERGE_KEY[type], MANUAL_KEYS[type]),
+        records: type==="assign" ? data.records : mergeRecords(datasets[type]?.records, data.records, MERGE_KEY[type], MANUAL_KEYS[type], ALWAYS_KEEP_KEYS[type]),
         filename: data.filename,
         updatedAt: Date.now(),
       };
@@ -4975,7 +4980,7 @@ function App(){
           </div>
         </div>
         <div style={{display:"flex", gap:8, alignItems:"center"}}>
-          <span style={{fontSize:9, color:"var(--muted2)", opacity:.6}} title="動作確認用の一時的な表示です">build 20260928-keepmanual</span>
+          <span style={{fontSize:9, color:"var(--muted2)", opacity:.6}} title="動作確認用の一時的な表示です">build 20260928-alwayskeep</span>
           {authUser && <span style={{fontSize:11, color:"var(--muted2)"}}>{authUser.email}</span>}
           <span className={"role-pill"+(canEdit?" editor":"")}>{canEdit ? "編集権限" : "閲覧のみ"}</span>
           <button className="link-btn" onClick={exportBackup}><Ic.Download/> バックアップ保存</button>
