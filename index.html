@@ -462,7 +462,7 @@
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
 const { useState, useMemo, useCallback, useRef, useEffect } = React;
-console.log("BUILD MARKER: 20260928-alwayskeep");
+console.log("BUILD MARKER: 20260929-editdupes");
 const STORAGE_KEY = "engSearchSystemData_v1";
 
 /* ---------------- icons ---------------- */
@@ -2210,15 +2210,17 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
                     const jwariPct = proj ? computeEngagementPct(periods, proj.KOKF, proj.KOKT) : null;
 
                     // 役割・技術者名（コード）・従事期間1〜3・従事割合（据付期間内）・従事割合（全体）が
-                    // 全て一致する行は1件のみ表示する（編集モードでも同様。削除・編集は表示中の行に対して行われ、
-                    // 一致するもう一方の行は次の再描画時に個別行として現れる）。
-                    const dedupKey=[
-                      normKeyStr(r.POSICD), normKeyStr(r.ENGCD),
-                      per("KOKF01","KOKT01"), per("KOKF02","KOKT02"), per("KOKF03","KOKT03"),
-                      installPct, jwariPct
-                    ].join("§");
-                    if(seenKeys.has(dedupKey)) return;
-                    seenKeys.add(dedupKey);
+                    // 全て一致する行は、通常表示では1件のみ表示する。
+                    // ※編集モード（種別・技術者を編集）では、重複データも含めて全行を表示・編集・削除できるようにする。
+                    if(!editingRows){
+                      const dedupKey=[
+                        normKeyStr(r.POSICD), normKeyStr(r.ENGCD),
+                        per("KOKF01","KOKT01"), per("KOKF02","KOKT02"), per("KOKF03","KOKT03"),
+                        installPct, jwariPct
+                      ].join("§");
+                      if(seenKeys.has(dedupKey)) return;
+                      seenKeys.add(dedupKey);
+                    }
 
                     rowsToRender.push({r, i, emp, per, installPct, jwariPct});
                   });
@@ -4980,7 +4982,7 @@ function App(){
           </div>
         </div>
         <div style={{display:"flex", gap:8, alignItems:"center"}}>
-          <span style={{fontSize:9, color:"var(--muted2)", opacity:.6}} title="動作確認用の一時的な表示です">build 20260928-alwayskeep</span>
+          <span style={{fontSize:9, color:"var(--muted2)", opacity:.6}} title="動作確認用の一時的な表示です">build 20260929-editdupes</span>
           {authUser && <span style={{fontSize:11, color:"var(--muted2)"}}>{authUser.email}</span>}
           <span className={"role-pill"+(canEdit?" editor":"")}>{canEdit ? "編集権限" : "閲覧のみ"}</span>
           <button className="link-btn" onClick={exportBackup}><Ic.Download/> バックアップ保存</button>
