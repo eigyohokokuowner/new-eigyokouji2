@@ -1980,7 +1980,7 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
                 <span className="m-name">{r.NAM1}{r.NAM2}</span>
                 <span className="m-comp" style={{textAlign:"right", whiteSpace:"nowrap"}}>
                   {r.POINT ? r.POINT+"点" : "-"}
-                  {parseFloat(r.HYOSYO)===1 && <span style={{marginLeft:6}} title="工事表彰あり">🏆</span>}
+                  {r.AWARD_PDF_URL && <span style={{marginLeft:6}} title="工事表彰あり">🏆</span>}
                 </span>
                 <span className="m-comp">{r.KYA1||"-"}</span>
                 <span className="m-comp">{fmtDate(r.KOKF)}〜{fmtDate(r.KOKT)}</span>
@@ -2012,7 +2012,7 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
                 <tr>
                   <th>工番</th><td className="mono">{proj.CONSTNO}</td>
                   <th>工事点数</th><td className="num">{editingHeader ? <DTInput value={hf("POINT")} onChange={setHf("POINT")} mono/> : (proj.POINT || "-")}</td>
-                  <th>工事表彰</th><td>{editingHeader ? <DTSelect value={hf("HYOSYO")} onChange={setHf("HYOSYO")} options={[{code:"1",name:"あり"},{code:"0",name:"なし"}]}/> : (proj.HYOSYO!==undefined && proj.HYOSYO!=="" ? (parseFloat(proj.HYOSYO)===1 ? "あり" : "なし") : "-")}</td>
+                  <th>工事表彰</th><td title="工事表彰PDFのリンクの有無で自動判定しています">{proj.AWARD_PDF_URL ? "あり" : "なし"}</td>
                   <th>支店</th><td>{editingHeader ? <DTSelect value={hf("EIGYCD")} onChange={setHf("EIGYCD")} options={eigyoOpts}/> : (branchName(proj.EIGYCD) || "-")}</td>
                 </tr>
                 <tr>
