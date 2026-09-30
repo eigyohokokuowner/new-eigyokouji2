@@ -462,7 +462,6 @@
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
 const { useState, useMemo, useCallback, useRef, useEffect } = React;
-console.log("BUILD MARKER: 20260929-editdupes");
 const STORAGE_KEY = "engSearchSystemData_v1";
 
 /* ---------------- icons ---------------- */
@@ -3459,6 +3458,20 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
 
   // 工番・案件番号のテキスト。工事詳細検索に該当データがあればクリックで該当工事へジャンプする。
   const KobanText=({koban}) => {
+    // 「H〇〇〇〇〇〇〇〇」形式の案件番号（ハイフンを含まない）だけ、外部の案件管理システム（オリオン）へのリンクにする。
+    // 「〇〇G-〇〇〇〇」形式の工番はここでは一切扱いを変えない。
+    const isHAnken = !!koban && /^H/.test(koban) && !koban.includes("-");
+    if(isHAnken){
+      const ankenUrl = "http://orion.hokoku-kogyo.co.jp/anken/comm/web/SPR0020_G.php?ACTION=INIT&MOTOGMN=SPI0010_G&ANKEN_NO="+encodeURIComponent(koban)+"&COMP=H1";
+      return (
+        <a href={ankenUrl} target="_blank" rel="noopener noreferrer"
+          onClick={(e)=>e.stopPropagation()}
+          title="クリックでオリオン（案件管理システム）の該当案件を開く"
+          style={{color:"var(--accent)", fontWeight:600, flex:"0 0 auto", textDecoration:"underline"}}>
+          {koban}
+        </a>
+      );
+    }
     const clickable = onGotoConstno && koban && hasConst.has(koban);
     return (
       <span
@@ -4976,13 +4989,13 @@ function App(){
     <div className="wrap">
       <div className="topbar" style={{padding:0, marginBottom:18}}>
         <div className="brand">
+          <img src="data:image/png;base64,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" alt="ホウコク工業" style={{height:36, width:"auto", flex:"0 0 auto"}}/>
           <div>
             <div className="eyebrow">ENGINEERING RECORDS — CANDIDATE SEARCH</div>
             <h1>新営業工事実績システム２</h1>
           </div>
         </div>
         <div style={{display:"flex", gap:8, alignItems:"center"}}>
-          <span style={{fontSize:9, color:"var(--muted2)", opacity:.6}} title="動作確認用の一時的な表示です">build 20260929-editdupes</span>
           {authUser && <span style={{fontSize:11, color:"var(--muted2)"}}>{authUser.email}</span>}
           <span className={"role-pill"+(canEdit?" editor":"")}>{canEdit ? "編集権限" : "閲覧のみ"}</span>
           <button className="link-btn" onClick={exportBackup}><Ic.Download/> バックアップ保存</button>
