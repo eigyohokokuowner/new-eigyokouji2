@@ -4619,7 +4619,7 @@ function App(){
         name: lookupLit("SHRU", k.KIND), kbn: lookupLit("SESU", k.KBN), keik:k.KEIK, heigh:k.HEIGH, suis:k.SUIS, syus:k.SYUS, horyu:k.HORYU, gaiyo:k.KGAI,
       }));
       // 製据区分が「据付」または「製据」を含み、かつ（据付期間内100% or 従事割合100%＝専任）なら自動で「有」
-      // 逆に据付期間内が80%以下なら自動で「無」（80〜100%未満はどちらとも判定せず、人の目で確認）
+      // 逆に据付期間内が50%未満なら自動で「無」（50〜100%未満はどちらとも判定せず、人の目で確認）
       const isInstallKbn = entryKinds.some((k)=> k.kbn==="据付" || k.kbn==="製据");
       const jwariFull = jwariPct!==null && jwariPct>=100;
       const schedChecked = parseFloat(proj.SCHED_CHECKED)===1;
@@ -4627,7 +4627,7 @@ function App(){
       // ただし従事割合が100%（専任）の場合のみ、整合性未確認でも「有」と判定できる例外とする。
       const canMarkOk = schedChecked || jwariFull;
       const autoOK = isInstallKbn && (installOK || jwariFull) && canMarkOk;
-      const autoNo = !autoOK && installPct!==null && installPct<=80;
+      const autoNo = !autoOK && installPct!==null && installPct<50;
       // 据付期間内100%（または専任100%）は、案件条件に関わらず常に「実績」として動かない事実なので、
       // その判定（人による有/無の上書きを含む）は端末をまたいで保存（Firestore）する。
       // 一方、それ以外（80〜100%未満の境界線上）の有/無判定は、検討中の入札案件の技術者条件によって
