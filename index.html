@@ -2723,11 +2723,20 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
 
   const startEdit=(emp)=>{
     setEditingCode(emp.ENGCD);
-    setEditDraft({ID_NAME:emp.ID_NAME||"", COMPCD:emp.COMPCD||"", GENDER:emp.GENDER||"", OFFICE_TECH:emp.OFFICE_TECH||""});
+    // 「所属」欄は、一覧表示と同じく DEPT（所属部署）／POSITION（役職）を" ／ "でつないだ1本の文字列として編集する。
+    // 以前はここがCOMPCD（別の・表示に使われていないコード項目）を編集してしまっており、
+    // 保存しても画面の表示（DEPT／POSITION）が変わらないという不具合があったための修正。
+    setEditDraft({
+      ID_NAME:emp.ID_NAME||"", COMPCD:emp.COMPCD||"", GENDER:emp.GENDER||"", OFFICE_TECH:emp.OFFICE_TECH||"",
+      DEPT_TEXT:[emp.DEPT, emp.POSITION].filter(Boolean).join(" ／ "),
+    });
   };
   const cancelEdit=()=>{ setEditingCode(null); setEditDraft({}); };
   const saveEdit=(engcd)=>{
-    const next=employees.map((e)=> e.ENGCD===engcd ? {...e, ID_NAME:editDraft.ID_NAME, COMPCD:editDraft.COMPCD, GENDER:editDraft.GENDER, OFFICE_TECH:editDraft.OFFICE_TECH} : e);
+    const parts=(editDraft.DEPT_TEXT||"").split("／");
+    const dept=(parts[0]||"").trim();
+    const position=parts.length>1 ? parts.slice(1).join("／").trim() : "";
+    const next=employees.map((e)=> e.ENGCD===engcd ? {...e, ID_NAME:editDraft.ID_NAME, COMPCD:editDraft.COMPCD, GENDER:editDraft.GENDER, OFFICE_TECH:editDraft.OFFICE_TECH, DEPT:dept, POSITION:position} : e);
     onSave(next);
     setEditingCode(null);
   };
@@ -2953,8 +2962,9 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
                   </select>
                   <input className="m-input" value={editDraft.ID_NAME}
                     onChange={(e)=>setEditDraft({...editDraft, ID_NAME:e.target.value})}/>
-                  <input className="m-input" value={editDraft.COMPCD}
-                    onChange={(e)=>setEditDraft({...editDraft, COMPCD:e.target.value})}/>
+                  <input className="m-input" value={editDraft.DEPT_TEXT}
+                    placeholder="所属（例: ○○本部 ○○部 ／ 役職）"
+                    onChange={(e)=>setEditDraft({...editDraft, DEPT_TEXT:e.target.value})}/>
                   <span className="m-office">
                     <input type="checkbox" checked={!!editDraft.OFFICE_TECH}
                       onChange={(e)=>setEditDraft({...editDraft, OFFICE_TECH:e.target.checked ? "1" : ""})}
