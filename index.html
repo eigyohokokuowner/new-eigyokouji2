@@ -482,6 +482,7 @@ const Ic = {
   Edit:(p)=><svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>,
   Link:(p)=><svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.49-1.49"/></svg>,
   Star:(p)=><svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2l2.9 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l7.1-1.01L12 2z"/></svg>,
+  Chart:(p)=><svg width={p.size||14} height={p.size||14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><rect x="7" y="13" width="3" height="5"/><rect x="12" y="9" width="3" height="9"/><rect x="17" y="5" width="3" height="13"/></svg>,
 };
 
 /* ---------------- era / date helpers ---------------- */
@@ -581,6 +582,23 @@ function parseEraDate(str){
 function ymdToDate(s){
   const str=String(s);
   return new Date(parseInt(str.slice(0,4),10), parseInt(str.slice(4,6),10)-1, parseInt(str.slice(6,8),10));
+}
+// ログイン・利用状況の集計用：Date⇄YYYYMMDD文字列の変換と、n日後(前)のYYYYMMDDを求める
+function dateToYmd8(d){
+  const pad=(n)=>String(n).padStart(2,"0");
+  return ""+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate());
+}
+function ymdNow8(){ return dateToYmd8(new Date()); }
+function addDaysYmd8(ymd, delta){
+  const d=ymdToDate(ymd);
+  d.setDate(d.getDate()+delta);
+  return dateToYmd8(d);
+}
+function fmtLoginTs(ts){
+  if(!ts) return "記録なし";
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  const pad=(n)=>String(n).padStart(2,"0");
+  return d.getFullYear()+"/"+(d.getMonth()+1)+"/"+d.getDate()+" "+pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds());
 }
 // 期間[aFrom,aTo]と[bFrom,bTo]が重なる日数（両端を含む日数）を返す。重ならなければ0。
 function overlapDays(aFrom, aTo, bFrom, bTo){
@@ -3687,7 +3705,216 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
   );
 }
 
-function MasterMaintenance({literals, onSaveLiterals}){
+/* ---------------- ログイン・利用状況（マスタメンテナンス内） ---------------- */
+function LoginUsageModal({onClose, employees}){
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState("");
+  const [accounts,setAccounts]=useState([]);
+  const [dailyCounts,setDailyCounts]=useState([]);
+  const [editingLinkUid,setEditingLinkUid]=useState(null);
+  const [linkDraft,setLinkDraft]=useState("");
+  const [savingLink,setSavingLink]=useState(false);
+  const [linkError,setLinkError]=useState("");
+
+  const employeeByCode=useMemo(()=>{
+    const map={};
+    (employees||[]).forEach((e)=>{ map[e.ENGCD]=e; });
+    return map;
+  },[employees]);
+
+  const loadData=async ()=>{
+    await waitForFirebase();
+    if(!window.fb){ setError("Firebaseが初期化されていないため取得できません"); setLoading(false); return; }
+    const {db, collection, getDocs} = window.fb;
+    const [usersSnap, logsSnap] = await Promise.all([
+      getDocs(collection(db,"users")),
+      getDocs(collection(db,"loginLogs")),
+    ]);
+
+    const users={};
+    usersSnap.forEach((d)=>{ users[d.id]={uid:d.id, ...d.data()}; });
+    const logs=[];
+    logsSnap.forEach((d)=>logs.push(d.data()));
+
+    // 編集権限（role==="editor"）のアカウントのみを対象にする
+    const editorUids = Object.keys(users).filter((uid)=> String(users[uid].role||"").trim().toLowerCase()==="editor");
+    const editorSet = new Set(editorUids);
+
+    const todayYmd = ymdNow8();
+    const cutoff30 = addDaysYmd8(todayYmd, -29);
+
+    const byUid={};
+    editorUids.forEach((uid)=>{ byUid[uid]={ymdSet:new Set(), lastYmd:null, lastTs:null}; });
+    logs.forEach((l)=>{
+      if(!l || !editorSet.has(l.uid)) return;
+      const b=byUid[l.uid];
+      b.ymdSet.add(l.ymd);
+      if(!b.lastYmd || l.ymd > b.lastYmd){ b.lastYmd=l.ymd; b.lastTs=l.ts||null; }
+    });
+
+    const accountList = editorUids.map((uid)=>{
+      const u=users[uid];
+      const info=byUid[uid];
+      const recent30=[...info.ymdSet].filter((y)=> y>=cutoff30).length;
+      return {
+        uid, email:u.email||"", name:u.name||"", dept:u.dept||"", engcd:u.engcd||"",
+        lastYmd: info.lastYmd, lastTs: info.lastTs,
+        total: info.ymdSet.size, recent30,
+      };
+    }).sort((a,b)=> (b.lastYmd||"").localeCompare(a.lastYmd||""));
+
+    const dayList=[];
+    for(let i=29;i>=0;i--){
+      const y=addDaysYmd8(todayYmd, -i);
+      const count=new Set(logs.filter((l)=> l && l.ymd===y && editorSet.has(l.uid)).map((l)=>l.uid)).size;
+      dayList.push({ymd:y, count});
+    }
+
+    setAccounts(accountList);
+    setDailyCounts(dayList);
+  };
+
+  useEffect(()=>{
+    let cancelled=false;
+    setLoading(true); setError("");
+    loadData().catch((e)=>{
+      console.error("ログイン・利用状況の取得に失敗:", e);
+      if(!cancelled) setError("取得に失敗しました（"+(e.code||e.message)+"）");
+    }).finally(()=>{ if(!cancelled) setLoading(false); });
+    return ()=>{ cancelled=true; };
+  },[]);
+
+  const todayYmd = ymdNow8();
+  const cutoff7 = addDaysYmd8(todayYmd, -6);
+  const cutoff30 = addDaysYmd8(todayYmd, -29);
+  const countToday = accounts.filter((a)=> a.lastYmd===todayYmd).length;
+  const count7 = accounts.filter((a)=> a.lastYmd && a.lastYmd>=cutoff7).length;
+  const count30 = accounts.filter((a)=> a.lastYmd && a.lastYmd>=cutoff30).length;
+  const maxDaily = Math.max(1, ...dailyCounts.map((d)=>d.count));
+
+  const loginIdOf=(a)=> (a.email||"").split("@")[0] || a.uid;
+  const accountLabel=(a)=>{
+    const emp = a.engcd ? employeeByCode[a.engcd] : null;
+    if(emp){
+      const deptPart=[emp.DEPT, emp.POSITION].filter(Boolean).join(" ／ ");
+      return [emp.ID_NAME, deptPart].filter(Boolean).join(" ")+"（"+loginIdOf(a)+"）";
+    }
+    const namePart=[a.name, a.dept].filter(Boolean).join(" ");
+    return namePart ? namePart+"（"+loginIdOf(a)+"）" : (a.email || loginIdOf(a));
+  };
+
+  const startLink=(a)=>{ setEditingLinkUid(a.uid); setLinkDraft(a.engcd||""); setLinkError(""); };
+  const cancelLink=()=>{ setEditingLinkUid(null); setLinkDraft(""); setLinkError(""); };
+  const saveLink=async (uid)=>{
+    const code=linkDraft.trim();
+    if(code && !employeeByCode[code]){ setLinkError("その技術者コードは見つかりません"); return; }
+    setSavingLink(true);
+    try{
+      await waitForFirebase();
+      const {db, doc, setDoc} = window.fb;
+      await setDoc(doc(db,"users",uid), {engcd:code}, {merge:true});
+      setAccounts((prev)=>prev.map((a)=> a.uid===uid ? {...a, engcd:code} : a));
+      setEditingLinkUid(null); setLinkDraft(""); setLinkError("");
+    }catch(e){
+      console.error("紐づけの保存に失敗:", e);
+      setLinkError("保存に失敗しました（"+(e.code||e.message)+"）");
+    }finally{
+      setSavingLink(false);
+    }
+  };
+
+  return (
+    <div className="overlay-bg" onClick={(e)=>{ if(e.target===e.currentTarget) onClose(); }}>
+      <div className="overlay-card" style={{maxWidth:900}}>
+        <div className="overlay-hd">
+          <h3><Ic.Chart/> ログイン・利用状況</h3>
+          <button className="icon-btn" onClick={onClose}><Ic.X/></button>
+        </div>
+        <p style={{fontSize:12,color:"var(--muted)",marginTop:0}}>
+          アカウントごとの利用日を記録しています。同じ日に何度開いても1日1回として数えます。この機能の導入以降が対象です。
+        </p>
+
+        {loading && <p style={{color:"var(--muted)"}}>読み込み中…</p>}
+        {!loading && error && <div className="storage-warn"><Ic.Warn/> {error}</div>}
+
+        {!loading && !error &&
+          <React.Fragment>
+            <div style={{display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10, marginBottom:18}}>
+              {[
+                {label:"今日のログイン", value:countToday+" 人"},
+                {label:"直近7日", value:count7+" 人"},
+                {label:"直近30日", value:count30+" 人"},
+                {label:"全アカウント", value:accounts.length+" 件"},
+              ].map((s)=>(
+                <div key={s.label} style={{background:"var(--panel-raised)", borderRadius:10, padding:"12px 14px"}}>
+                  <div style={{fontSize:11, color:"var(--muted)"}}>{s.label}</div>
+                  <div style={{fontSize:22, fontWeight:800, marginTop:4}}>{s.value}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{fontSize:13, fontWeight:700, marginBottom:8}}>日別ログイン人数（直近30日）</div>
+            <div style={{display:"flex", alignItems:"flex-end", gap:3, height:90, marginBottom:4}}>
+              {dailyCounts.map((d)=>(
+                <div key={d.ymd} title={d.ymd+"："+d.count+"人"}
+                  style={{flex:1, background:"var(--accent)", opacity:d.count? 1 : .15,
+                    height:Math.max(2, (d.count/maxDaily)*100)+"%", borderRadius:"2px 2px 0 0"}}/>
+              ))}
+            </div>
+            <div style={{display:"flex", justifyContent:"space-between", fontSize:10.5, color:"var(--muted2)", marginBottom:20}}>
+              <span>{dailyCounts[0] ? dailyCounts[0].ymd.replace(/^(\d{4})(\d{2})(\d{2})$/,"$1/$2/$3") : ""}</span>
+              <span>{dailyCounts[dailyCounts.length-1] ? dailyCounts[dailyCounts.length-1].ymd.replace(/^(\d{4})(\d{2})(\d{2})$/,"$1/$2/$3") : ""}</span>
+            </div>
+
+            <div style={{fontSize:13, fontWeight:700, marginBottom:8}}>アカウント別</div>
+            <p style={{fontSize:11.5,color:"var(--muted2)",marginTop:0,marginBottom:8}}>
+              「紐づけ」で技術者コードを設定すると、技術者在籍・所属管理の氏名・所属がアカウント名として表示されます（パスワードに使われているコードを入力してください）。
+            </p>
+            <div className="master-list">
+              <div className="master-row master-row-head" style={{gridTemplateColumns:"1fr 170px 110px 100px 220px"}}>
+                <span className="m-name">アカウント</span>
+                <span>最終ログイン</span>
+                <span>直近30日</span>
+                <span>累計</span>
+                <span>紐づけ（技術者コード）</span>
+              </div>
+              {accounts.length===0 && <div className="empty" style={{padding:16}}>編集権限のあるアカウントがありません</div>}
+              {accounts.map((a)=>{
+                const isLinking=editingLinkUid===a.uid;
+                return (
+                  <div key={a.uid} className="master-row" style={{gridTemplateColumns:"1fr 170px 110px 100px 220px"}}>
+                    <span className="m-name">{accountLabel(a)}</span>
+                    <span style={{fontSize:12.5, color:"var(--muted)"}}>{a.lastTs ? fmtLoginTs(a.lastTs) : (a.lastYmd ? a.lastYmd.replace(/^(\d{4})(\d{2})(\d{2})$/,"$1/$2/$3") : "記録なし")}</span>
+                    <span>{a.recent30}日</span>
+                    <span>{a.total}日</span>
+                    {isLinking ? (
+                      <span style={{display:"flex", gap:4, alignItems:"center"}}>
+                        <input className="m-input" style={{width:90}} value={linkDraft} placeholder="例: 100110"
+                          onChange={(e)=>setLinkDraft(e.target.value)}/>
+                        <button className="btn-outline" disabled={savingLink} onClick={()=>saveLink(a.uid)}>保存</button>
+                        <button className="btn-ghost" disabled={savingLink} onClick={cancelLink}>取消</button>
+                      </span>
+                    ) : (
+                      <span style={{display:"flex", gap:6, alignItems:"center"}}>
+                        <span style={{fontSize:12, color:"var(--muted)"}}>
+                          {a.engcd ? (employeeByCode[a.engcd] ? "#"+a.engcd : "#"+a.engcd+"（該当なし）") : "未設定"}
+                        </span>
+                        <button className="btn-ghost" onClick={()=>startLink(a)}><Ic.Edit size={12}/></button>
+                      </span>
+                    )}
+                    {isLinking && linkError && <span style={{gridColumn:"1 / -1", color:"var(--red)", fontSize:11.5}}>{linkError}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </React.Fragment>
+        }
+      </div>
+    </div>
+  );
+}
+
+function MasterMaintenance({literals, onSaveLiterals, employees}){
   const [activeMaster,setActiveMaster]=useState("SHRU"); // 現状は「種別」のみ。将来他のコード種別を追加する余地を残す
   const [query,setQuery]=useState("");
   const [editingCode,setEditingCode]=useState(null);
@@ -3696,6 +3923,7 @@ function MasterMaintenance({literals, onSaveLiterals}){
   const [newCode,setNewCode]=useState("");
   const [newName,setNewName]=useState("");
   const [formError,setFormError]=useState("");
+  const [showLoginUsage,setShowLoginUsage]=useState(false);
 
   const MASTERS=[
     {type:"SHRU", label:"種別"},
@@ -3744,11 +3972,16 @@ function MasterMaintenance({literals, onSaveLiterals}){
           <p className="sub">{rows.length}件登録中</p>
         </div>
         <div style={{display:"flex", gap:8}}>
+          <button className="btn-outline" onClick={()=>setShowLoginUsage(true)}>
+            <Ic.Chart/> ログイン・利用状況
+          </button>
           <button className="btn-outline" onClick={()=>{ setShowAdd((v)=>!v); setFormError(""); }}>
             <Ic.Plus/> 新規{MASTERS.find((m)=>m.type===activeMaster).label}を登録
           </button>
         </div>
       </div>
+
+      {showLoginUsage && <LoginUsageModal onClose={()=>setShowLoginUsage(false)} employees={employees}/>}
 
       <div className="tabs" style={{marginBottom:14}}>
         {MASTERS.map((m)=>(
@@ -3932,7 +4165,7 @@ function App(){
     let unsub=null;
     waitForFirebase().then(()=>{
       if(!window.fb){ setAuthReady(true); return; }
-      const {auth, onAuthStateChanged, db, doc, getDoc} = window.fb;
+      const {auth, onAuthStateChanged, db, doc, getDoc, setDoc, serverTimestamp} = window.fb;
       unsub = onAuthStateChanged(auth, async (user)=>{
         setAuthUser(user);
         if(user){
@@ -3954,6 +4187,15 @@ function App(){
             console.error("権限情報の取得に失敗:", e);
             setToast("権限情報の取得に失敗しました（"+(e.code||e.message)+"）。閲覧のみとして扱います");
             setTimeout(()=>setToast(""), 6000);
+          }
+          // ログイン・利用状況の記録（同じ日に何度ログインしても1日1回として扱う）。
+          // 失敗してもログイン自体には影響させない。
+          try{
+            const ymd=ymdNow8();
+            await setDoc(doc(db, "users", user.uid), {email:user.email||""}, {merge:true});
+            await setDoc(doc(db, "loginLogs", user.uid+"_"+ymd), {uid:user.uid, email:user.email||"", ymd, ts:serverTimestamp()}, {merge:true});
+          }catch(e){
+            console.error("ログイン記録に失敗:", e);
           }
         } else {
           setRole(null);
@@ -5174,6 +5416,7 @@ function App(){
             const next={...datasets, literals:{records, filename: datasets.literals?.filename || "手動編集"}};
             persist(next);
           }}
+          employees={datasets.employee?.records || []}
         />
       }
 
