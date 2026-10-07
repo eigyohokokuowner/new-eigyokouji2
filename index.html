@@ -4638,8 +4638,9 @@ function App(){
     return map;
   },[datasets.assign, datasets.eng, engcdByName, engIndexForAssign, literalMap]);
 
-  // 工番・案件番号×役職区分（監理/主任/管理技術者）ごとに、配置されている技術者コードと期間の一覧を持つ索引。
+  // 工番・案件番号×役職区分（監理/主任/管理技術者）×案件区分（製作/据付/製据）ごとに、配置されている技術者コードと期間の一覧を持つ索引。
   // 「同じ工事・同じ据付時期・同じ役割」に何人配置されているかを数えるのに使う。
+  // 同じ工番でも「製作」と「据付」は別の配置（配置状況タブでも別の行として扱われる）なので、区分が違えば重複としてカウントしない。
   const dutyAssignIndex=useMemo(()=>{
     const idx={};
     Object.entries(assignRowsByEngcd).forEach(([engcd, list])=>{
@@ -4647,17 +4648,19 @@ function App(){
         const category=categorizeDutyRole(a.role);
         if(!category || !a.koban) return;
         if(!normDigits8(a.assignFrom) || !normDigits8(a.assignTo)) return;
-        const key=a.koban+"|"+category;
+        const sesu=classifySesu(a.kubun) || "-";
+        const key=a.koban+"|"+category+"|"+sesu;
         if(!idx[key]) idx[key]=[];
         idx[key].push({engcd, from:a.assignFrom, to:a.assignTo});
       });
     });
     return idx;
   },[assignRowsByEngcd]);
-  // 指定の工番×役職区分×期間について、期間が重なる「異なる技術者」の人数を数える（自分自身も含む）
-  const countDutyOverlap=(koban, category, from, to)=>{
+  // 指定の工番×役職区分×案件区分（製作/据付/製据）×期間について、期間が重なる「異なる技術者」の人数を数える（自分自身も含む）
+  const countDutyOverlap=(koban, category, from, to, kubun)=>{
     if(!category) return 1;
-    const list=dutyAssignIndex[koban+"|"+category] || [];
+    const sesu=classifySesu(kubun) || "-";
+    const list=dutyAssignIndex[koban+"|"+category+"|"+sesu] || [];
     const engcdSet=new Set();
     list.forEach((item)=>{ if(overlapDays(item.from, item.to, from, to)>0) engcdSet.add(item.engcd); });
     return engcdSet.size || 1;
@@ -4725,7 +4728,7 @@ function App(){
           const lo = assignFilterFrom===null ? "00000000" : assignFilterFrom;
           const hi = assignFilterTo===null ? "99999999" : assignFilterTo;
           if(!(aFrom<=hi && aTo>=lo)) return false;
-          return countDutyOverlap(a.koban, category, a.assignFrom, a.assignTo)===1; // 自分しかいない場合のみ対象
+          return countDutyOverlap(a.koban, category, a.assignFrom, a.assignTo, a.kubun)===1; // 自分しかいない場合のみ対象
         });
         if(hit) excludedForAwardedDutyOverlap.add(engcd);
       });
@@ -5079,7 +5082,7 @@ function App(){
                               {r.assignConflicts.map((a,ai)=>{
                                 const category=categorizeDutyRole(a.role);
                                 const isAwardedDutyOverlap = a.kobanType==="工番" && (classifySesu(a.kubun)==="据"||classifySesu(a.kubun)==="製据") && !!category;
-                                const dupCount = category ? countDutyOverlap(a.koban, category, a.assignFrom, a.assignTo) : 1;
+                                const dupCount = category ? countDutyOverlap(a.koban, category, a.assignFrom, a.assignTo, a.kubun) : 1;
                                 return (
                                   <div key={ai} className="assign-conflict-row">
                                     {dupCount>=2 &&
