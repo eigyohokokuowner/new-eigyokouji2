@@ -4308,8 +4308,9 @@ function App(){
   const [selectedBranch,setSelectedBranch]=useState("");
   // ON時：配置予定期間と重複している工事のうち、selectedBranchの支店のものを1件以上持つ技術者のみ表示する（支店未選択時は無視）。
   const [areaOnlyFilter,setAreaOnlyFilter]=useState(false);
-  // ON時：配置予定期間と重複している工事のうち、役割が「現場代理人」のものを1件以上持つ技術者のみ表示する。
-  const [agentOnlyFilter,setAgentOnlyFilter]=useState(false);
+  // 現場代理人の重複フィルター："" =絞り込みしない／"show"=配置予定期間と重複している工事のうち役割が「現場代理人」のものを1件以上持つ技術者のみ表示／
+  // "hide"=逆に、現場代理人の重複を持つ技術者を候補一覧から除外する。
+  const [agentFilterMode,setAgentFilterMode]=useState("");
   const [selectedDept,setSelectedDept]=useState([]);
   const [selectedKaihei,setSelectedKaihei]=useState([]);
   const [selectedLicenses,setSelectedLicenses]=useState([]);
@@ -4954,7 +4955,7 @@ function App(){
     // 「配置データ上は現場代理人として重複しているが、CORINS実績が無い（または今回の年度等の条件に合致する実績が無い）技術者」が
     // 一覧に一切出てこない。そこで、これらのフィルターがONの間だけ、配置データ（assignRowsByEngcd）を直接見て、
     // 対象の重複条件に合致する技術者を候補に追加する（技術者単位の条件のみ適用し、工事単位の条件＝年度・分野・役割・ゲート種別等は適用しない）。
-    if((agentOnlyFilter || (areaOnlyFilter && selectedBranch)) && hasAssignFilter){
+    if((agentFilterMode==="show" || (areaOnlyFilter && selectedBranch)) && hasAssignFilter){
       Object.keys(assignRowsByEngcd).forEach((engcd)=>{
         if(byEngineer[engcd]) return; // 既にCORINS実績側で候補に入っている場合はそちらの情報をそのまま使う
         if(selectedEngcds.length && !selectedEngcds.includes(engcd)) return;
@@ -4994,7 +4995,7 @@ function App(){
         });
         // 最終フィルタ（下のresultsのfilter）と同じ条件を満たす場合のみ、ここで候補として追加する
         const areaOk = !(areaOnlyFilter && selectedBranch) || assignConflicts.some((a)=> normBranchName(a.branch)===normBranchName(selectedBranch));
-        const agentOk = !agentOnlyFilter || assignConflicts.some((a)=> isGenbaDairinin(a.role));
+        const agentOk = agentFilterMode!=="show" || assignConflicts.some((a)=> isGenbaDairinin(a.role));
         if(!areaOk || !agentOk) return;
         byEngineer[engcd]={
           engcd,
@@ -5040,10 +5041,12 @@ function App(){
           const hit=(r.assignConflicts||[]).some((a)=> normBranchName(a.branch)===normBranchName(selectedBranch));
           if(!hit) return false;
         }
-        // 現場代理人フィルタ：配置予定期間と重複している工事のうち、役割が「現場代理人」のものを1件以上持つ人物のみ残す。
-        if(agentOnlyFilter && hasAssignFilter){
+        // 現場代理人フィルタ："表示"なら、配置予定期間と重複している工事のうち役割が「現場代理人」のものを1件以上持つ人物のみ残す。
+        // "非表示"なら逆に、現場代理人の重複を持つ人物を除外する。
+        if(agentFilterMode && hasAssignFilter){
           const hit=(r.assignConflicts||[]).some((a)=> isGenbaDairinin(a.role));
-          if(!hit) return false;
+          if(agentFilterMode==="show" && !hit) return false;
+          if(agentFilterMode==="hide" && hit) return false;
         }
         return true;
       })
@@ -5052,7 +5055,7 @@ function App(){
      selectedBunya, selectedGateCategory, selectedGateType, selectedGateStructure, selectedKaihei, gateHierarchyByCode,
      keikMin, heighMin, areaMin, areaIncludeSuis, suisMin, syusMin, horyuMin, pointMin, ageMin, ageMax, ageAsOf, selectedDept,
      assignDateFrom, assignDateTo, dutyOnlyFilter, excludeAwardedDutyOverlap, assignRowsByEngcd, dutyAssignIndex, selectedEngcds,
-     employeeMap, literalMap, includeRetired, includeOfficeTech, femaleOnly, selectedBranch, areaOnlyFilter, agentOnlyFilter,
+     employeeMap, literalMap, includeRetired, includeOfficeTech, femaleOnly, selectedBranch, areaOnlyFilter, agentFilterMode,
      selectedLicenses, licenseMode, enginfoByEngcd, liccdByNormName, employeeLicMap, verifiedMap, sessionVerified, certLinksByEngcd, kanriCertByEngcd]);
 
   const sortedResults=useMemo(()=>{
@@ -5079,7 +5082,7 @@ function App(){
     setKeikMin(""); setHeighMin(""); setAreaMin(""); setAreaIncludeSuis(false);
     setSuisMin(""); setSyusMin(""); setHoryuMin(""); setPointMin("");
     setDutyOnlyFilter(false); setExcludeAwardedDutyOverlap(false);
-    setSelectedBranch(""); setAreaOnlyFilter(false); setAgentOnlyFilter(false);
+    setSelectedBranch(""); setAreaOnlyFilter(false); setAgentFilterMode("");
     setIncludeRetired(false); setIncludeOfficeTech(false);
     setSortMode("default");
     setSearched(false); setExpanded({});
@@ -5779,11 +5782,15 @@ function App(){
                   </label>
                 }
                 {!showConsiderList &&
-                  <label className="chk-inline" style={{width:"fit-content"}}
-                    title="配置予定期間を指定した上でチェックすると、配置予定と重複している工事のうち、役割が現場代理人の工事を1件以上持つ技術者のみ表示します">
-                    <input type="checkbox" checked={agentOnlyFilter} onChange={(e)=>setAgentOnlyFilter(e.target.checked)}/>
-                    <span style={{color:"var(--muted)", fontWeight:500, fontSize:12.5}}>現場代理人の重複を持つ技術者のみ表示</span>
-                  </label>
+                  <div style={{display:"flex", alignItems:"center", gap:6, width:"fit-content"}}
+                    title="配置予定期間を指定した上で選択すると、配置予定と重複している工事のうち役割が現場代理人の工事を1件以上持つ技術者について、「表示」＝その技術者のみ表示、「非表示」＝その技術者を候補から除外します">
+                    <span style={{color:"var(--muted)", fontWeight:500, fontSize:12.5}}>現場代理人の重複</span>
+                    <select className="dt-select" style={{width:"auto"}} value={agentFilterMode} onChange={(e)=>setAgentFilterMode(e.target.value)}>
+                      <option value="">指定なし</option>
+                      <option value="show">表示</option>
+                      <option value="hide">非表示</option>
+                    </select>
+                  </div>
                 }
               </div>
               <p className="sub">{showConsiderList ? considerList.length+"名を検討中です"+(currentListTitle?"　（保存名：「"+currentListTitle+"」）":"") : results.length+"名が該当しました"}</p>
