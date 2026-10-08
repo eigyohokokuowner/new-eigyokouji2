@@ -3294,7 +3294,7 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
         if(periods.length===0){
           periods=[{from:t.from, to:t.to}];
         }
-        entries.push({person:t.name, personKey:(t.name||"").replace(/\s+/g,""), koban:p.koban, projId:p.id, kobanType:p.kobanType, projName:p.name, role:t.role, category, periods});
+        entries.push({person:t.name, personKey:(t.name||"").replace(/\s+/g,""), koban:p.koban, projId:p.id, kobanType:p.kobanType, projName:p.name, role:t.role, category, kubun:p.kubun, periods});
       });
     });
 
@@ -3351,8 +3351,9 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
     return conflictKeySet.has((name||"").replace(/\s+/g,"")+"|"+projId);
   };
 
-  // 「工番×役職区分」ごとに、配置されている人物と期間の一覧を持つ索引。赤字の行について、
-  // 同じ工事・同じ据付時期・同じ役割に自分を含めて何人配置されているかを数えるのに使う。
+  // 「工番×役職区分×案件区分（製作/据付/製据）」ごとに、配置されている人物と期間の一覧を持つ索引。赤字の行について、
+  // 同じ工事・同じ区分・同じ据付時期・同じ役割に自分を含めて何人配置されているかを数えるのに使う。
+  // 同じ工番でも「製作」と「据付」は別の配置（表示上も別行）なので、区分が違えば人数カウントに混ぜない。
   const entryByPersonProj=useMemo(()=>{
     const m={};
     dutyEntries.forEach((e)=>{ m[e.personKey+"|"+e.projId]=e; });
@@ -3361,7 +3362,8 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
   const dutyCountIndex=useMemo(()=>{
     const idx={};
     dutyEntries.forEach((e)=>{
-      const key=e.koban+"|"+e.category;
+      const sesu=classifySesu(e.kubun) || "-";
+      const key=e.koban+"|"+e.category+"|"+sesu;
       if(!idx[key]) idx[key]=[];
       idx[key].push({personKey:e.personKey, periods:e.periods});
     });
@@ -3369,14 +3371,15 @@ function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoCo
   },[dutyEntries]);
   const CIRCLED_NUM=["","①","②","③","④","⑤","⑥","⑦","⑧","⑨","⑩","⑪","⑫","⑬","⑭","⑮","⑯","⑰","⑱","⑲","⑳"];
   const circledNum=(n)=> CIRCLED_NUM[n] || ("("+n+")");
-  // 赤字（isDutyConflict）になっている行だけ、自分を含めて同じ工事・同じ据付時期・同じ役割の人数を返す。
+  // 赤字（isDutyConflict）になっている行だけ、自分を含めて同じ工事・同じ区分・同じ据付時期・同じ役割の人数を返す。
   // 対象外や1人（自分だけ）の場合は0（表示しない）。
   const getDutyOverlapCount=(name, projId, kubun)=>{
     if(!isDutyConflict(name, projId, kubun)) return 0;
     const personKey=(name||"").replace(/\s+/g,"");
     const entry=entryByPersonProj[personKey+"|"+projId];
     if(!entry) return 0;
-    const list=dutyCountIndex[entry.koban+"|"+entry.category] || [];
+    const entrySesu=classifySesu(entry.kubun) || "-";
+    const list=dutyCountIndex[entry.koban+"|"+entry.category+"|"+entrySesu] || [];
     const personSet=new Set();
     list.forEach((item)=>{
       const overlaps=item.periods.some((ip)=> entry.periods.some((p)=> overlapDays(ip.from, ip.to, p.from, p.to)>0));
@@ -4939,6 +4942,69 @@ function App(){
       });
     });
 
+    // 現場代理人フィルター／当エリアフィルターがONの場合の追加候補:
+    // 現場代理人は通常CORINSの従事期間データ（eng）に記録が残らないため、上のループ（eng基準）だけでは
+    // 「配置データ上は現場代理人として重複しているが、CORINS実績が無い（または今回の年度等の条件に合致する実績が無い）技術者」が
+    // 一覧に一切出てこない。そこで、これらのフィルターがONの間だけ、配置データ（assignRowsByEngcd）を直接見て、
+    // 対象の重複条件に合致する技術者を候補に追加する（技術者単位の条件のみ適用し、工事単位の条件＝年度・分野・役割・ゲート種別等は適用しない）。
+    if((agentOnlyFilter || (areaOnlyFilter && selectedBranch)) && hasAssignFilter){
+      Object.keys(assignRowsByEngcd).forEach((engcd)=>{
+        if(byEngineer[engcd]) return; // 既にCORINS実績側で候補に入っている場合はそちらの情報をそのまま使う
+        if(selectedEngcds.length && !selectedEngcds.includes(engcd)) return;
+        if(excludeAwardedDutyOverlap && excludedForAwardedDutyOverlap.has(engcd)) return;
+        const emp=employeeMap[engcd];
+        if(!includeRetired && emp && emp.STATUS==="retired") return;
+        if(!includeOfficeTech && emp && emp.OFFICE_TECH) return;
+        const kinfo=enginfoByEngcd[engcd];
+        if(ageMinN!==null || ageMaxN!==null){
+          const age=kinfo ? calcAge(kinfo.BDAY, ageAsOf) : null;
+          if(age===null) return;
+          if(ageMinN!==null && age<ageMinN) return;
+          if(ageMaxN!==null && age>ageMaxN) return;
+        }
+        if(femaleOnly && (!emp || emp.GENDER!=="女性")) return;
+        if(selectedDept.length){
+          const matched=selectedDept.some((cat)=> deptCategoryMatches(emp && emp.DEPT, cat));
+          if(!matched) return;
+        }
+        if(selectedLicenses.length){
+          const matched = licenseMode==="and"
+            ? selectedLicenses.every((name)=> isQualHeld(engcd, name))
+            : selectedLicenses.some((name)=> isQualHeld(engcd, name));
+          if(!matched) return;
+        }
+        const assignList=assignRowsByEngcd[engcd]||[];
+        const assignConflicts = assignList.filter((a)=>{
+          const sesu=classifySesu(a.kubun);
+          const isDuty=!!categorizeDutyRole(a.role);
+          if(dutyOnlyFilter && !((sesu==="据"||sesu==="製据") && isDuty)) return false;
+          const aFrom=normDigits8(a.assignFrom);
+          if(!aFrom) return false;
+          const aTo=normDigits8(a.assignTo) || aFrom;
+          const lo = assignFilterFrom===null ? "00000000" : assignFilterFrom;
+          const hi = assignFilterTo===null ? "99999999" : assignFilterTo;
+          return aFrom<=hi && aTo>=lo;
+        });
+        // 最終フィルタ（下のresultsのfilter）と同じ条件を満たす場合のみ、ここで候補として追加する
+        const areaOk = !(areaOnlyFilter && selectedBranch) || assignConflicts.some((a)=> normBranchName(a.branch)===normBranchName(selectedBranch));
+        const agentOk = !agentOnlyFilter || assignConflicts.some((a)=> (a.role||"").includes("現場代理人"));
+        if(!areaOk || !agentOk) return;
+        byEngineer[engcd]={
+          engcd,
+          name: emp ? emp.ID_NAME : ("(コード:"+engcd+")"),
+          dept: emp ? emp.DEPT : "",
+          position: emp ? emp.POSITION : "",
+          age: kinfo ? calcAge(kinfo.BDAY, ageAsOf) : null,
+          retired: !!(emp && emp.STATUS==="retired"),
+          assignList,
+          assignConflicts,
+          assignFilterActive: true,
+          noCorinsRecord: true, // CORINS実績が無く、配置データのみから候補に追加された技術者であることの印
+          entries:[],
+        };
+      });
+    }
+
     Object.values(byEngineer).forEach((r)=>{
       r.okCount = r.entries.filter((e)=>e.verifyStatus==="ok").length;
       r.noCount = r.entries.filter((e)=>e.verifyStatus==="no").length;
@@ -5103,6 +5169,7 @@ function App(){
                       </span>
                     ) : null}
                     {r.retired && <span className="m-badge retired">退職</span>}
+                    {r.noCorinsRecord && <span className="m-badge" title="工事実績（CORINS従事データ）が無いため、配置データ（配置予定の重複）のみから候補に挙がっています">実績データなし</span>}
                     {r.allVerified && <span className="verified-badge"><Ic.Check size={12}/> 確認済み（{r.okCount}/{r.totalCount}）</span>}
                     {r.partialVerified && <span className="partial-badge"><Ic.Check size={12}/> 一部確認済み（{r.okCount}/{r.totalCount}）</span>}
                     {r.allRejected && <span className="rejected-badge"><Ic.X size={12}/> 据付実績なし</span>}
