@@ -699,6 +699,13 @@ function categorizeDutyRole(roleText){
   if(s.includes("管理")) return "管理技術者";
   return null;
 }
+// 役割テキストが「現場代理人」かどうかを判定する。配置データ側は「現代」という2文字の略称で
+// 登録されていることが多いため、正式名称・略称のどちらでも判定できるようにする。
+function isGenbaDairinin(roleText){
+  const s=String(roleText||"").trim();
+  if(!s) return false;
+  return s.includes("現場代理人") || s==="現代" || s.includes("現代");
+}
 // 「配置一覧(工事別)」の並び順を決めるためのキーを工番・案件番号から求める。
 // ルール：
 //   ・「○○G-1○○○」→「○○G-2○○○」→「○○G-3○○○」…の順（ハイフン直後の数字＝グループ）。
@@ -4987,7 +4994,7 @@ function App(){
         });
         // 最終フィルタ（下のresultsのfilter）と同じ条件を満たす場合のみ、ここで候補として追加する
         const areaOk = !(areaOnlyFilter && selectedBranch) || assignConflicts.some((a)=> normBranchName(a.branch)===normBranchName(selectedBranch));
-        const agentOk = !agentOnlyFilter || assignConflicts.some((a)=> (a.role||"").includes("現場代理人"));
+        const agentOk = !agentOnlyFilter || assignConflicts.some((a)=> isGenbaDairinin(a.role));
         if(!areaOk || !agentOk) return;
         byEngineer[engcd]={
           engcd,
@@ -5035,7 +5042,7 @@ function App(){
         }
         // 現場代理人フィルタ：配置予定期間と重複している工事のうち、役割が「現場代理人」のものを1件以上持つ人物のみ残す。
         if(agentOnlyFilter && hasAssignFilter){
-          const hit=(r.assignConflicts||[]).some((a)=> (a.role||"").includes("現場代理人"));
+          const hit=(r.assignConflicts||[]).some((a)=> isGenbaDairinin(a.role));
           if(!hit) return false;
         }
         return true;
