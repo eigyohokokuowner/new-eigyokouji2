@@ -1238,6 +1238,11 @@ function branchName(code){
   const c=String(parseFloat(code));
   return EIGYCD_MAP[c] || ("(code:"+code+")");
 }
+// 支店名の末尾の「支店」有無や空白の揺れを吸収して比較するための正規化。
+const BRANCH_OPTIONS=["北海道","東北","東京","北陸","中部","関西","中四国","九州"];
+function normBranchName(v){
+  return String(v||"").trim().replace(/支店$/,"");
+}
 // コードの正規化：
 // - 完全に数字だけのコード（例:"01"）は前ゼロ表記ゆれを吸収するため数値化して比較する
 // - 英字が混じるコード（例:"13A"）は数値化すると別コードと衝突する（parseFloatが英字部分を無視するため）ので、
@@ -4289,6 +4294,12 @@ function App(){
   const [filterFormKey,setFilterFormKey]=useState(0);
   // 受注工事（工番）で、据付時期＋監理・主任・管理技術者の専任配置が、配置予定期間と重複している技術者を候補一覧から除外する。
   const [excludeAwardedDutyOverlap,setExcludeAwardedDutyOverlap]=useState(false);
+  // 支店の絞り込み（配置予定と重複している工事の支店で候補を絞り込む際に使用）。未選択＝絞り込みしない。
+  const [selectedBranch,setSelectedBranch]=useState("");
+  // ON時：配置予定期間と重複している工事のうち、selectedBranchの支店のものを1件以上持つ技術者のみ表示する（支店未選択時は無視）。
+  const [areaOnlyFilter,setAreaOnlyFilter]=useState(false);
+  // ON時：配置予定期間と重複している工事のうち、役割が「現場代理人」のものを1件以上持つ技術者のみ表示する。
+  const [agentOnlyFilter,setAgentOnlyFilter]=useState(false);
   const [selectedDept,setSelectedDept]=useState([]);
   const [selectedKaihei,setSelectedKaihei]=useState([]);
   const [selectedLicenses,setSelectedLicenses]=useState([]);
@@ -4626,17 +4637,23 @@ function App(){
         });
         if(corinsFrom && corinsTo){ assignFrom=corinsFrom; assignTo=corinsTo; }
       }
+      const kobanType=classifyKouban(koban);
+      // 支店の判定：工番（受注済み）は工事実績データのEIGYCDから、案件（H番号・未受注）は配置データの「支店」列から取得する。
+      const branch = kobanType==="工番"
+        ? branchName(projectIndex && projectIndex[koban] ? projectIndex[koban].EIGYCD : null)
+        : ((parent && parent["支店"]) || "");
       if(!map[engcd]) map[engcd]=[];
       map[engcd].push({
-        koban, kobanType: classifyKouban(koban),
+        koban, kobanType,
         name: parent ? parent["工事名・案件名"] : r["工事名・案件名"],
         kubun: r["案件区分"] || (parent && parent["案件区分"]),
         role,
+        branch,
         assignFrom, assignTo,
       });
     });
     return map;
-  },[datasets.assign, datasets.eng, engcdByName, engIndexForAssign, literalMap]);
+  },[datasets.assign, datasets.eng, engcdByName, engIndexForAssign, literalMap, projectIndex]);
 
   // 工番・案件番号×役職区分（監理/主任/管理技術者）×案件区分（製作/据付/製据）ごとに、配置されている技術者コードと期間の一覧を持つ索引。
   // 「同じ工事・同じ据付時期・同じ役割」に何人配置されているかを数えるのに使う。
@@ -4942,12 +4959,27 @@ function App(){
       r.kanriCertUrl = kanriCertByEngcd[r.engcd] || null;
     });
 
-    return Object.values(byEngineer).sort((a,b)=>b.entries.length-a.entries.length);
+    return Object.values(byEngineer)
+      .filter((r)=>{
+        // 「指定期間内で当エリアに従事する工事のみ表示」：配置予定期間と重複している工事（assignConflicts）のうち、
+        // 選んだ支店のものを1件以上持つ人物のみ残す（支店未選択、または配置予定期間未指定の場合は絞り込みしない）。
+        if(areaOnlyFilter && selectedBranch && hasAssignFilter){
+          const hit=(r.assignConflicts||[]).some((a)=> normBranchName(a.branch)===normBranchName(selectedBranch));
+          if(!hit) return false;
+        }
+        // 現場代理人フィルタ：配置予定期間と重複している工事のうち、役割が「現場代理人」のものを1件以上持つ人物のみ残す。
+        if(agentOnlyFilter && hasAssignFilter){
+          const hit=(r.assignConflicts||[]).some((a)=> (a.role||"").includes("現場代理人"));
+          if(!hit) return false;
+        }
+        return true;
+      })
+      .sort((a,b)=>b.entries.length-a.entries.length);
   },[requiredLoaded, searched, datasets, projectIndex, fyFrom, fyFromMonth, fyTo, fyToMonth, selectedRoles,
      selectedBunya, selectedGateCategory, selectedGateType, selectedGateStructure, selectedKaihei, gateHierarchyByCode,
      keikMin, heighMin, areaMin, areaIncludeSuis, suisMin, syusMin, horyuMin, pointMin, ageMin, ageMax, ageAsOf, selectedDept,
      assignDateFrom, assignDateTo, dutyOnlyFilter, excludeAwardedDutyOverlap, assignRowsByEngcd, dutyAssignIndex, selectedEngcds,
-     employeeMap, literalMap, includeRetired, includeOfficeTech, femaleOnly,
+     employeeMap, literalMap, includeRetired, includeOfficeTech, femaleOnly, selectedBranch, areaOnlyFilter, agentOnlyFilter,
      selectedLicenses, licenseMode, enginfoByEngcd, liccdByNormName, employeeLicMap, verifiedMap, sessionVerified, certLinksByEngcd, kanriCertByEngcd]);
 
   const sortedResults=useMemo(()=>{
@@ -4974,6 +5006,7 @@ function App(){
     setKeikMin(""); setHeighMin(""); setAreaMin(""); setAreaIncludeSuis(false);
     setSuisMin(""); setSyusMin(""); setHoryuMin(""); setPointMin("");
     setDutyOnlyFilter(false); setExcludeAwardedDutyOverlap(false);
+    setSelectedBranch(""); setAreaOnlyFilter(false); setAgentOnlyFilter(false);
     setIncludeRetired(false); setIncludeOfficeTech(false);
     setSortMode("default");
     setSearched(false); setExpanded({});
@@ -5093,7 +5126,7 @@ function App(){
                                     <span className="assign-conflict-kbn">{(a.kubun||"-")}/{(a.role||"-")}</span>
                                     <span className="assign-conflict-koban">{a.koban}</span>
                                     <span className={"assign-conflict-name"+(isAwardedDutyOverlap?" strong":"")}>{a.name}</span>
-                                    <span className="assign-conflict-meta">（{a.kobanType||"-"}） {fmtDate(a.assignFrom)}〜{fmtDate(a.assignTo)}</span>
+                                    <span className="assign-conflict-meta">（{a.kobanType||"-"}{a.branch?"・"+a.branch:""}） {fmtDate(a.assignFrom)}〜{fmtDate(a.assignTo)}</span>
                                   </div>
                                 );
                               })}
@@ -5464,6 +5497,13 @@ function App(){
               </div>
             </div>
             <div className="pair-group top">
+              <div className="field-label">支店</div>
+              <select className="dt-select" style={{width:"auto", minWidth:120}} value={selectedBranch} onChange={(e)=>setSelectedBranch(e.target.value)}>
+                <option value="">指定なし</option>
+                {BRANCH_OPTIONS.map((b)=>(<option key={b} value={b}>{b}</option>))}
+              </select>
+            </div>
+            <div className="pair-group top">
               <div className="field-label">退職者</div>
               <label className="chk-inline" style={{width:"fit-content"}}>
                 <input type="checkbox" checked={includeRetired} onChange={(e)=>setIncludeRetired(e.target.checked)}/>
@@ -5655,6 +5695,20 @@ function App(){
                     title="工番（受注済み）の据付案件で、監理・主任・管理技術者として配置予定期間と重複している技術者を除外します。ただし、その工事・その役割にすでに複数人登録されている（重複登録がある）場合は対象外＝除外しません（役割が自分1人だけの場合のみ除外）">
                     <input type="checkbox" checked={excludeAwardedDutyOverlap} onChange={(e)=>setExcludeAwardedDutyOverlap(e.target.checked)}/>
                     <span style={{color:"var(--muted)", fontWeight:500, fontSize:12.5}}>受注工事で専任配置が重複する技術者を除く</span>
+                  </label>
+                }
+                {!showConsiderList &&
+                  <label className="chk-inline" style={{width:"fit-content"}}
+                    title="配置予定期間・支店を指定した上でチェックすると、配置予定と重複している工事のうち、選択した支店の工事を1件以上持つ技術者のみ表示します（支店未選択の場合は絞り込みしません）">
+                    <input type="checkbox" checked={areaOnlyFilter} onChange={(e)=>setAreaOnlyFilter(e.target.checked)}/>
+                    <span style={{color:"var(--muted)", fontWeight:500, fontSize:12.5}}>指定期間内で当エリアに従事する工事のみ表示</span>
+                  </label>
+                }
+                {!showConsiderList &&
+                  <label className="chk-inline" style={{width:"fit-content"}}
+                    title="配置予定期間を指定した上でチェックすると、配置予定と重複している工事のうち、役割が現場代理人の工事を1件以上持つ技術者のみ表示します">
+                    <input type="checkbox" checked={agentOnlyFilter} onChange={(e)=>setAgentOnlyFilter(e.target.checked)}/>
+                    <span style={{color:"var(--muted)", fontWeight:500, fontSize:12.5}}>現場代理人の重複を持つ技術者のみ表示</span>
                   </label>
                 }
               </div>
