@@ -456,6 +456,24 @@
      本体自体の横スクロールバーは重複表示・位置ズレを避けるため非表示にする（縦スクロールバーは表示したまま）。
      横スクロール自体は引き続き可能（ホイール・トラックパッド・上部バーからの連動で動く）。 */
   .gantt-main-scroll::-webkit-scrollbar:horizontal{display:none;height:0;}
+
+  /* 配置検討リストのPDF出力（印刷）用。画面では非表示にしておき、印刷時のみ表示する。 */
+  .print-only{display:none;}
+  .print-list-item{break-inside:avoid; page-break-inside:avoid; border:1px solid #999; border-radius:6px; padding:10px 12px; margin-bottom:10px;}
+  .print-list-hd{display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:4px;}
+  .print-list-name{font-size:14px; font-weight:800;}
+  .print-list-meta{font-size:11px; color:#555;}
+  .print-list-badges{font-size:11px; color:#333; margin-bottom:6px;}
+  .print-conflict-table{width:100%; border-collapse:collapse; font-size:10.5px; margin-top:4px;}
+  .print-conflict-table th{text-align:left; background:#eee; border:1px solid #bbb; padding:3px 6px; font-weight:700;}
+  .print-conflict-table td{border:1px solid #ccc; padding:3px 6px; vertical-align:top;}
+  .print-conflict-none{font-size:11px; color:#777; margin-top:4px;}
+  @media print{
+    body *{visibility:hidden;}
+    .print-only, .print-only *{visibility:visible;}
+    .print-only{display:block; position:absolute; top:0; left:0; width:100%; padding:16px;}
+    @page{size:A4; margin:12mm;}
+  }
 </style>
 </head>
 <body>
@@ -5811,6 +5829,10 @@ function App(){
                   <button className="btn-outline" onClick={openSaveDialog} disabled={considerList.length===0}>
                     {currentListTitle ? "上書き保存" : "名前を付けて保存"}
                   </button>
+                  <button className="btn-outline" onClick={()=>window.print()} disabled={considerList.length===0}
+                    title="配置予定と重複している配置も含めてPDF出力します（印刷ダイアログで「PDFに保存」を選択してください）">
+                    <Ic.Download size={14}/> PDF出力
+                  </button>
                 </React.Fragment>
               }
               <button className="btn-outline" onClick={()=>setShowConsiderList(!showConsiderList)}>
@@ -5836,6 +5858,53 @@ function App(){
           )}
         </div>
       }
+
+      {/* 配置検討リストのPDF出力用（印刷時のみ表示。「配置予定と重複」の内容をホバーなしで全件印字する） */}
+      <div className="print-only">
+        <h2 style={{fontSize:16, marginBottom:4}}>配置検討リスト{currentListTitle ? "　「"+currentListTitle+"」" : ""}</h2>
+        <p style={{fontSize:11, color:"#555", marginTop:0, marginBottom:14}}>{considerList.length}名　出力日：{new Date().toLocaleDateString("ja-JP")}</p>
+        {considerList.map((r)=>{
+          const cr=considerRole[r.engcd]||{};
+          return (
+            <div key={r.engcd} className="print-list-item">
+              <div className="print-list-hd">
+                <span className="print-list-name">{r.name}</span>
+                <span className="print-list-meta">
+                  {[r.age!==null && r.age!==undefined ? r.age+"歳" : null, r.dept, r.position].filter(Boolean).join(" ／ ")}
+                </span>
+                {r.retired && <span className="print-list-meta">（退職）</span>}
+              </div>
+              <div className="print-list-badges">
+                検討中の配置：{cr.kubun||"-"}／{cr.role||"-"}
+                {"　｜　実績："+(r.allVerified?("確認済み（"+r.okCount+"/"+r.totalCount+"）"):r.partialVerified?("一部確認済み（"+r.okCount+"/"+r.totalCount+"）"):r.allRejected?"据付実績なし":"未確認")}
+                {"　｜　該当 "+r.entries.length+"件"}
+                {(r.bestPoint!==null && r.bestPoint!==undefined) ? "　｜　最高点 "+r.bestPoint+"点" : ""}
+              </div>
+              {r.assignFilterActive && r.assignConflicts && r.assignConflicts.length>0 ? (
+                <table className="print-conflict-table">
+                  <thead>
+                    <tr><th>区分/役割</th><th>工番・案件名</th><th>種別・支店</th><th>期間</th></tr>
+                  </thead>
+                  <tbody>
+                    {r.assignConflicts.map((a,ai)=>(
+                      <tr key={ai}>
+                        <td>{(a.kubun||"-")+"/"+(a.role||"-")}</td>
+                        <td>{a.koban}　{a.name}</td>
+                        <td>{(a.kobanType||"-")+(a.branch?"・"+a.branch:"")}</td>
+                        <td>{fmtDate(a.assignFrom)}〜{fmtDate(a.assignTo)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                r.assignFilterActive
+                  ? <div className="print-conflict-none">指定期間内の配置予定と重複はありません。</div>
+                  : <div className="print-conflict-none">配置予定期間が指定されていないため、重複判定は行われていません。</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
 
       </React.Fragment>}
 
