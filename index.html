@@ -5904,17 +5904,21 @@ function App(){
               {r.assignFilterActive && r.assignConflicts && r.assignConflicts.length>0 ? (
                 <table className="print-conflict-table">
                   <thead>
-                    <tr><th>区分/役割</th><th>工番・案件名</th><th>種別・支店</th><th>期間</th></tr>
+                    <tr><th>区分/役割</th><th>工番・案件名</th><th>支店</th><th>期間</th></tr>
                   </thead>
                   <tbody>
-                    {r.assignConflicts.map((a,ai)=>(
-                      <tr key={ai}>
-                        <td>{(a.kubun||"-")+"/"+(a.role||"-")}</td>
-                        <td>{a.koban}　{a.name}</td>
-                        <td>{(a.kobanType||"-")+(a.branch?"・"+a.branch:"")}</td>
-                        <td>{fmtDate(a.assignFrom)}〜{fmtDate(a.assignTo)}</td>
-                      </tr>
-                    ))}
+                    {r.assignConflicts.map((a,ai)=>{
+                      const dupGroup=dutyCountGroup(a.role);
+                      const dupCount=dupGroup ? countDutyOverlap(a.koban, dupGroup, a.assignFrom, a.assignTo, a.kubun) : 1;
+                      return (
+                        <tr key={ai}>
+                          <td>{(dupCount>=2 ? circledNum(dupCount)+" " : "")+(a.kubun||"-")+"/"+(a.role||"-")}</td>
+                          <td>{a.koban}　{a.name}</td>
+                          <td>{a.branch||"-"}</td>
+                          <td>{fmtDate(a.assignFrom)}〜{fmtDate(a.assignTo)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               ) : (
