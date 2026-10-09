@@ -724,6 +724,15 @@ function isGenbaDairinin(roleText){
   if(!s) return false;
   return s.includes("現場代理人") || s==="現代" || s.includes("現代");
 }
+// 「配置予定と重複している配置」の人数バッジ（①②③…）を出すためのグルーピング単位。
+// 監理・主任・管理技術者はcategorizeDutyRoleの分類をそのまま使い、現場代理人は別グループとして人数を数える
+// （専任技術者どうしの重複検知・除外ロジックとは別目的のため、カテゴリ自体は混ぜない＝categorizeDutyRoleは変更しない）。
+function dutyCountGroup(roleText){
+  const cat=categorizeDutyRole(roleText);
+  if(cat) return cat;
+  if(isGenbaDairinin(roleText)) return "現場代理人";
+  return null;
+}
 // 「配置一覧(工事別)」の並び順を決めるためのキーを工番・案件番号から求める。
 // ルール：
 //   ・「○○G-1○○○」→「○○G-2○○○」→「○○G-3○○○」…の順（ハイフン直後の数字＝グループ）。
@@ -4684,18 +4693,18 @@ function App(){
     return map;
   },[datasets.assign, datasets.eng, engcdByName, engIndexForAssign, literalMap, projectIndex]);
 
-  // 工番・案件番号×役職区分（監理/主任/管理技術者）×案件区分（製作/据付/製据）ごとに、配置されている技術者コードと期間の一覧を持つ索引。
-  // 「同じ工事・同じ据付時期・同じ役割」に何人配置されているかを数えるのに使う。
+  // 工番・案件番号×役職区分（監理/主任/管理技術者、および現場代理人）×案件区分（製作/据付/製据）ごとに、
+  // 配置されている技術者コードと期間の一覧を持つ索引。「同じ工事・同じ時期・同じ役割」に何人配置されているかを数えるのに使う。
   // 同じ工番でも「製作」と「据付」は別の配置（配置状況タブでも別の行として扱われる）なので、区分が違えば重複としてカウントしない。
   const dutyAssignIndex=useMemo(()=>{
     const idx={};
     Object.entries(assignRowsByEngcd).forEach(([engcd, list])=>{
       (list||[]).forEach((a)=>{
-        const category=categorizeDutyRole(a.role);
-        if(!category || !a.koban) return;
+        const group=dutyCountGroup(a.role);
+        if(!group || !a.koban) return;
         if(!normDigits8(a.assignFrom) || !normDigits8(a.assignTo)) return;
         const sesu=classifySesu(a.kubun) || "-";
-        const key=a.koban+"|"+category+"|"+sesu;
+        const key=a.koban+"|"+group+"|"+sesu;
         if(!idx[key]) idx[key]=[];
         idx[key].push({engcd, from:a.assignFrom, to:a.assignTo});
       });
@@ -4781,6 +4790,9 @@ function App(){
     }
 
     const byEngineer={};
+    // 技術者ごとの実績重複排除用：「工番・役割・従事期間1〜3・従事割合（据付期間内／全体）」が全て一致する行は
+    // 同じ実績の重複登録とみなし、2件目以降は一覧に積まない（工事詳細検索タブの技術者重複と同じ考え方）。
+    const entryDedupSeen={};
 
     (datasets.eng?.records||[]).forEach((engRow)=>{
       const proj=projectIndex[engRow.CONSTNO];
@@ -4939,6 +4951,14 @@ function App(){
       // 実施工程表の整合性が未確認でも、手動で押した「有」はそのまま有効にする
       const manualStatus = manualStatusRaw;
       const effectiveStatus = manualStatus==="no" ? "no" : (manualStatus==="ok" ? "ok" : (autoOK ? "ok" : (autoNo ? "no" : null)));
+
+      // 同じ工番・役割・従事期間1〜3・従事割合（据付期間内／全体）が完全に一致する行は、CSVの重複登録とみなし
+      // 2件目以降は一覧に積まない（元データに同一内容の行が複数あるケース対応）。
+      const periodKey = periods.map((p)=> (normDigits8(p.from)||"") + "-" + (normDigits8(p.to)||"")).join("|");
+      const entryDedupKey=[proj.CONSTNO, normKeyStr(engRow.POSICD), periodKey, installPct, jwariPct].join("§");
+      if(!entryDedupSeen[engcd]) entryDedupSeen[engcd]=new Set();
+      if(entryDedupSeen[engcd].has(entryDedupKey)) return;
+      entryDedupSeen[engcd].add(entryDedupKey);
 
       byEngineer[engcd].entries.push({
         constno: proj.CONSTNO,
@@ -5210,7 +5230,8 @@ function App(){
                               {r.assignConflicts.map((a,ai)=>{
                                 const category=categorizeDutyRole(a.role);
                                 const isAwardedDutyOverlap = a.kobanType==="工番" && (classifySesu(a.kubun)==="据"||classifySesu(a.kubun)==="製据") && !!category;
-                                const dupCount = category ? countDutyOverlap(a.koban, category, a.assignFrom, a.assignTo, a.kubun) : 1;
+                                const dupGroup=dutyCountGroup(a.role);
+                                const dupCount = dupGroup ? countDutyOverlap(a.koban, dupGroup, a.assignFrom, a.assignTo, a.kubun) : 1;
                                 return (
                                   <div key={ai} className="assign-conflict-row">
                                     {dupCount>=2 &&
