@@ -4339,6 +4339,11 @@ function App(){
   // 現場代理人の重複フィルター："" =絞り込みしない／"show"=配置予定期間と重複している工事のうち役割が「現場代理人」のものを1件以上持つ技術者のみ表示／
   // "hide"=逆に、現場代理人の重複を持つ技術者を候補一覧から除外する。
   const [agentFilterMode,setAgentFilterMode]=useState("");
+  // 実績確認状況フィルター：配列（複数選択可）。"verified"=確認済み／"partial"=一部確認済み／"rejected"=据付実績なし／"unconfirmed"=未確認。
+  // 空配列の場合は絞り込みしない。
+  const [statusFilter,setStatusFilter]=useState([]);
+  // 配置検討リストに追加済みの技術者のみを候補一覧に表示する。
+  const [considerListOnlyFilter,setConsiderListOnlyFilter]=useState(false);
   const [selectedDept,setSelectedDept]=useState([]);
   const [selectedKaihei,setSelectedKaihei]=useState([]);
   const [selectedLicenses,setSelectedLicenses]=useState([]);
@@ -5088,6 +5093,13 @@ function App(){
           if(agentFilterMode==="show" && !hit) return false;
           if(agentFilterMode==="hide" && hit) return false;
         }
+        // 実績確認状況フィルター（複数選択可・未選択時は絞り込みしない）
+        if(statusFilter.length>0){
+          const statusKey = r.allVerified ? "verified" : r.partialVerified ? "partial" : r.allRejected ? "rejected" : "unconfirmed";
+          if(!statusFilter.includes(statusKey)) return false;
+        }
+        // 配置検討リストに追加済みの技術者のみ表示
+        if(considerListOnlyFilter && !isInConsiderList(r.engcd)) return false;
         return true;
       })
       .sort((a,b)=>b.entries.length-a.entries.length);
@@ -5096,6 +5108,7 @@ function App(){
      keikMin, heighMin, areaMin, areaIncludeSuis, suisMin, syusMin, horyuMin, pointMin, ageMin, ageMax, ageAsOf, selectedDept,
      assignDateFrom, assignDateTo, dutyOnlyFilter, excludeAwardedDutyOverlap, assignRowsByEngcd, dutyAssignIndex, selectedEngcds,
      employeeMap, literalMap, includeRetired, includeOfficeTech, femaleOnly, selectedBranch, areaOnlyFilter, agentFilterMode,
+     statusFilter, considerListOnlyFilter, considerList,
      selectedLicenses, licenseMode, enginfoByEngcd, liccdByNormName, employeeLicMap, verifiedMap, sessionVerified, certLinksByEngcd, kanriCertByEngcd]);
 
   const sortedResults=useMemo(()=>{
@@ -5122,6 +5135,7 @@ function App(){
     suisMin, syusMin, horyuMin, pointMin,
     dutyOnlyFilter, excludeAwardedDutyOverlap,
     selectedBranch, areaOnlyFilter, agentFilterMode,
+    statusFilter, considerListOnlyFilter,
     includeRetired, includeOfficeTech,
     sortMode,
   });
@@ -5160,6 +5174,8 @@ function App(){
     if(f.selectedBranch!==undefined) setSelectedBranch(f.selectedBranch);
     if(f.areaOnlyFilter!==undefined) setAreaOnlyFilter(f.areaOnlyFilter);
     if(f.agentFilterMode!==undefined) setAgentFilterMode(f.agentFilterMode);
+    if(f.statusFilter!==undefined) setStatusFilter(f.statusFilter);
+    if(f.considerListOnlyFilter!==undefined) setConsiderListOnlyFilter(f.considerListOnlyFilter);
     if(f.includeRetired!==undefined) setIncludeRetired(f.includeRetired);
     if(f.includeOfficeTech!==undefined) setIncludeOfficeTech(f.includeOfficeTech);
     if(f.sortMode!==undefined) setSortMode(f.sortMode);
@@ -5177,6 +5193,7 @@ function App(){
     setSuisMin(""); setSyusMin(""); setHoryuMin(""); setPointMin("");
     setDutyOnlyFilter(false); setExcludeAwardedDutyOverlap(false);
     setSelectedBranch(""); setAreaOnlyFilter(false); setAgentFilterMode("");
+    setStatusFilter([]); setConsiderListOnlyFilter(false);
     setIncludeRetired(false); setIncludeOfficeTech(false);
     setSortMode("default");
     setSearched(false); setExpanded({});
@@ -5886,6 +5903,34 @@ function App(){
                       <option value="hide">非表示</option>
                     </select>
                   </div>
+                }
+                {!showConsiderList &&
+                  <div style={{display:"flex", alignItems:"center", gap:10, width:"fit-content", flexWrap:"wrap"}}
+                    title="実績の確認状況で候補を絞り込みます（複数選択可・いずれも未選択の場合は絞り込みません）">
+                    <span style={{color:"var(--muted)", fontWeight:500, fontSize:12.5}}>実績確認状況</span>
+                    {[
+                      {key:"verified", label:"確認済み", dot:"var(--green)"},
+                      {key:"partial", label:"一部確認済み", dot:"#B4650A"},
+                      {key:"rejected", label:"据付実績なし", dot:"var(--red)"},
+                      {key:"unconfirmed", label:"未確認", dot:"#fff"},
+                    ].map((opt)=>(
+                      <label key={opt.key} className="chk-inline" style={{width:"fit-content"}}>
+                        <input type="checkbox" checked={statusFilter.includes(opt.key)}
+                          onChange={(e)=> setStatusFilter(e.target.checked ? [...statusFilter, opt.key] : statusFilter.filter((v)=>v!==opt.key))}/>
+                        <span style={{display:"inline-flex", alignItems:"center", gap:4, color:"var(--muted)", fontWeight:500, fontSize:12.5}}>
+                          <span style={{width:8, height:8, borderRadius:"50%", background:opt.dot, display:"inline-block", border:"1px solid "+(opt.key==="unconfirmed"?"#999":"transparent")}}/>
+                          {opt.label}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                }
+                {!showConsiderList &&
+                  <label className="chk-inline" style={{width:"fit-content"}}
+                    title="すでに配置検討リストに追加済みの技術者のみを表示します">
+                    <input type="checkbox" checked={considerListOnlyFilter} onChange={(e)=>setConsiderListOnlyFilter(e.target.checked)}/>
+                    <span style={{color:"var(--muted)", fontWeight:500, fontSize:12.5}}>検討リスト追加済みのみ表示</span>
+                  </label>
                 }
               </div>
               <p className="sub">{showConsiderList ? considerList.length+"名を検討中です"+(currentListTitle?"　（保存名：「"+currentListTitle+"」）":"") : results.length+"名が該当しました"}</p>
