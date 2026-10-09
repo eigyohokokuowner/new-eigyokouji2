@@ -1143,7 +1143,7 @@ function considerListDocId(title){
 function stripUndefinedForFirestore(value){
   return JSON.parse(JSON.stringify(value));
 }
-async function saveConsiderListToFirestore(title, considerList, considerRole){
+async function saveConsiderListToFirestore(title, considerList, considerRole, filters){
   await waitForFirebase();
   if(!window.fb) throw new Error("Firestoreに接続できません");
   const {db, doc, setDoc}=window.fb;
@@ -1153,6 +1153,7 @@ async function saveConsiderListToFirestore(title, considerList, considerRole){
     updatedAt: Date.now(),
     candidates: stripUndefinedForFirestore(considerList),
     roles: stripUndefinedForFirestore(considerRole),
+    filters: stripUndefinedForFirestore(filters||null),
   });
   return id;
 }
@@ -1181,7 +1182,7 @@ async function loadConsiderListFromFirestore(id){
   const snap=await getDoc(doc(db,"considerLists",id));
   if(!snap.exists()) throw new Error("見つかりませんでした");
   const data=snap.data();
-  return {title: data.title||id, candidates: data.candidates||[], roles: data.roles||{}};
+  return {title: data.title||id, candidates: data.candidates||[], roles: data.roles||{}, filters: data.filters||null};
 }
 async function deleteConsiderListFromFirestore(id){
   await waitForFirebase();
@@ -4384,7 +4385,7 @@ function App(){
     if(!title){ setToast("タイトルを入力してください"); setTimeout(()=>setToast(""),3000); return; }
     setSavingList(true);
     try{
-      await saveConsiderListToFirestore(title, considerList, considerRole);
+      await saveConsiderListToFirestore(title, considerList, considerRole, buildFilterSnapshot());
       setCurrentListTitle(title);
       setShowSaveDialog(false);
       setToast("「"+title+"」として保存しました");
@@ -4417,6 +4418,7 @@ function App(){
       setConsiderList(data.candidates||[]);
       setConsiderRole(data.roles||{});
       setCurrentListTitle(data.title||"");
+      applyFilterSnapshot(data.filters);
       setShowConsiderList(true);
       setShowLoadDialog(false);
       setToast("「"+(data.title||"")+"」を読み込みました");
@@ -5109,6 +5111,60 @@ function App(){
     return list;
   },[results, sortMode]);
 
+  const buildFilterSnapshot=()=>({
+    fyFrom, fyFromMonth, fyTo, fyToMonth,
+    selectedBunya, selectedGateCategory, selectedGateType, selectedGateStructure, selectedKaihei,
+    selectedRoles, selectedLicenses, licenseMode,
+    ageMin, ageMax, ageAsOf, selectedDept,
+    femaleOnly,
+    assignDateFrom, assignDateTo, selectedEngcds,
+    keikMin, heighMin, areaMin, areaIncludeSuis,
+    suisMin, syusMin, horyuMin, pointMin,
+    dutyOnlyFilter, excludeAwardedDutyOverlap,
+    selectedBranch, areaOnlyFilter, agentFilterMode,
+    includeRetired, includeOfficeTech,
+    sortMode,
+  });
+  const applyFilterSnapshot=(f)=>{
+    if(!f) return;
+    if(f.fyFrom!==undefined) setFyFrom(f.fyFrom);
+    if(f.fyFromMonth!==undefined) setFyFromMonth(f.fyFromMonth);
+    if(f.fyTo!==undefined) setFyTo(f.fyTo);
+    if(f.fyToMonth!==undefined) setFyToMonth(f.fyToMonth);
+    if(f.selectedBunya!==undefined) setSelectedBunya(f.selectedBunya);
+    if(f.selectedGateCategory!==undefined) setSelectedGateCategory(f.selectedGateCategory);
+    if(f.selectedGateType!==undefined) setSelectedGateType(f.selectedGateType);
+    if(f.selectedGateStructure!==undefined) setSelectedGateStructure(f.selectedGateStructure);
+    if(f.selectedKaihei!==undefined) setSelectedKaihei(f.selectedKaihei);
+    if(f.selectedRoles!==undefined) setSelectedRoles(f.selectedRoles);
+    if(f.selectedLicenses!==undefined) setSelectedLicenses(f.selectedLicenses);
+    if(f.licenseMode!==undefined) setLicenseMode(f.licenseMode);
+    if(f.ageMin!==undefined) setAgeMin(f.ageMin);
+    if(f.ageMax!==undefined) setAgeMax(f.ageMax);
+    if(f.ageAsOf!==undefined) setAgeAsOf(f.ageAsOf);
+    if(f.selectedDept!==undefined) setSelectedDept(f.selectedDept);
+    if(f.femaleOnly!==undefined) setFemaleOnly(f.femaleOnly);
+    if(f.assignDateFrom!==undefined) setAssignDateFrom(f.assignDateFrom);
+    if(f.assignDateTo!==undefined) setAssignDateTo(f.assignDateTo);
+    if(f.selectedEngcds!==undefined) setSelectedEngcds(f.selectedEngcds);
+    if(f.keikMin!==undefined) setKeikMin(f.keikMin);
+    if(f.heighMin!==undefined) setHeighMin(f.heighMin);
+    if(f.areaMin!==undefined) setAreaMin(f.areaMin);
+    if(f.areaIncludeSuis!==undefined) setAreaIncludeSuis(f.areaIncludeSuis);
+    if(f.suisMin!==undefined) setSuisMin(f.suisMin);
+    if(f.syusMin!==undefined) setSyusMin(f.syusMin);
+    if(f.horyuMin!==undefined) setHoryuMin(f.horyuMin);
+    if(f.pointMin!==undefined) setPointMin(f.pointMin);
+    if(f.dutyOnlyFilter!==undefined) setDutyOnlyFilter(f.dutyOnlyFilter);
+    if(f.excludeAwardedDutyOverlap!==undefined) setExcludeAwardedDutyOverlap(f.excludeAwardedDutyOverlap);
+    if(f.selectedBranch!==undefined) setSelectedBranch(f.selectedBranch);
+    if(f.areaOnlyFilter!==undefined) setAreaOnlyFilter(f.areaOnlyFilter);
+    if(f.agentFilterMode!==undefined) setAgentFilterMode(f.agentFilterMode);
+    if(f.includeRetired!==undefined) setIncludeRetired(f.includeRetired);
+    if(f.includeOfficeTech!==undefined) setIncludeOfficeTech(f.includeOfficeTech);
+    if(f.sortMode!==undefined) setSortMode(f.sortMode);
+    setSearched(true);
+  };
   const resetFilters=()=>{
     setFyFrom(currentFY-9); setFyFromMonth("04"); setFyTo(currentFY); setFyToMonth("04");
     setSelectedBunya([]); setSelectedGateCategory([]); setSelectedGateType([]); setSelectedGateStructure([]);
@@ -5116,7 +5172,7 @@ function App(){
     setSelectedRoles([]); setSelectedLicenses([]); setLicenseMode("or");
     setAgeMin(""); setAgeMax(""); setAgeAsOf(""); setSelectedDept([]);
     setFemaleOnly(false);
-    setAssignDateFrom(""); setAssignDateTo(""); setAssignKobanTypeFilter([]); setSelectedEngcds([]);
+    setAssignDateFrom(""); setAssignDateTo(""); setSelectedEngcds([]);
     setKeikMin(""); setHeighMin(""); setAreaMin(""); setAreaIncludeSuis(false);
     setSuisMin(""); setSyusMin(""); setHoryuMin(""); setPointMin("");
     setDutyOnlyFilter(false); setExcludeAwardedDutyOverlap(false);
