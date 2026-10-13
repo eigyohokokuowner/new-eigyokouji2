@@ -3125,9 +3125,21 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
 
 /* ---------------- master maintenance (種別マスタなど、コードマスタの編集) ---------------- */
 /* ---------------- assignment gantt (配置状況：見るだけの一覧) ---------------- */
-function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoConstno, engRecords, literalMap}){
+function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoConstno, engRecords, literalMap, initialPersonName, jumpNonce}){
   const [viewMode,setViewMode]=useState("project"); // "project" | "person"
   const [query,setQuery]=useState("");
+
+  useEffect(()=>{
+    if(initialPersonName){
+      setViewMode("person");
+      // 社員マスタの氏名表記（スペースの有無等）が配置データ側の技術者名と完全一致しない場合に備え、
+      // スペースを除いた形で配置データ側（persons）の実際の表記を探し、見つかればそちらを検索語に使う。
+      const nameKeyLocal=(n)=> (n||"").replace(/\s+/g,"");
+      const target=nameKeyLocal(initialPersonName);
+      const match=persons.find((p)=> nameKeyLocal(p.name)===target);
+      setQuery(match ? match.name : initialPersonName);
+    }
+  },[jumpNonce]);
 
   const MONTH_W=18, ROW_H=28, TECH_ROW_H=36;
   const mainScrollRef=useRef(null);
@@ -4461,6 +4473,15 @@ function App(){
   const [jumpToEngcd,setJumpToEngcd]=useState(null);
   const [jumpEngcdNonce,setJumpEngcdNonce]=useState(0);
   const goToPersonnel=(engcd)=>{ setJumpToEngcd(engcd); setJumpEngcdNonce((n)=>n+1); setActiveTab("personnel"); };
+  const [jumpToAssignPersonName,setJumpToAssignPersonName]=useState(null);
+  const [jumpAssignPersonNonce,setJumpAssignPersonNonce]=useState(0);
+  // 配置候補技術者の氏名クリック用：配置状況タブの「配置一覧(技術者別)」でその人物を表示する（ENGCD→氏名に変換して渡す）。
+  const goToAssignPerson=(engcd)=>{
+    const emp=employeeMap[engcd];
+    setJumpToAssignPersonName(emp ? emp.ID_NAME : "");
+    setJumpAssignPersonNonce((n)=>n+1);
+    setActiveTab("assign");
+  };
 
   const verifiedMap=useMemo(()=>{
     const map={};
@@ -5283,7 +5304,7 @@ function App(){
                       </div>
                     }
                     {isOpen ? <Ic.Down/> : <Ic.Right/>}
-                    <button type="button" className="name name-link" onClick={(e)=>{ e.stopPropagation(); goToPersonnel(r.engcd); }}>{r.name}</button>
+                    <button type="button" className="name name-link" onClick={(e)=>{ e.stopPropagation(); goToAssignPerson(r.engcd); }}>{r.name}</button>
                     {(r.age!==null && r.age!==undefined) || r.dept || r.position ? (
                       <span className="code">
                         {[r.age!==null && r.age!==undefined ? r.age+"歳" : null, r.dept, r.position].filter(Boolean).join(" ／ ")}
@@ -5614,6 +5635,8 @@ function App(){
           onGotoConstno={goToConstno}
           engRecords={datasets.eng?.records || []}
           literalMap={literalMap}
+          initialPersonName={jumpToAssignPersonName}
+          jumpNonce={jumpAssignPersonNonce}
         />
       }
 
