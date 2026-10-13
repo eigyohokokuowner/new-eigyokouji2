@@ -3801,13 +3801,24 @@ function LoginUsageModal({onClose, employees}){
     const todayYmd = ymdNow8();
     const cutoff30 = addDaysYmd8(todayYmd, -29);
 
+    // 1回のログインにつき1件記録される方式なので、同じ日に複数件あり得る。
+    // その日の分は、一番早い時刻（＝最初に開いた時刻）を採用して1日分にまとめる。
+    // 「最終ログイン」は全記録の中で一番新しい時刻（日付＋時刻）を採用する。
+    const tsMs=(ts)=> (ts && typeof ts.toMillis==="function") ? ts.toMillis() : null;
     const byUid={};
     allUids.forEach((uid)=>{ byUid[uid]={ymdMap:{}, lastYmd:null, lastTs:null}; });
     logs.forEach((l)=>{
       if(!l || !allSet.has(l.uid)) return;
       const b=byUid[l.uid];
-      b.ymdMap[l.ymd]=l.ts||null;
-      if(!b.lastYmd || l.ymd > b.lastYmd){ b.lastYmd=l.ymd; b.lastTs=l.ts||null; }
+      const lMs=tsMs(l.ts);
+      const cur=b.ymdMap[l.ymd];
+      const curMs=tsMs(cur);
+      if(cur===undefined || (lMs!==null && (curMs===null || lMs<curMs))){
+        b.ymdMap[l.ymd]=l.ts||cur||null;
+      }
+      const lastMs=tsMs(b.lastTs);
+      const isNewer = lMs!==null ? (lastMs===null || lMs>lastMs) : (!b.lastYmd || l.ymd>b.lastYmd);
+      if(isNewer){ b.lastYmd=l.ymd; b.lastTs=l.ts||b.lastTs; }
     });
 
     const accountList = allUids.map((uid)=>{
@@ -4337,19 +4348,15 @@ function App(){
             setToast("権限情報の取得に失敗しました（"+(e.code||e.message)+"）。閲覧のみとして扱います");
             setTimeout(()=>setToast(""), 6000);
           }
-          // ログイン・利用状況の記録（同じ日に何度ログインしても1日1回として扱う）。
-          // 時刻（ts）はその日最初のログイン時刻を保持する（2回目以降のログインでは上書きしない）。
+          // ログイン・利用状況の記録（ログインのたびに1件記録する。同じ日の分は集計側でまとめて1日としてカウントする）。
+          // あえて書き込み専用にしている：事前にgetDocで既存有無を確認する方式だと、Firestoreのセキュリティルール次第で
+          // 「読み取り」だけ権限が無く失敗する可能性があり（書き込み権限はあるのに）、その場合ログイン記録ごと失われてしまうため。
           // 失敗してもログイン自体には影響させない。
           try{
             const ymd=ymdNow8();
             await setDoc(doc(db, "users", user.uid), {email:user.email||""}, {merge:true});
-            const logRef=doc(db, "loginLogs", user.uid+"_"+ymd);
-            const logSnap=await getDoc(logRef);
-            if(logSnap.exists()){
-              await setDoc(logRef, {uid:user.uid, email:user.email||"", ymd}, {merge:true});
-            } else {
-              await setDoc(logRef, {uid:user.uid, email:user.email||"", ymd, ts:serverTimestamp()});
-            }
+            const logId=user.uid+"_"+ymd+"_"+Date.now();
+            await setDoc(doc(db, "loginLogs", logId), {uid:user.uid, email:user.email||"", ymd, ts:serverTimestamp()});
           }catch(e){
             console.error("ログイン記録に失敗:", e);
           }
