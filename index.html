@@ -3770,6 +3770,7 @@ function LoginUsageModal({onClose, employees}){
   const [linkDraft,setLinkDraft]=useState("");
   const [savingLink,setSavingLink]=useState(false);
   const [linkError,setLinkError]=useState("");
+  const [expandedUid,setExpandedUid]=useState(null);
 
   const employeeByCode=useMemo(()=>{
     const map={};
@@ -3791,37 +3792,44 @@ function LoginUsageModal({onClose, employees}){
     const logs=[];
     logsSnap.forEach((d)=>logs.push(d.data()));
 
-    // 編集権限（role==="editor"）のアカウントのみを対象にする
-    const editorUids = Object.keys(users).filter((uid)=> String(users[uid].role||"").trim().toLowerCase()==="editor");
-    const editorSet = new Set(editorUids);
+    // 編集権限（editor）・閲覧のみ（viewer）を問わず、ログイン記録のあるアカウントは全て対象にする。
+    // usersコレクションに無いのにログイン記録だけ残っている（想定外の）ケースにも備え、両方の和集合をとる。
+    const logUids = new Set(logs.map((l)=> l && l.uid).filter(Boolean));
+    const allUids = [...new Set([...Object.keys(users), ...logUids])];
+    const allSet = new Set(allUids);
 
     const todayYmd = ymdNow8();
     const cutoff30 = addDaysYmd8(todayYmd, -29);
 
     const byUid={};
-    editorUids.forEach((uid)=>{ byUid[uid]={ymdSet:new Set(), lastYmd:null, lastTs:null}; });
+    allUids.forEach((uid)=>{ byUid[uid]={ymdMap:{}, lastYmd:null, lastTs:null}; });
     logs.forEach((l)=>{
-      if(!l || !editorSet.has(l.uid)) return;
+      if(!l || !allSet.has(l.uid)) return;
       const b=byUid[l.uid];
-      b.ymdSet.add(l.ymd);
+      b.ymdMap[l.ymd]=l.ts||null;
       if(!b.lastYmd || l.ymd > b.lastYmd){ b.lastYmd=l.ymd; b.lastTs=l.ts||null; }
     });
 
-    const accountList = editorUids.map((uid)=>{
-      const u=users[uid];
+    const accountList = allUids.map((uid)=>{
+      const u=users[uid]||{};
       const info=byUid[uid];
-      const recent30=[...info.ymdSet].filter((y)=> y>=cutoff30).length;
+      const ymdList=Object.keys(info.ymdMap);
+      const recent30=ymdList.filter((y)=> y>=cutoff30).length;
+      const days=ymdList.sort().reverse().map((ymd)=>({ymd, ts:info.ymdMap[ymd]}));
       return {
         uid, email:u.email||"", name:u.name||"", dept:u.dept||"", engcd:u.engcd||"",
+        role: String(u.role||"").trim().toLowerCase(),
         lastYmd: info.lastYmd, lastTs: info.lastTs,
-        total: info.ymdSet.size, recent30,
+        total: ymdList.length, recent30,
+        days,
+        ymdSet: new Set(ymdList),
       };
     }).sort((a,b)=> (b.lastYmd||"").localeCompare(a.lastYmd||""));
 
     const dayList=[];
     for(let i=29;i>=0;i--){
       const y=addDaysYmd8(todayYmd, -i);
-      const count=new Set(logs.filter((l)=> l && l.ymd===y && editorSet.has(l.uid)).map((l)=>l.uid)).size;
+      const count=new Set(logs.filter((l)=> l && l.ymd===y && allSet.has(l.uid)).map((l)=>l.uid)).size;
       dayList.push({ymd:y, count});
     }
 
@@ -3856,6 +3864,36 @@ function LoginUsageModal({onClose, employees}){
     }
     const namePart=[a.name, a.dept].filter(Boolean).join(" ");
     return namePart ? namePart+"（"+loginIdOf(a)+"）" : (a.email || loginIdOf(a));
+  };
+
+  // 利用日の一覧・ヒートマップ表示用のヘルパー
+  const WEEKDAY_JP=["日","月","火","水","木","金","土"];
+  const ymdLabelFull=(ymd)=>{
+    const dt=ymdToDate(ymd);
+    return ymd.slice(0,4)+"/"+parseInt(ymd.slice(4,6),10)+"/"+parseInt(ymd.slice(6,8),10)+"（"+WEEKDAY_JP[dt.getDay()]+"）";
+  };
+  const fmtTimeOnly=(ts)=>{
+    if(!ts || typeof ts.toDate!=="function") return "";
+    const d=ts.toDate();
+    const pad=(n)=>String(n).padStart(2,"0");
+    return pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds());
+  };
+  // 直近12週ぶんの週×曜日グリッドを作る（日曜始まり）。今週は進行中なので未来の日は"future"扱いにする。
+  const buildWeekGrid=(ymdSet)=>{
+    const today=new Date(); today.setHours(0,0,0,0);
+    const thisSunday=new Date(today); thisSunday.setDate(today.getDate()-today.getDay());
+    const weeks=[];
+    for(let w=11; w>=0; w--){
+      const weekStart=new Date(thisSunday); weekStart.setDate(thisSunday.getDate()-w*7);
+      const days=[];
+      for(let dow=0; dow<7; dow++){
+        const d=new Date(weekStart); d.setDate(weekStart.getDate()+dow);
+        const ymd=dateToYmd8(d);
+        days.push({ymd, used: ymdSet.has(ymd), future: d>today});
+      }
+      weeks.push(days);
+    }
+    return weeks;
   };
 
   const startLink=(a)=>{ setEditingLinkUid(a.uid); setLinkDraft(a.engcd||""); setLinkError(""); };
@@ -3923,7 +3961,7 @@ function LoginUsageModal({onClose, employees}){
 
             <div style={{fontSize:13, fontWeight:700, marginBottom:8}}>アカウント別</div>
             <p style={{fontSize:11.5,color:"var(--muted2)",marginTop:0,marginBottom:8}}>
-              「紐づけ」で技術者コードを設定すると、技術者在籍・所属管理の氏名・所属がアカウント名として表示されます（パスワードに使われているコードを入力してください）。
+              「紐づけ」で技術者コードを設定すると、技術者在籍・所属管理の氏名・所属がアカウント名として表示されます（パスワードに使われているコードを入力してください）。閲覧のみ（編集権限なし）のアカウントには「閲覧のみ」と表示されます。名前をクリックすると利用日の一覧を表示します。
             </p>
             <div className="master-list">
               <div className="master-row master-row-head" style={{gridTemplateColumns:"1fr 170px 110px 100px 220px"}}>
@@ -3933,12 +3971,23 @@ function LoginUsageModal({onClose, employees}){
                 <span>累計</span>
                 <span>紐づけ（技術者コード）</span>
               </div>
-              {accounts.length===0 && <div className="empty" style={{padding:16}}>編集権限のあるアカウントがありません</div>}
+              {accounts.length===0 && <div className="empty" style={{padding:16}}>ログイン記録のあるアカウントがありません</div>}
               {accounts.map((a)=>{
                 const isLinking=editingLinkUid===a.uid;
+                const isExpanded=expandedUid===a.uid;
+                const weekGrid = isExpanded ? buildWeekGrid(a.ymdSet) : null;
                 return (
                   <div key={a.uid} className="master-row" style={{gridTemplateColumns:"1fr 170px 110px 100px 220px"}}>
-                    <span className="m-name">{accountLabel(a)}</span>
+                    <span className="m-name" style={{cursor:"pointer", display:"flex", alignItems:"center", gap:5}}
+                      onClick={()=>setExpandedUid((u)=> u===a.uid ? null : a.uid)}
+                      title="クリックで利用日の一覧を表示">
+                      {isExpanded ? <Ic.Down size={12}/> : <Ic.Right size={12}/>}
+                      {accountLabel(a)}
+                      {a.role!=="editor" &&
+                        <span style={{fontSize:9, fontWeight:700, color:"var(--muted2)", background:"var(--panel-raised)",
+                          border:"1px solid var(--line)", borderRadius:999, padding:"2px 7px", flex:"0 0 auto"}}>閲覧のみ</span>
+                      }
+                    </span>
                     <span style={{fontSize:12.5, color:"var(--muted)"}}>{a.lastTs ? fmtLoginTs(a.lastTs) : (a.lastYmd ? a.lastYmd.replace(/^(\d{4})(\d{2})(\d{2})$/,"$1/$2/$3") : "記録なし")}</span>
                     <span>{a.recent30}日</span>
                     <span>{a.total}日</span>
@@ -3958,6 +4007,51 @@ function LoginUsageModal({onClose, employees}){
                       </span>
                     )}
                     {isLinking && linkError && <span style={{gridColumn:"1 / -1", color:"var(--red)", fontSize:11.5}}>{linkError}</span>}
+                    {isExpanded &&
+                      <div style={{gridColumn:"1 / -1", marginTop:10, paddingTop:10, borderTop:"1px solid var(--line-soft)"}}>
+                        <div style={{display:"flex", gap:10, marginBottom:12}}>
+                          <div style={{background:"var(--panel-raised)", borderRadius:8, padding:"8px 14px"}}>
+                            <div style={{fontSize:10.5, color:"var(--muted)"}}>直近30日の利用日数</div>
+                            <div style={{fontSize:17, fontWeight:800}}>{a.recent30}日</div>
+                          </div>
+                          <div style={{background:"var(--panel-raised)", borderRadius:8, padding:"8px 14px"}}>
+                            <div style={{fontSize:10.5, color:"var(--muted)"}}>累計利用日数</div>
+                            <div style={{fontSize:17, fontWeight:800}}>{a.total}日</div>
+                          </div>
+                        </div>
+
+                        <div style={{fontSize:11.5, fontWeight:700, marginBottom:6, color:"var(--muted)"}}>直近12週（■＝利用あり）</div>
+                        <div style={{display:"flex", gap:3, marginBottom:16}}>
+                          <div style={{display:"flex", flexDirection:"column", gap:3, marginRight:4}}>
+                            {WEEKDAY_JP.map((w)=>(
+                              <div key={w} style={{fontSize:9, color:"var(--muted2)", width:11, height:11, lineHeight:"11px"}}>{w}</div>
+                            ))}
+                          </div>
+                          <div style={{display:"flex", gap:3}}>
+                            {weekGrid.map((week,wi)=>(
+                              <div key={wi} style={{display:"flex", flexDirection:"column", gap:3}}>
+                                {week.map((day,di)=>(
+                                  <div key={di} title={day.future ? "" : ymdLabelFull(day.ymd)+(day.used?"：利用あり":"：利用なし")}
+                                    style={{width:11, height:11, borderRadius:2,
+                                      background: day.future ? "transparent" : (day.used ? "var(--accent)" : "var(--line-soft)")}}/>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div style={{fontSize:11.5, fontWeight:700, marginBottom:6, color:"var(--muted)"}}>利用日（新しい順・その日最初に開いた時刻）</div>
+                        <div style={{maxHeight:180, overflowY:"auto", display:"flex", flexDirection:"column", gap:4}}>
+                          {a.days.length===0 && <div style={{fontSize:12, color:"var(--muted2)"}}>記録がありません</div>}
+                          {a.days.map((d)=>(
+                            <div key={d.ymd} style={{fontSize:12, color:"var(--muted)", display:"flex", gap:10}}>
+                              <span style={{width:130, flex:"0 0 auto"}}>{ymdLabelFull(d.ymd)}</span>
+                              <span>{fmtTimeOnly(d.ts)}{d.ts ? "〜" : ""}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    }
                   </div>
                 );
               })}
@@ -4244,11 +4338,18 @@ function App(){
             setTimeout(()=>setToast(""), 6000);
           }
           // ログイン・利用状況の記録（同じ日に何度ログインしても1日1回として扱う）。
+          // 時刻（ts）はその日最初のログイン時刻を保持する（2回目以降のログインでは上書きしない）。
           // 失敗してもログイン自体には影響させない。
           try{
             const ymd=ymdNow8();
             await setDoc(doc(db, "users", user.uid), {email:user.email||""}, {merge:true});
-            await setDoc(doc(db, "loginLogs", user.uid+"_"+ymd), {uid:user.uid, email:user.email||"", ymd, ts:serverTimestamp()}, {merge:true});
+            const logRef=doc(db, "loginLogs", user.uid+"_"+ymd);
+            const logSnap=await getDoc(logRef);
+            if(logSnap.exists()){
+              await setDoc(logRef, {uid:user.uid, email:user.email||"", ymd}, {merge:true});
+            } else {
+              await setDoc(logRef, {uid:user.uid, email:user.email||"", ymd, ts:serverTimestamp()});
+            }
           }catch(e){
             console.error("ログイン記録に失敗:", e);
           }
