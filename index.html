@@ -3798,6 +3798,11 @@ function LoginUsageModal({onClose, employees}){
     const allUids = [...new Set([...Object.keys(users), ...logUids])];
     const allSet = new Set(allUids);
 
+    // users/{uid}はセキュリティルールでクライアントからの書き込みを禁止しているため、
+    // emailがコンソールで手動設定されていないアカウントは空になる。その場合はログ記録に含まれるemailで補う。
+    const emailFromLogs={};
+    logs.forEach((l)=>{ if(l && l.uid && l.email && !emailFromLogs[l.uid]) emailFromLogs[l.uid]=l.email; });
+
     const todayYmd = ymdNow8();
     const cutoff30 = addDaysYmd8(todayYmd, -29);
 
@@ -3828,7 +3833,7 @@ function LoginUsageModal({onClose, employees}){
       const recent30=ymdList.filter((y)=> y>=cutoff30).length;
       const days=ymdList.sort().reverse().map((ymd)=>({ymd, ts:info.ymdMap[ymd]}));
       return {
-        uid, email:u.email||"", name:u.name||"", dept:u.dept||"", engcd:u.engcd||"",
+        uid, email:u.email||emailFromLogs[uid]||"", name:u.name||"", dept:u.dept||"", engcd:u.engcd||"",
         role: String(u.role||"").trim().toLowerCase(),
         lastYmd: info.lastYmd, lastTs: info.lastTs,
         total: ymdList.length, recent30,
@@ -4351,10 +4356,12 @@ function App(){
           // ログイン・利用状況の記録（ログインのたびに1件記録する。同じ日の分は集計側でまとめて1日としてカウントする）。
           // あえて書き込み専用にしている：事前にgetDocで既存有無を確認する方式だと、Firestoreのセキュリティルール次第で
           // 「読み取り」だけ権限が無く失敗する可能性があり（書き込み権限はあるのに）、その場合ログイン記録ごと失われてしまうため。
+          // 注：users/{uid}コレクションはセキュリティルールでクライアントからの書き込みを一切禁止している
+          // （権限管理はFirebaseコンソールから手動で行う運用のため）。以前はここで users にもemailを書き込んでいたが、
+          // そのsetDocが必ず権限エラーで失敗し、後続のloginLogsへの書き込みまで巻き込んで失敗させてしまっていたため削除した。
           // 失敗してもログイン自体には影響させない。
           try{
             const ymd=ymdNow8();
-            await setDoc(doc(db, "users", user.uid), {email:user.email||""}, {merge:true});
             const logId=user.uid+"_"+ymd+"_"+Date.now();
             await setDoc(doc(db, "loginLogs", logId), {uid:user.uid, email:user.email||"", ymd, ts:serverTimestamp()});
           }catch(e){
