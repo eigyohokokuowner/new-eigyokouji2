@@ -811,11 +811,15 @@ const REQUIRED_QUAL_DEFS=[
   {name:"電気工事施工管理技士（１級）", kind:"license"},
   {name:"電気工事施工管理技士（２級）", kind:"license"},
 ];
-// 配置候補検索「所属部」フィルターの固定選択肢（「その他」は下記以外に該当する場合のフォールバック）
-const DEPT_CATEGORIES=["製造部","営業部","技術推進部","技術部","工事部","品質保証部","総務部","開発室","原価管理室"];
+// 配置候補検索「所属部」フィルターの固定選択肢（「その他」は下記以外に該当する場合のフォールバック）。
+// 「製造部」は所属（肩書）の「製造部」の次の区分が「本社工場」かどうかで、本社工場／本社工場以外の2つに分けている。
+const DEPT_CATEGORIES=["製造部　本社工場","製造部　本社工場以外","営業部","技術推進部","技術部","工事部","品質保証部","総務部","開発室","原価管理室"];
 function deptCategoryMatches(deptText, category){
   const s=deptText||"";
-  if(category==="その他") return !DEPT_CATEGORIES.some((c)=> s.includes(c));
+  // 「製造部」の次（空白を挟んで、または直後に）「本社工場」が続いているかどうかで判定する。
+  if(category==="製造部　本社工場") return /製造部\s*本社工場/.test(s);
+  if(category==="製造部　本社工場以外") return s.includes("製造部") && !/製造部\s*本社工場/.test(s);
+  if(category==="その他") return !DEPT_CATEGORIES.some((c)=> deptCategoryMatches(s, c));
   return s.includes(category);
 }
 // 生年月日(YYYYMMDD)から、基準日(asOf, 未指定なら本日)時点の満年齢を計算する
