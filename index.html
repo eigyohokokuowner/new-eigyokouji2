@@ -4611,7 +4611,7 @@ function App(){
   // 検討リスト保存時に「技術者リスト」として凍結保存するスナップショットを作る。
   // 検討リストに入れた人は技術者リストから除く。実績なし＝黄、受注工事で専任配置あり＝赤（両方当てはまる場合は赤を優先）。
   const buildTechnicianListSnapshot=()=>{
-    return sortedResults
+    return exportCandidatePool
       .filter((r)=>!isInConsiderList(r.engcd))
       .map((r)=>({
         engcd: r.engcd,
@@ -5112,7 +5112,11 @@ function App(){
     return map;
   },[datasets.englicense]);
 
-  const results=useMemo(()=>{
+  // 技術者候補の母集団を組み立てる。applyDisplayFilters=true は画面表示用（実績確認状況・検討リスト追加済み・
+  // 受注工事で専任配置が重複する技術者を除く、など「見やすくするための絞り込み」まで適用した結果＝results。
+  // applyDisplayFilters=false はそれらの絞り込みを適用しない「技術者要件にさえ合致していれば含む」候補プールで、
+  // Excel／まとめ資料の技術者リスト（黄＝据付実績なし・赤＝受注工事で専任配置重複、を見せるための母集団）に使う。
+  const computeCandidatePool=(applyDisplayFilters)=>{
     if(!requiredLoaded || !searched) return [];
     const keikMinN = keikMin==="" ? null : parseFloat(keikMin);
     const heighMinN = heighMin==="" ? null : parseFloat(heighMin);
@@ -5164,7 +5168,8 @@ function App(){
 
       if(selectedEngcds.length && !selectedEngcds.includes(engRow.ENGCD)) return;
 
-      if(excludeAwardedDutyOverlap && excludedForAwardedDutyOverlap.has(engRow.ENGCD)) return;
+      // 「受注工事で専任配置が重複する技術者を除く」は技術者要件そのものではなく画面表示の絞り込みのため、
+      // ここでは候補プールから外さない（下の最終フィルターでapplyDisplayFilters=trueのときだけ適用する）。
 
       if(!includeRetired){
         const emp=employeeMap[engRow.ENGCD];
@@ -5357,7 +5362,7 @@ function App(){
     // 「配置データ上は現場代理人として重複しているが、CORINS実績が無い（または今回の年度等の条件に合致する実績が無い）技術者」が
     // 一覧に一切出てこない。そこで、これらのフィルターがONの間だけ、配置データ（assignRowsByEngcd）を直接見て、
     // 対象の重複条件に合致する技術者を候補に追加する（技術者単位の条件のみ適用し、工事単位の条件＝年度・分野・役割・ゲート種別等は適用しない）。
-    if((agentFilterMode==="show" || (areaOnlyFilter && selectedBranch)) && hasAssignFilter){
+    if(applyDisplayFilters && (agentFilterMode==="show" || (areaOnlyFilter && selectedBranch)) && hasAssignFilter){
       Object.keys(assignRowsByEngcd).forEach((engcd)=>{
         if(byEngineer[engcd]) return; // 既にCORINS実績側で候補に入っている場合はそちらの情報をそのまま使う
         if(selectedEngcds.length && !selectedEngcds.includes(engcd)) return;
@@ -5438,7 +5443,13 @@ function App(){
       r.excludedForAwardedDutyOverlap = excludedForAwardedDutyOverlap.has(r.engcd);
     });
 
-    return Object.values(byEngineer)
+    const pool=Object.values(byEngineer);
+    if(!applyDisplayFilters){
+      // Excel／まとめ資料用の候補プール：技術者要件にさえ合致していれば、確認状況・受注重複などの
+      // 表示絞り込みに関わらず全員含める（黄＝据付実績なし・赤＝受注重複、の対象者を落とさないため）。
+      return pool.sort((a,b)=>b.entries.length-a.entries.length);
+    }
+    return pool
       .filter((r)=>{
         // 「指定期間内で当エリアに従事する工事のみ表示」：配置予定期間と重複している工事（assignConflicts）のうち、
         // 選んだ支店のものを1件以上持つ人物のみ残す（支店未選択、または配置予定期間未指定の場合は絞り込みしない）。
@@ -5460,16 +5471,25 @@ function App(){
         }
         // 配置検討リストに追加済みの技術者のみ表示
         if(considerListOnlyFilter && !isInConsiderList(r.engcd)) return false;
+        // 「受注工事で専任配置が重複する技術者を除く」：画面表示（results）側でのみ除外する。
+        // 候補プール（applyDisplayFilters=false）側では残しておき、Excel等で赤表示の対象にする。
+        if(excludeAwardedDutyOverlap && r.excludedForAwardedDutyOverlap) return false;
         return true;
       })
       .sort((a,b)=>b.entries.length-a.entries.length);
-  },[requiredLoaded, searched, datasets, projectIndex, fyFrom, fyFromMonth, fyTo, fyToMonth, selectedRoles,
+  };
+  const candidatePoolDeps=[requiredLoaded, searched, datasets, projectIndex, fyFrom, fyFromMonth, fyTo, fyToMonth, selectedRoles,
      selectedBunya, selectedGateCategory, selectedGateType, selectedGateStructure, selectedKaihei, gateHierarchyByCode,
      keikMin, heighMin, areaMin, areaIncludeSuis, suisMin, syusMin, horyuMin, pointMin, ageMin, ageMax, ageAsOf, selectedDept,
      assignDateFrom, assignDateTo, dutyOnlyFilter, excludeAwardedDutyOverlap, assignRowsByEngcd, dutyAssignIndex, selectedEngcds,
      employeeMap, literalMap, includeRetired, includeOfficeTech, femaleOnly, selectedBranch, areaOnlyFilter, agentFilterMode,
      statusFilter, considerListOnlyFilter, considerList,
-     selectedLicenses, licenseMode, enginfoByEngcd, liccdByNormName, employeeLicMap, verifiedMap, sessionVerified, certLinksByEngcd, kanriCertByEngcd]);
+     selectedLicenses, licenseMode, enginfoByEngcd, liccdByNormName, employeeLicMap, verifiedMap, sessionVerified, certLinksByEngcd, kanriCertByEngcd];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const results=useMemo(()=>computeCandidatePool(true), candidatePoolDeps);
+  // Excel／まとめ資料の「技術者リスト」専用：表示絞り込み（実績確認状況・検討リスト追加済み・受注重複を除く等）の影響を受けない候補プール。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const exportCandidatePool=useMemo(()=>computeCandidatePool(false), candidatePoolDeps);
 
   const sortedResults=useMemo(()=>{
     if(sortMode==="default") return results;
