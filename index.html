@@ -1284,6 +1284,115 @@ function writeConsiderListSection(sheet, startRow, section){
   return row;
 }
 
+// 1つの工事につき最大4件（製作/据付 × 現場代理人/監理技術者）の検討を1シートに横並びでまとめて書き込む
+// （「まとめ資料」用）。各検討は氏名・年齢の2列を使い、技術者要件／検討リスト／技術者リストの各ブロックの
+// 開始行は、4件のうち最も行数が多いものに揃える（短い検討は単に空欄のまま）。
+// sections は必ず4件（SUMMARY_DOC_SECTIONSの順）。見つからなかった検討は {def, found:false} とする。
+function writeSummaryDocSheet(sheet, opts){
+  const {projectTitle, overallPeriod, installTiming, sections}=opts;
+  let row=1;
+  sheet.mergeCells(row,1,row,8);
+  sheet.getCell(row,1).value=projectTitle||"";
+  sheet.getCell(row,1).font={bold:true, size:14};
+  row+=2;
+  sheet.getCell(row,1).value="全体工期："+(overallPeriod||"-");
+  row+=1;
+  sheet.getCell(row,1).value="据付時期："+(installTiming||"-");
+  row+=2;
+
+  const headerRow=row;
+  sections.forEach((s,i)=>{
+    const col=1+2*i;
+    sheet.getCell(headerRow,col).value=s.def.label;
+    sheet.getCell(headerRow,col).font={bold:true, size:13};
+  });
+  row+=1;
+
+  const reqRow=row;
+  sections.forEach((s,i)=>{
+    const col=1+2*i;
+    sheet.getCell(reqRow,col).value="技術者要件";
+    sheet.getCell(reqRow,col).font={bold:true};
+    sheet.getCell(reqRow,col).fill=EXCEL_FILL_HEADER;
+  });
+  row+=1;
+
+  const reqLinesStart=row;
+  const reqLines=sections.map((s)=> s.found ? (s.summaryLines.length ? s.summaryLines : ["（条件の指定なし）"]) : ["（保存された検討リストなし）"]);
+  const maxReqLines=Math.max(1, ...reqLines.map((l)=>l.length));
+  sections.forEach((s,i)=>{
+    const col=1+2*i;
+    reqLines[i].forEach((line,li)=>{ sheet.getCell(reqLinesStart+li,col).value=line; });
+  });
+  row=reqLinesStart+maxReqLines+1;
+
+  const considerHeaderRow=row;
+  const sortedConsider=sections.map((s)=> s.found ? sortByAgeDesc(s.considerList) : []);
+  sections.forEach((s,i)=>{
+    const col=1+2*i;
+    sheet.getCell(considerHeaderRow,col).value="検討リスト（"+sortedConsider[i].length+"名）";
+    sheet.getCell(considerHeaderRow,col).font={bold:true};
+    sheet.getCell(considerHeaderRow,col).fill=EXCEL_FILL_HEADER;
+  });
+  row+=1;
+  const considerColHeaderRow=row;
+  sections.forEach((s,i)=>{
+    const col=1+2*i;
+    sheet.getCell(considerColHeaderRow,col).value="氏名"; sheet.getCell(considerColHeaderRow,col).font={bold:true};
+    sheet.getCell(considerColHeaderRow,col+1).value="年齢"; sheet.getCell(considerColHeaderRow,col+1).font={bold:true};
+  });
+  row+=1;
+  const considerDataStart=row;
+  sections.forEach((s,i)=>{
+    const col=1+2*i;
+    sortedConsider[i].forEach((r,ri)=>{
+      sheet.getCell(considerDataStart+ri,col).value=r.name||"";
+      sheet.getCell(considerDataStart+ri,col+1).value=(r.age===null||r.age===undefined) ? "" : r.age;
+    });
+  });
+  const maxConsider=Math.max(0, ...sortedConsider.map((l)=>l.length));
+  row=considerDataStart+maxConsider+1;
+
+  const techHeaderRow=row;
+  const sortedTech=sections.map((s)=> s.found ? sortByAgeDesc(s.technicianList) : []);
+  sections.forEach((s,i)=>{
+    const col=1+2*i;
+    sheet.getCell(techHeaderRow,col).value="技術者リスト（"+sortedTech[i].length+"名）";
+    sheet.getCell(techHeaderRow,col).font={bold:true};
+    sheet.getCell(techHeaderRow,col).fill=EXCEL_FILL_HEADER;
+  });
+  row+=1;
+  const techColHeaderRow=row;
+  sections.forEach((s,i)=>{
+    const col=1+2*i;
+    sheet.getCell(techColHeaderRow,col).value="氏名"; sheet.getCell(techColHeaderRow,col).font={bold:true};
+    sheet.getCell(techColHeaderRow,col+1).value="年齢"; sheet.getCell(techColHeaderRow,col+1).font={bold:true};
+  });
+  row+=1;
+  const techDataStart=row;
+  sections.forEach((s,i)=>{
+    const col=1+2*i;
+    sortedTech[i].forEach((r,ri)=>{
+      const nameCell=sheet.getCell(techDataStart+ri,col);
+      const ageCell=sheet.getCell(techDataStart+ri,col+1);
+      nameCell.value=r.name||"";
+      ageCell.value=(r.age===null||r.age===undefined) ? "" : r.age;
+      if(r.highlight==="yellow"){ nameCell.fill=EXCEL_FILL_YELLOW; ageCell.fill=EXCEL_FILL_YELLOW; }
+      if(r.highlight==="red"){ nameCell.fill=EXCEL_FILL_RED; ageCell.fill=EXCEL_FILL_RED; }
+    });
+  });
+  const maxTech=Math.max(0, ...sortedTech.map((l)=>l.length));
+  row=techDataStart+maxTech+2;
+
+  sheet.getCell(row,1).value="＊黄色＝該当実績なし（実績はあるが確認ではすべて×だった人）";
+  row+=1;
+  sheet.getCell(row,1).value="＊赤色＝受注工事で専任配置が重複する技術者（現在別の受注工事に専任で配置されている人）";
+
+  sheet.columns=[
+    {width:36},{width:9},{width:36},{width:9},{width:36},{width:9},{width:36},{width:9},
+  ];
+}
+
 async function downloadWorkbook(wb, filename){
   const buffer=await wb.xlsx.writeBuffer();
   const blob=new Blob([buffer], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
@@ -4775,38 +4884,39 @@ function App(){
     setGeneratingSummaryDoc(true);
     try{
       const matches=(savedListsIndex||[]).filter((it)=>it.koban===koban);
+      // 4つの枠（製作/据付 × 現場代理人/監理技術者）すべてについて、保存されていない枠も含めて必ず4件生成する
+      // （「まとめ」シートで、見つからなかった枠には見出しとプレースホルダーだけを表示するため）。
       const sections=[];
       for(const def of SUMMARY_DOC_SECTIONS){
         const hit=matches.find((it)=>it.stage===def.stage && it.role===def.role);
-        if(!hit) continue;
+        if(!hit){
+          sections.push({def, found:false, title:null, summaryLines:[], considerList:[], considerRole:{}, technicianList:[]});
+          continue;
+        }
         const data=await loadConsiderListFromFirestore(hit.id);
         sections.push({
-          def, title: data.title,
+          def, found:true, title: data.title,
           summaryLines: filtersToSummaryLines(data.filters),
           considerList: data.candidates||[], considerRole: data.roles||{},
           technicianList: data.technicianList||[],
         });
       }
-      if(sections.length===0){
+      if(!sections.some((s)=>s.found)){
         setToast("「"+koban+"」に紐づく検討リストが見つかりませんでした（保存時に工事・段階・役割のタグを設定してください）");
         setTimeout(()=>setToast(""),5000);
         setGeneratingSummaryDoc(false);
         return;
       }
       const wb=new window.ExcelJS.Workbook();
-      const cover=wb.addWorksheet("表紙");
-      let row=1;
-      cover.getCell(row,1).value=koban; cover.getCell(row,1).font={bold:true,size:14}; row+=2;
-      cover.getCell(row,1).value="全体工期："+(summaryDocPeriod.trim()||"-"); row+=1;
-      cover.getCell(row,1).value="据付時期："+(summaryDocInstallTiming.trim()||"-"); row+=2;
-      cover.getCell(row,1).value="配置候補者のお伺い資料"; row+=2;
-      cover.getCell(row,1).value="収録している検討："; row+=1;
-      sections.forEach((s)=>{ cover.getCell(row,1).value="・"+s.def.label+"（「"+s.title+"」）"; row+=1; });
-      SUMMARY_DOC_SECTIONS.filter((def)=>!sections.some((s)=>s.def===def)).forEach((def)=>{
-        cover.getCell(row,1).value="・"+def.label+"（保存された検討リストなし）"; row+=1;
+      const sumSheet=wb.addWorksheet("まとめ");
+      writeSummaryDocSheet(sumSheet, {
+        projectTitle: koban,
+        overallPeriod: summaryDocPeriod.trim(),
+        installTiming: summaryDocInstallTiming.trim(),
+        sections,
       });
-      cover.columns=[{width:60}];
-      sections.forEach((s)=>{
+      // 参考として、見つかった検討ごとの詳細（検討中の配置の内訳つき）シートも併せて収録する。
+      sections.filter((s)=>s.found).forEach((s)=>{
         const sheet=wb.addWorksheet(s.def.label.slice(0,31));
         writeConsiderListSection(sheet, 1, {
           heading:s.def.label, summaryLines:s.summaryLines,
