@@ -1212,8 +1212,21 @@ const EXCEL_FILL_RED={type:"pattern", pattern:"solid", fgColor:{argb:"FFFFC7CE"}
 const EXCEL_FILL_HEADER={type:"pattern", pattern:"solid", fgColor:{argb:"FFE8E8E8"}};
 
 // 1件分の検討（技術者要件／検討リスト／技術者リスト）をワークシートに書き込み、使い終わった次の行番号を返す。
+// 年齢が高い順に並べ替える。年齢不明（null/undefined）は末尾に回す。
+function sortByAgeDesc(list){
+  return (list||[]).slice().sort((a,b)=>{
+    const an=(a.age===null||a.age===undefined), bn=(b.age===null||b.age===undefined);
+    if(an && bn) return 0;
+    if(an) return 1;
+    if(bn) return -1;
+    return b.age-a.age;
+  });
+}
+
 function writeConsiderListSection(sheet, startRow, section){
-  const {heading, summaryLines, considerList, considerRole, technicianList}=section;
+  const {heading, summaryLines, considerRole}=section;
+  const considerList=sortByAgeDesc(section.considerList);
+  const technicianList=sortByAgeDesc(section.technicianList);
   let row=startRow;
   if(heading){
     sheet.getCell(row,1).value=heading;
