@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
   import {
@@ -1143,7 +1144,7 @@ function considerListDocId(title){
 function stripUndefinedForFirestore(value){
   return JSON.parse(JSON.stringify(value));
 }
-async function saveConsiderListToFirestore(title, considerList, considerRole, filters){
+async function saveConsiderListToFirestore(title, considerList, considerRole, filters, tags, technicianList, sessionVerified){
   await waitForFirebase();
   if(!window.fb) throw new Error("Firestoreに接続できません");
   const {db, doc, setDoc}=window.fb;
@@ -1154,6 +1155,15 @@ async function saveConsiderListToFirestore(title, considerList, considerRole, fi
     candidates: stripUndefinedForFirestore(considerList),
     roles: stripUndefinedForFirestore(considerRole),
     filters: stripUndefinedForFirestore(filters||null),
+    // 工事（工番・案件名）・段階（製作／据付）・役割（現場代理人／監理技術者等）のタグ。
+    // 同じ工事の4パターン（製作/据付 × 現場代理人/監理技術者）の検討リストをまとめ資料にする際に使う。
+    koban: String((tags&&tags.koban)||"").trim(),
+    stage: String((tags&&tags.stage)||""),
+    role: String((tags&&tags.role)||""),
+    // 保存した瞬間の技術者リスト（検討リストに入っていない候補者。Excel出力用に固定したスナップショット）。
+    technicianList: stripUndefinedForFirestore(technicianList||[]),
+    // あいまいな実績確認状況（このセッション内でのみ保持されていたもの）のスナップショット。
+    sessionVerified: stripUndefinedForFirestore(sessionVerified||{}),
   });
   return id;
 }
@@ -1170,6 +1180,7 @@ async function listConsiderListsFromFirestore(){
       title: data.title || d.id,
       updatedAt: data.updatedAt || 0,
       count: (data.candidates||[]).length,
+      koban: data.koban||"", stage: data.stage||"", role: data.role||"",
     });
   });
   out.sort((a,b)=> b.updatedAt-a.updatedAt);
@@ -1182,13 +1193,87 @@ async function loadConsiderListFromFirestore(id){
   const snap=await getDoc(doc(db,"considerLists",id));
   if(!snap.exists()) throw new Error("見つかりませんでした");
   const data=snap.data();
-  return {title: data.title||id, candidates: data.candidates||[], roles: data.roles||{}, filters: data.filters||null};
+  return {
+    title: data.title||id, candidates: data.candidates||[], roles: data.roles||{}, filters: data.filters||null,
+    koban: data.koban||"", stage: data.stage||"", role: data.role||"",
+    technicianList: data.technicianList||[], sessionVerified: data.sessionVerified||{},
+  };
 }
 async function deleteConsiderListFromFirestore(id){
   await waitForFirebase();
   if(!window.fb) throw new Error("Firestoreに接続できません");
   const {db, doc, deleteDoc}=window.fb;
   await deleteDoc(doc(db,"considerLists",id));
+}
+
+/* ---------------- 配置検討リストのExcel出力（ExcelJS） ---------------- */
+const EXCEL_FILL_YELLOW={type:"pattern", pattern:"solid", fgColor:{argb:"FFFFF2A8"}};
+const EXCEL_FILL_RED={type:"pattern", pattern:"solid", fgColor:{argb:"FFFFC7CE"}};
+const EXCEL_FILL_HEADER={type:"pattern", pattern:"solid", fgColor:{argb:"FFE8E8E8"}};
+
+// 1件分の検討（技術者要件／検討リスト／技術者リスト）をワークシートに書き込み、使い終わった次の行番号を返す。
+function writeConsiderListSection(sheet, startRow, section){
+  const {heading, summaryLines, considerList, considerRole, technicianList}=section;
+  let row=startRow;
+  if(heading){
+    sheet.getCell(row,1).value=heading;
+    sheet.getCell(row,1).font={bold:true, size:13};
+    row+=2;
+  }
+  sheet.getCell(row,1).value="技術者要件";
+  sheet.getCell(row,1).font={bold:true};
+  sheet.getCell(row,1).fill=EXCEL_FILL_HEADER;
+  row+=1;
+  (summaryLines && summaryLines.length ? summaryLines : ["（条件の指定なし）"]).forEach((line)=>{
+    sheet.getCell(row,1).value=line;
+    row+=1;
+  });
+  row+=1;
+  sheet.getCell(row,1).value="検討リスト（"+considerList.length+"名）";
+  sheet.getCell(row,1).font={bold:true};
+  sheet.getCell(row,1).fill=EXCEL_FILL_HEADER;
+  row+=1;
+  sheet.getCell(row,1).value="氏名"; sheet.getCell(row,2).value="年齢"; sheet.getCell(row,3).value="検討中の配置";
+  [1,2,3].forEach((c)=>{ sheet.getCell(row,c).font={bold:true}; });
+  row+=1;
+  considerList.forEach((r)=>{
+    const cr=(considerRole && considerRole[r.engcd]) || {};
+    sheet.getCell(row,1).value=r.name || "";
+    sheet.getCell(row,2).value=(r.age===null || r.age===undefined) ? "" : r.age;
+    sheet.getCell(row,3).value=[cr.kubun, cr.role].filter(Boolean).join("／");
+    row+=1;
+  });
+  row+=1;
+  sheet.getCell(row,1).value="技術者リスト（"+technicianList.length+"名）";
+  sheet.getCell(row,1).font={bold:true};
+  sheet.getCell(row,1).fill=EXCEL_FILL_HEADER;
+  row+=1;
+  sheet.getCell(row,1).value="氏名"; sheet.getCell(row,2).value="年齢";
+  [1,2].forEach((c)=>{ sheet.getCell(row,c).font={bold:true}; });
+  row+=1;
+  technicianList.forEach((r)=>{
+    sheet.getCell(row,1).value=r.name || "";
+    sheet.getCell(row,2).value=(r.age===null || r.age===undefined) ? "" : r.age;
+    if(r.highlight==="yellow"){ sheet.getCell(row,1).fill=EXCEL_FILL_YELLOW; sheet.getCell(row,2).fill=EXCEL_FILL_YELLOW; }
+    if(r.highlight==="red"){ sheet.getCell(row,1).fill=EXCEL_FILL_RED; sheet.getCell(row,2).fill=EXCEL_FILL_RED; }
+    row+=1;
+  });
+  row+=1;
+  sheet.getCell(row,1).value="＊黄色＝該当実績なし（実績はあるが確認ではすべて×だった人）";
+  row+=1;
+  sheet.getCell(row,1).value="＊赤色＝受注工事で専任配置が重複する技術者（現在別の受注工事に専任で配置されている人）";
+  row+=1;
+  sheet.columns=[{width:24},{width:10},{width:40}];
+  return row;
+}
+
+async function downloadWorkbook(wb, filename){
+  const buffer=await wb.xlsx.writeBuffer();
+  const blob=new Blob([buffer], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url; a.download=filename; a.click();
+  URL.revokeObjectURL(url);
 }
 
 /* ---------------- small components ---------------- */
@@ -4503,22 +4588,47 @@ function App(){
 
   /* ---- 配置検討リストの保存・共有 ---- */
   const [currentListTitle,setCurrentListTitle]=useState(""); // 今読み込んでいる（＝上書き先になる）リスト名
+  // 今読み込んでいるリストの工事タグ（工番・案件名／段階／役割）。まとめ資料でリストを束ねる際のキーになる。
+  const [currentListTags,setCurrentListTags]=useState({koban:"", stage:"", role:""});
   const [showSaveDialog,setShowSaveDialog]=useState(false);
   const [saveTitleInput,setSaveTitleInput]=useState("");
+  const [saveKobanInput,setSaveKobanInput]=useState("");
+  const [saveStageInput,setSaveStageInput]=useState(""); // "製作" | "据付"
+  const [saveRoleInput,setSaveRoleInput]=useState(""); // 監理技術者／主任技術者／担当技術者／管理技術者／現場代理人／システム設計技術者
   const [savingList,setSavingList]=useState(false);
   const [showLoadDialog,setShowLoadDialog]=useState(false);
   const [savedListsIndex,setSavedListsIndex]=useState(null); // null=未取得
   const [loadingLists,setLoadingLists]=useState(false);
   const [loadingListId,setLoadingListId]=useState(null);
 
-  const openSaveDialog=()=>{ setSaveTitleInput(currentListTitle||""); setShowSaveDialog(true); };
+  const openSaveDialog=()=>{
+    setSaveTitleInput(currentListTitle||"");
+    setSaveKobanInput(currentListTags.koban||"");
+    setSaveStageInput(currentListTags.stage||"");
+    setSaveRoleInput(currentListTags.role||"");
+    setShowSaveDialog(true);
+  };
+  // 検討リスト保存時に「技術者リスト」として凍結保存するスナップショットを作る。
+  // 検討リストに入れた人は技術者リストから除く。実績なし＝黄、受注工事で専任配置あり＝赤（両方当てはまる場合は赤を優先）。
+  const buildTechnicianListSnapshot=()=>{
+    return sortedResults
+      .filter((r)=>!isInConsiderList(r.engcd))
+      .map((r)=>({
+        engcd: r.engcd,
+        name: r.name,
+        age: (r.age===null||r.age===undefined) ? null : r.age,
+        highlight: r.excludedForAwardedDutyOverlap ? "red" : (r.allRejected ? "yellow" : null),
+      }));
+  };
   const doSaveConsiderList=async()=>{
     const title=saveTitleInput.trim();
     if(!title){ setToast("タイトルを入力してください"); setTimeout(()=>setToast(""),3000); return; }
     setSavingList(true);
     try{
-      await saveConsiderListToFirestore(title, considerList, considerRole, buildFilterSnapshot());
+      const tags={koban:saveKobanInput.trim(), stage:saveStageInput, role:saveRoleInput};
+      await saveConsiderListToFirestore(title, considerList, considerRole, buildFilterSnapshot(), tags, buildTechnicianListSnapshot(), sessionVerified);
       setCurrentListTitle(title);
+      setCurrentListTags(tags);
       setShowSaveDialog(false);
       setToast("「"+title+"」として保存しました");
     }catch(e){
@@ -4550,6 +4660,9 @@ function App(){
       setConsiderList(data.candidates||[]);
       setConsiderRole(data.roles||{});
       setCurrentListTitle(data.title||"");
+      setCurrentListTags({koban:data.koban||"", stage:data.stage||"", role:data.role||""});
+      // あいまいなケースの確認マークは保存時点のものに「現在の」マークを合わせて復元する（新しく登録された実績にも気づけるよう上書きではなくマージ）。
+      setSessionVerified((prev)=>({...prev, ...(data.sessionVerified||{})}));
       applyFilterSnapshot(data.filters);
       setShowConsiderList(true);
       setShowLoadDialog(false);
@@ -4577,6 +4690,113 @@ function App(){
     setDeletingListId(null);
     setTimeout(()=>setToast(""),4500);
   };
+
+  // 今表示中の配置検討リストを1件分のExcel（技術者要件／検討リスト／技術者リスト）として出力する。
+  const doExportConsiderListExcel=async()=>{
+    if(typeof window.ExcelJS==="undefined"){
+      setToast("Excel出力用のライブラリを読み込み中です。少し待って再度お試しください");
+      setTimeout(()=>setToast(""),4000);
+      return;
+    }
+    const wb=new window.ExcelJS.Workbook();
+    const sheet=wb.addWorksheet("配置検討リスト");
+    writeConsiderListSection(sheet, 1, {
+      heading: currentListTitle || "配置検討リスト",
+      summaryLines: filtersToSummaryLines(buildFilterSnapshot()),
+      considerList, considerRole,
+      technicianList: buildTechnicianListSnapshot(),
+    });
+    await downloadWorkbook(wb, (currentListTitle||"配置検討リスト").replace(/[\\/:*?"<>|]/g,"_")+".xlsx");
+    setToast("Excelを出力しました");
+    setTimeout(()=>setToast(""),3000);
+  };
+
+  /* ---- まとめ資料（1つの工事につき最大4つの検討リストを束ねた資料）の生成 ---- */
+  const [showSummaryDocDialog,setShowSummaryDocDialog]=useState(false);
+  const [summaryDocKoban,setSummaryDocKoban]=useState("");
+  const [summaryDocPeriod,setSummaryDocPeriod]=useState(""); // 全体工期（手入力）
+  const [summaryDocInstallTiming,setSummaryDocInstallTiming]=useState(""); // 据付時期（手入力）
+  const [generatingSummaryDoc,setGeneratingSummaryDoc]=useState(false);
+  const SUMMARY_DOC_SECTIONS=[
+    {stage:"製作", role:"現場代理人", label:"製作・現場代理人"},
+    {stage:"製作", role:"監理技術者", label:"製作・監理技術者"},
+    {stage:"据付", role:"現場代理人", label:"据付・現場代理人"},
+    {stage:"据付", role:"監理技術者", label:"据付・監理技術者"},
+  ];
+  const kobanTagOptions=useMemo(()=>{
+    const set=new Set();
+    (savedListsIndex||[]).forEach((it)=>{ if(it.koban) set.add(it.koban); });
+    return [...set].sort((a,b)=>a.localeCompare(b,"ja"));
+  },[savedListsIndex]);
+  const openSummaryDocDialog=async()=>{
+    setShowSummaryDocDialog(true);
+    if(!savedListsIndex){
+      setLoadingLists(true);
+      try{ setSavedListsIndex(await listConsiderListsFromFirestore()); }
+      catch(e){ console.error("保存済みリスト一覧取得エラー:", e); setSavedListsIndex([]); }
+      setLoadingLists(false);
+    }
+  };
+  const doGenerateSummaryDoc=async()=>{
+    const koban=summaryDocKoban.trim();
+    if(!koban){ setToast("工事を選択・入力してください"); setTimeout(()=>setToast(""),3000); return; }
+    if(typeof window.ExcelJS==="undefined"){
+      setToast("Excel出力用のライブラリを読み込み中です。少し待って再度お試しください");
+      setTimeout(()=>setToast(""),4000);
+      return;
+    }
+    setGeneratingSummaryDoc(true);
+    try{
+      const matches=(savedListsIndex||[]).filter((it)=>it.koban===koban);
+      const sections=[];
+      for(const def of SUMMARY_DOC_SECTIONS){
+        const hit=matches.find((it)=>it.stage===def.stage && it.role===def.role);
+        if(!hit) continue;
+        const data=await loadConsiderListFromFirestore(hit.id);
+        sections.push({
+          def, title: data.title,
+          summaryLines: filtersToSummaryLines(data.filters),
+          considerList: data.candidates||[], considerRole: data.roles||{},
+          technicianList: data.technicianList||[],
+        });
+      }
+      if(sections.length===0){
+        setToast("「"+koban+"」に紐づく検討リストが見つかりませんでした（保存時に工事・段階・役割のタグを設定してください）");
+        setTimeout(()=>setToast(""),5000);
+        setGeneratingSummaryDoc(false);
+        return;
+      }
+      const wb=new window.ExcelJS.Workbook();
+      const cover=wb.addWorksheet("表紙");
+      let row=1;
+      cover.getCell(row,1).value=koban; cover.getCell(row,1).font={bold:true,size:14}; row+=2;
+      cover.getCell(row,1).value="全体工期："+(summaryDocPeriod.trim()||"-"); row+=1;
+      cover.getCell(row,1).value="据付時期："+(summaryDocInstallTiming.trim()||"-"); row+=2;
+      cover.getCell(row,1).value="配置候補者のお伺い資料"; row+=2;
+      cover.getCell(row,1).value="収録している検討："; row+=1;
+      sections.forEach((s)=>{ cover.getCell(row,1).value="・"+s.def.label+"（「"+s.title+"」）"; row+=1; });
+      SUMMARY_DOC_SECTIONS.filter((def)=>!sections.some((s)=>s.def===def)).forEach((def)=>{
+        cover.getCell(row,1).value="・"+def.label+"（保存された検討リストなし）"; row+=1;
+      });
+      cover.columns=[{width:60}];
+      sections.forEach((s)=>{
+        const sheet=wb.addWorksheet(s.def.label.slice(0,31));
+        writeConsiderListSection(sheet, 1, {
+          heading:s.def.label, summaryLines:s.summaryLines,
+          considerList:s.considerList, considerRole:s.considerRole, technicianList:s.technicianList,
+        });
+      });
+      await downloadWorkbook(wb, koban.replace(/[\\/:*?"<>|]/g,"_")+"_配置候補者お伺い資料.xlsx");
+      setShowSummaryDocDialog(false);
+      setToast("まとめ資料を出力しました");
+    }catch(e){
+      console.error("まとめ資料生成エラー:", e);
+      setToast("生成に失敗しました（"+(e.code||e.message||"不明なエラー")+"）");
+    }
+    setGeneratingSummaryDoc(false);
+    setTimeout(()=>setToast(""),4500);
+  };
+
   // 検索結果の並び替え：既定（該当件数順）／年齢の昇順・降順／配置予定と重複件数の昇順・降順
   const [sortMode,setSortMode]=useState("default");
   const [includeRetired,setIncludeRetired]=useState(false);
@@ -4912,8 +5132,9 @@ function App(){
     // 今回の配置予定期間（配置予定期間から〜まで）と重なっている技術者のコードを洗い出しておく。
     // ただし、その工事・その役割に自分以外にも配置されている（重複登録がある）場合は対象外とする
     // （役割が自分しかいない、綺麗に専任できている場合のみ除外の対象にする）。
+    // チェックボックスのON/OFFに関わらず常に判定しておく（Excel出力等で「受注工事で専任配置あり」の目印として使うため）。
     const excludedForAwardedDutyOverlap = new Set();
-    if(excludeAwardedDutyOverlap && hasAssignFilter){
+    if(hasAssignFilter){
       Object.keys(assignRowsByEngcd).forEach((engcd)=>{
         const hit=(assignRowsByEngcd[engcd]||[]).some((a)=>{
           if(a.kobanType!=="工番") return false; // 案件（未受注）は対象外
@@ -5212,6 +5433,9 @@ function App(){
       r.bestPoint = okPoints.length>0 ? Math.max(...okPoints) : null;
       r.certLinks = certLinksByEngcd[r.engcd] || [];
       r.kanriCertUrl = kanriCertByEngcd[r.engcd] || null;
+      // 「受注工事で専任配置が重複する技術者を除く」フィルターの対象になる人かどうか（チェックのON/OFFに関わらず判定）。
+      // Excel出力で「受注工事で専任配置あり」の目印（赤）として使う。
+      r.excludedForAwardedDutyOverlap = excludedForAwardedDutyOverlap.has(r.engcd);
     });
 
     return Object.values(byEngineer)
@@ -5317,6 +5541,71 @@ function App(){
     if(f.sortMode!==undefined) setSortMode(f.sortMode);
     setSearched(true);
   };
+
+  // 技術者要件（検索条件）をExcel／まとめ資料出力用の「ラベル：値」形式の行に変換する。
+  // 未設定・既定値の項目は出力しない。コード値は画面表示と同じ名称に変換する。
+  const filtersToSummaryLines=(f)=>{
+    if(!f) return [];
+    const lines=[];
+    const join=(arr)=> (arr||[]).join("・");
+    if(f.fyFrom || f.fyFromMonth || f.fyTo || f.fyToMonth){
+      const fromTxt=(f.fyFrom?f.fyFrom+"年":"")+(f.fyFromMonth?parseInt(f.fyFromMonth,10)+"月":"");
+      const toTxt=(f.fyTo?f.fyTo+"年":"")+(f.fyToMonth?parseInt(f.fyToMonth,10)+"月":"");
+      lines.push("実績年度："+(fromTxt||"指定なし")+"〜"+toTxt);
+    }
+    if(f.selectedBranch) lines.push("支店："+f.selectedBranch);
+    if(f.includeRetired) lines.push("退職者：候補に含める");
+    if((f.selectedGateCategory||[]).length) lines.push("ゲートカテゴリ："+join(f.selectedGateCategory));
+    if((f.selectedGateType||[]).length) lines.push("ゲート種類："+join(f.selectedGateType));
+    if((f.selectedGateStructure||[]).length) lines.push("ゲート構造："+join(f.selectedGateStructure));
+    if((f.selectedKaihei||[]).length){
+      const names=f.selectedKaihei.map((c)=>(literalMap.KHKI&&literalMap.KHKI[c])||c);
+      lines.push("開閉方式："+names.join("・"));
+    }
+    if(f.pointMin) lines.push("工事成績評定点以上："+f.pointMin+"点");
+    if(f.keikMin) lines.push("径間以上："+f.keikMin+"m");
+    if(f.heighMin) lines.push("高さ以上："+f.heighMin+"m");
+    if(f.areaMin) lines.push("径間×高さ"+(f.areaIncludeSuis?"×水深":"")+"以上："+f.areaMin+(f.areaIncludeSuis?"m²・m":"m²"));
+    if(f.suisMin) lines.push("水深以上："+f.suisMin+"m");
+    if(f.syusMin) lines.push("取水量以上："+f.syusMin+"m³/s");
+    if(f.horyuMin) lines.push("放流量以上："+f.horyuMin+"m³/s");
+    if((f.selectedRoles||[]).length){
+      const names=f.selectedRoles.map((c)=>(literalMap.TRGT&&literalMap.TRGT[c])||("役割("+c+")"));
+      lines.push("実績時の役割："+names.join("・"));
+    }
+    if((f.selectedLicenses||[]).length){
+      lines.push("必要資格："+f.selectedLicenses.join("・")+"の"+(f.licenseMode==="and"?"すべて":"いずれか"));
+    }
+    if(f.ageMin || f.ageMax || f.ageAsOf){
+      let txt="年齢条件：";
+      if(f.ageAsOf) txt+=fmtDate(f.ageAsOf)+"時点　";
+      if(f.ageMin) txt+=f.ageMin+"歳以上　";
+      if(f.ageMax) txt+=f.ageMax+"歳以下";
+      lines.push(txt.trim());
+    }
+    if(f.femaleOnly) lines.push("性別：女性のみ");
+    if((f.selectedDept||[]).length) lines.push("所属部："+join(f.selectedDept));
+    if(f.assignDateFrom || f.assignDateTo){
+      lines.push("配置予定期間："+(f.assignDateFrom?fmtDate(f.assignDateFrom):"")+"〜"+(f.assignDateTo?fmtDate(f.assignDateTo):""));
+    }
+    if((f.selectedEngcds||[]).length){
+      const names=f.selectedEngcds.map((cd)=>(employeeMap[cd]?employeeMap[cd].ID_NAME:cd));
+      lines.push("技術者（個別指定）："+names.join("・"));
+    }
+    if(f.dutyOnlyFilter) lines.push("重複の絞り込み：専任性のある重複のみ表示（据付の監理・主任・管理技術者）");
+    if(f.excludeAwardedDutyOverlap) lines.push("受注工事で専任配置が重複する技術者を除く：ON");
+    if(f.areaOnlyFilter) lines.push("指定期間内で当エリアに従事する工事のみ表示：ON");
+    if(f.agentFilterMode==="show") lines.push("現場代理人の重複：表示（重複がある技術者のみ）");
+    if(f.agentFilterMode==="hide") lines.push("現場代理人の重複：非表示（重複がある技術者を除外）");
+    if((f.statusFilter||[]).length){
+      const map={verified:"確認済み", partial:"一部確認済み", rejected:"据付実績なし", unconfirmed:"未確認"};
+      lines.push("実績確認状況："+f.statusFilter.map((k)=>map[k]||k).join("・"));
+    }
+    if(f.considerListOnlyFilter) lines.push("検討リスト追加済みのみ表示：ON");
+    if(f.includeOfficeTech) lines.push("営業所専任技術者：配置候補技術者に含める");
+    return lines;
+  };
+
   const resetFilters=()=>{
     setFyFrom(currentFY-9); setFyFromMonth("04"); setFyTo(currentFY); setFyToMonth("04");
     setSelectedBunya([]); setSelectedGateCategory([]); setSelectedGateType([]); setSelectedGateStructure([]);
@@ -6093,6 +6382,14 @@ function App(){
                     title="配置予定と重複している配置も含めてPDF出力します（印刷ダイアログで「PDFに保存」を選択してください）">
                     <Ic.Download size={14}/> PDF出力
                   </button>
+                  <button className="btn-outline" onClick={doExportConsiderListExcel} disabled={considerList.length===0}
+                    title="技術者要件・検討リスト・技術者リストをExcelで出力します">
+                    <Ic.Download size={14}/> Excel出力
+                  </button>
+                  <button className="btn-outline" onClick={openSummaryDocDialog}
+                    title="工事タグを付けて保存した最大4件の検討リスト（製作／据付×現場代理人／監理技術者）を1つのExcel資料にまとめます">
+                    まとめ資料を作成
+                  </button>
                 </React.Fragment>
               }
               <button className="btn-outline" onClick={()=>setShowConsiderList(!showConsiderList)}>
@@ -6185,6 +6482,38 @@ function App(){
             </p>
             <input type="text" className="kw-input" style={{marginBottom:14}} placeholder="例：利根川河口堰_配置検討"
               value={saveTitleInput} onChange={(e)=>setSaveTitleInput(e.target.value)} autoFocus/>
+            <p style={{fontSize:11.5,color:"var(--muted)",marginTop:0,marginBottom:6}}>
+              以下は、同じ工事の検討（製作・据付×現場代理人・監理技術者など）をあとで「まとめ資料」として1つに束ねるためのタグです（任意）。
+            </p>
+            <div style={{display:"flex", flexDirection:"column", gap:8, marginBottom:14}}>
+              <div>
+                <div className="field-label" style={{fontSize:11.5}}>工事（工番・案件名）</div>
+                <input type="text" className="kw-input" placeholder="例：84149A-1　一般河川安治川（旧淀川）新水門機械設備工事"
+                  value={saveKobanInput} onChange={(e)=>setSaveKobanInput(e.target.value)}/>
+              </div>
+              <div style={{display:"flex", gap:8}}>
+                <div style={{flex:1}}>
+                  <div className="field-label" style={{fontSize:11.5}}>段階</div>
+                  <select className="dt-select" style={{width:"100%"}} value={saveStageInput} onChange={(e)=>setSaveStageInput(e.target.value)}>
+                    <option value="">指定なし</option>
+                    <option value="製作">製作</option>
+                    <option value="据付">据付</option>
+                  </select>
+                </div>
+                <div style={{flex:1}}>
+                  <div className="field-label" style={{fontSize:11.5}}>役割</div>
+                  <select className="dt-select" style={{width:"100%"}} value={saveRoleInput} onChange={(e)=>setSaveRoleInput(e.target.value)}>
+                    <option value="">指定なし</option>
+                    <option value="現場代理人">現場代理人</option>
+                    <option value="監理技術者">監理技術者</option>
+                    <option value="主任技術者">主任技術者</option>
+                    <option value="担当技術者">担当技術者</option>
+                    <option value="管理技術者">管理技術者</option>
+                    <option value="システム設計技術者">システム設計技術者</option>
+                  </select>
+                </div>
+              </div>
+            </div>
             <div className="actions-row">
               <button className="btn-ghost" onClick={()=>setShowSaveDialog(false)} disabled={savingList}>キャンセル</button>
               <button className="btn-search" onClick={doSaveConsiderList} disabled={savingList || !saveTitleInput.trim()}>
@@ -6216,6 +6545,7 @@ function App(){
                       <span className="saved-list-meta">
                         {it.updatedAt ? new Date(it.updatedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "-"}
                         　更新・{it.count}名
+                        {(it.koban || it.stage || it.role) ? "　｜　"+[it.koban, [it.stage,it.role].filter(Boolean).join("・")].filter(Boolean).join("　") : ""}
                       </span>
                       {loadingListId===it.id && <span className="saved-list-loading">開いています…</span>}
                     </button>
@@ -6227,6 +6557,43 @@ function App(){
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      }
+
+      {/* まとめ資料（最大4件の検討リストを束ねた、上長へのお伺い資料）の生成 */}
+      {showSummaryDocDialog &&
+        <div className="overlay-bg" onClick={(e)=>{ if(e.target===e.currentTarget && !generatingSummaryDoc) setShowSummaryDocDialog(false); }}>
+          <div className="overlay-card" style={{maxWidth:480}}>
+            <div className="overlay-hd">
+              <h3>まとめ資料を作成</h3>
+              <button className="icon-btn" onClick={()=>setShowSummaryDocDialog(false)} disabled={generatingSummaryDoc}><Ic.X/></button>
+            </div>
+            <p style={{fontSize:12,color:"var(--muted)",marginTop:0}}>
+              同じ工事タグで保存された検討リストのうち、製作・据付×現場代理人・監理技術者の最大4件を1つのExcel資料にまとめます。保存時に工事タグが付いていないリストはここに表示されません。
+            </p>
+            <div className="field-label" style={{fontSize:11.5}}>工事（工番・案件名）</div>
+            {kobanTagOptions.length>0 ? (
+              <select className="dt-select" style={{width:"100%", marginBottom:10}} value={summaryDocKoban} onChange={(e)=>setSummaryDocKoban(e.target.value)}>
+                <option value="">選択してください</option>
+                {kobanTagOptions.map((k)=>(<option key={k} value={k}>{k}</option>))}
+              </select>
+            ) : (
+              <input type="text" className="kw-input" style={{marginBottom:10}} placeholder="工事タグを入力"
+                value={summaryDocKoban} onChange={(e)=>setSummaryDocKoban(e.target.value)}/>
+            )}
+            <div className="field-label" style={{fontSize:11.5}}>全体工期</div>
+            <input type="text" className="kw-input" style={{marginBottom:10}} placeholder="例：2026（R8）11月〜2034（R16）年2月28日"
+              value={summaryDocPeriod} onChange={(e)=>setSummaryDocPeriod(e.target.value)}/>
+            <div className="field-label" style={{fontSize:11.5}}>据付時期</div>
+            <input type="text" className="kw-input" style={{marginBottom:14}} placeholder="例：2028（R10）年度〜"
+              value={summaryDocInstallTiming} onChange={(e)=>setSummaryDocInstallTiming(e.target.value)}/>
+            <div className="actions-row">
+              <button className="btn-ghost" onClick={()=>setShowSummaryDocDialog(false)} disabled={generatingSummaryDoc}>キャンセル</button>
+              <button className="btn-search" onClick={doGenerateSummaryDoc} disabled={generatingSummaryDoc || !summaryDocKoban.trim()}>
+                {generatingSummaryDoc ? "作成中…" : "作成する"}
+              </button>
+            </div>
           </div>
         </div>
       }
