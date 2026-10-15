@@ -1438,7 +1438,7 @@ function writeSummaryDocSheet(sheet, opts){
   row+=1;
   sheet.getCell(row,1).value="＊配置予定と重複：丸数字＝重複人数、青字＝受注工事（工番）、赤字＝未受注案件。該当実績なし・受注重複の技術者は空欄。";
 
-  const perSectionCols=[{width:30},{width:8},{width:26}];
+  const perSectionCols=[{width:13},{width:8},{width:45}];
   sheet.columns=sections.flatMap(()=>perSectionCols);
 }
 
@@ -5828,16 +5828,10 @@ function App(){
       lines.push("技術者（個別指定）："+names.join("・"));
     }
     if(f.dutyOnlyFilter) lines.push("重複の絞り込み：専任性のある重複のみ表示（据付の監理・主任・管理技術者）");
-    if(f.excludeAwardedDutyOverlap) lines.push("受注工事で専任配置が重複する技術者を除く：ON");
-    if(f.areaOnlyFilter) lines.push("指定期間内で当エリアに従事する工事のみ表示：ON");
-    if(f.agentFilterMode==="show") lines.push("現場代理人の重複：表示（重複がある技術者のみ）");
-    if(f.agentFilterMode==="hide") lines.push("現場代理人の重複：非表示（重複がある技術者を除外）");
-    if((f.statusFilter||[]).length){
-      const map={verified:"確認済み", partial:"一部確認済み", rejected:"据付実績なし", unconfirmed:"未確認"};
-      lines.push("実績確認状況："+f.statusFilter.map((k)=>map[k]||k).join("・"));
-    }
-    if(f.considerListOnlyFilter) lines.push("検討リスト追加済みのみ表示：ON");
-    if((f.excludedKbnTypes||[]).length) lines.push("非表示にした区分："+f.excludedKbnTypes.join("・"));
+    // 「配置候補技術者」の絞り込み行にある表示用フィルター（受注工事で専任配置が重複する技術者を除く／
+    // 指定期間内で当エリアに従事する工事のみ表示／現場代理人の重複／実績確認状況／検討リスト追加済みのみ表示／
+    // 非表示にする区分）は、技術者要件（候補の絞り込み条件）ではなく画面表示の並び替え・絞り込みのための
+    // ものなので、Excelの「技術者要件」欄には記載しない。
     if(f.includeOfficeTech) lines.push("営業所専任技術者：配置候補技術者に含める");
     return lines;
   };
