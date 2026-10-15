@@ -1248,6 +1248,18 @@ function buildAssignConflictCellValue(r, conflictFn, isTechnicianRow){
   return {richText};
 }
 
+// 「配置予定と重複」欄の注意書き（「青字＝受注工事（工番）、赤字＝未受注案件」）の、"青字"・"赤字"の
+// 部分だけをそれぞれ青・赤の文字色にしたrichText値を組み立てる。
+function buildConflictLegendValue(){
+  return {richText:[
+    {text:"＊配置予定と重複：丸数字＝自分を含む、同一工事に同じ役割で配置予定とされている人数、"},
+    {text:"青字", font:{color:{argb:EXCEL_FONT_BLUE_ARGB}}},
+    {text:"＝受注工事（工番）、"},
+    {text:"赤字", font:{color:{argb:EXCEL_FONT_RED_ARGB}}},
+    {text:"＝未受注案件。"},
+  ]};
+}
+
 // 1件分の検討（技術者要件／検討リスト／技術者リスト）をワークシートに書き込み、使い終わった次の行番号を返す。
 // 年齢が高い順に並べ替える。年齢不明（null/undefined）は末尾に回す。
 function sortByAgeDesc(list){
@@ -1314,8 +1326,9 @@ function writeConsiderListSection(sheet, startRow, section){
   sheet.getCell(row,1).value="＊黄色＝該当実績なし";
   row+=1;
   sheet.getCell(row,1).value="＊赤色＝受注工事で専任配置が重複する技術者（現在別の受注工事に専任で配置されている人）";
+  sheet.getCell(row,1).fill=EXCEL_FILL_RED;
   row+=1;
-  sheet.getCell(row,1).value="＊配置予定と重複：丸数字＝自分を含む、同一工事に同じ役割で配置予定とされている人数、青字＝受注工事（工番）、赤字＝未受注案件。";
+  sheet.getCell(row,1).value=buildConflictLegendValue();
   row+=1;
   sheet.columns=[{width:24},{width:10},{width:30},{width:40}];
   return row;
@@ -1435,8 +1448,9 @@ function writeSummaryDocSheet(sheet, opts){
   sheet.getCell(row,1).value="＊黄色＝該当実績なし";
   row+=1;
   sheet.getCell(row,1).value="＊赤色＝受注工事で専任配置が重複する技術者（現在別の受注工事に専任で配置されている人）";
+  sheet.getCell(row,1).fill=EXCEL_FILL_RED;
   row+=1;
-  sheet.getCell(row,1).value="＊配置予定と重複：丸数字＝自分を含む、同一工事に同じ役割で配置予定とされている人数、青字＝受注工事（工番）、赤字＝未受注案件。";
+  sheet.getCell(row,1).value=buildConflictLegendValue();
 
   const perSectionCols=[{width:13},{width:8},{width:45}];
   sheet.columns=sections.flatMap(()=>perSectionCols);
