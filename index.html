@@ -1324,9 +1324,10 @@ function writeConsiderListSection(sheet, startRow, section){
   });
   row+=1;
   sheet.getCell(row,1).value="＊黄色＝該当実績なし";
+  [1,2,3,4].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_YELLOW; });
   row+=1;
   sheet.getCell(row,1).value="＊赤色＝受注工事で専任配置が重複する技術者（現在別の受注工事に専任で配置されている人）";
-  sheet.getCell(row,1).fill=EXCEL_FILL_RED;
+  [1,2,3,4].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_RED; });
   row+=1;
   sheet.getCell(row,1).value=buildConflictLegendValue();
   row+=1;
@@ -1446,9 +1447,10 @@ function writeSummaryDocSheet(sheet, opts){
   row=techDataStart+maxTech+2;
 
   sheet.getCell(row,1).value="＊黄色＝該当実績なし";
+  [1,2,3,4].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_YELLOW; });
   row+=1;
   sheet.getCell(row,1).value="＊赤色＝受注工事で専任配置が重複する技術者（現在別の受注工事に専任で配置されている人）";
-  sheet.getCell(row,1).fill=EXCEL_FILL_RED;
+  [1,2,3,4].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_RED; });
   row+=1;
   sheet.getCell(row,1).value=buildConflictLegendValue();
 
