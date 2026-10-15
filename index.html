@@ -1214,6 +1214,39 @@ async function deleteConsiderListFromFirestore(id){
 const EXCEL_FILL_YELLOW={type:"pattern", pattern:"solid", fgColor:{argb:"FFFFF2A8"}};
 const EXCEL_FILL_RED={type:"pattern", pattern:"solid", fgColor:{argb:"FFFFC7CE"}};
 const EXCEL_FILL_HEADER={type:"pattern", pattern:"solid", fgColor:{argb:"FFE8E8E8"}};
+// 「配置予定と重複」列の文字色：工番（受注済み）＝青、案件（未受注）＝赤。
+const EXCEL_FONT_BLUE_ARGB="FF0070C0";
+const EXCEL_FONT_RED_ARGB="FFC00000";
+
+// 役割テキストから「配置予定と重複」列に使う1文字の略称を求める（既存の画面表示・印刷用一覧と同じ区分）。
+// 確認済みの対応：監理技術者→監、現場代理人→現。それ以外は主任→主／管理→管／担当→担／設計→設、
+// どれにも当てはまらない場合は先頭1文字をそのまま使う。
+function shortRoleLabel(roleText){
+  const s=String(roleText||"").trim();
+  if(!s) return "-";
+  if(s.includes("現場代理人") || s==="現代") return "現";
+  if(s.includes("監理")) return "監";
+  if(s.includes("主任")) return "主";
+  if(s.includes("管理")) return "管";
+  if(s.includes("担当")) return "担";
+  if(s.includes("設計")) return "設";
+  return s.charAt(0);
+}
+
+// 「配置予定と重複」セルの値を組み立てる（ExcelJSのrichTextで、工番＝青／案件＝赤の文字色を
+// エントリーごとに付ける。conflictFnは画面と同じ丸数字＋略称のラベル配列を返すコールバック）。
+// 技術者リストの黄色（該当実績なし）・赤色（受注重複）行は、配置予定と重複を表示せず空欄にする。
+function buildAssignConflictCellValue(r, conflictFn, isTechnicianRow){
+  if(isTechnicianRow && r && r.highlight) return "";
+  const segments=(conflictFn ? conflictFn(r && r.assignConflicts) : []) || [];
+  if(!segments.length) return "なし";
+  const richText=[];
+  segments.forEach((seg,i)=>{
+    if(i>0) richText.push({text:"、"});
+    richText.push({text:seg.label, font:{color:{argb: seg.color==="red" ? EXCEL_FONT_RED_ARGB : EXCEL_FONT_BLUE_ARGB}}});
+  });
+  return {richText};
+}
 
 // 1件分の検討（技術者要件／検討リスト／技術者リスト）をワークシートに書き込み、使い終わった次の行番号を返す。
 // 年齢が高い順に並べ替える。年齢不明（null/undefined）は末尾に回す。
@@ -1228,7 +1261,7 @@ function sortByAgeDesc(list){
 }
 
 function writeConsiderListSection(sheet, startRow, section){
-  const {heading, summaryLines, considerRole}=section;
+  const {heading, summaryLines, considerRole, conflictFn}=section;
   const considerList=sortByAgeDesc(section.considerList);
   const technicianList=sortByAgeDesc(section.technicianList);
   let row=startRow;
@@ -1250,14 +1283,15 @@ function writeConsiderListSection(sheet, startRow, section){
   sheet.getCell(row,1).font={bold:true};
   sheet.getCell(row,1).fill=EXCEL_FILL_HEADER;
   row+=1;
-  sheet.getCell(row,1).value="氏名"; sheet.getCell(row,2).value="年齢"; sheet.getCell(row,3).value="検討中の配置";
-  [1,2,3].forEach((c)=>{ sheet.getCell(row,c).font={bold:true}; });
+  sheet.getCell(row,1).value="氏名"; sheet.getCell(row,2).value="年齢"; sheet.getCell(row,3).value="配置予定と重複"; sheet.getCell(row,4).value="検討中の配置";
+  [1,2,3,4].forEach((c)=>{ sheet.getCell(row,c).font={bold:true}; });
   row+=1;
   considerList.forEach((r)=>{
     const cr=(considerRole && considerRole[r.engcd]) || {};
     sheet.getCell(row,1).value=r.name || "";
     sheet.getCell(row,2).value=(r.age===null || r.age===undefined) ? "" : r.age;
-    sheet.getCell(row,3).value=[cr.kubun, cr.role].filter(Boolean).join("／");
+    sheet.getCell(row,3).value=buildAssignConflictCellValue(r, conflictFn, false);
+    sheet.getCell(row,4).value=[cr.kubun, cr.role].filter(Boolean).join("／");
     row+=1;
   });
   row+=1;
@@ -1265,14 +1299,15 @@ function writeConsiderListSection(sheet, startRow, section){
   sheet.getCell(row,1).font={bold:true};
   sheet.getCell(row,1).fill=EXCEL_FILL_HEADER;
   row+=1;
-  sheet.getCell(row,1).value="氏名"; sheet.getCell(row,2).value="年齢";
-  [1,2].forEach((c)=>{ sheet.getCell(row,c).font={bold:true}; });
+  sheet.getCell(row,1).value="氏名"; sheet.getCell(row,2).value="年齢"; sheet.getCell(row,3).value="配置予定と重複";
+  [1,2,3].forEach((c)=>{ sheet.getCell(row,c).font={bold:true}; });
   row+=1;
   technicianList.forEach((r)=>{
     sheet.getCell(row,1).value=r.name || "";
     sheet.getCell(row,2).value=(r.age===null || r.age===undefined) ? "" : r.age;
-    if(r.highlight==="yellow"){ sheet.getCell(row,1).fill=EXCEL_FILL_YELLOW; sheet.getCell(row,2).fill=EXCEL_FILL_YELLOW; }
-    if(r.highlight==="red"){ sheet.getCell(row,1).fill=EXCEL_FILL_RED; sheet.getCell(row,2).fill=EXCEL_FILL_RED; }
+    sheet.getCell(row,3).value=buildAssignConflictCellValue(r, conflictFn, true);
+    if(r.highlight==="yellow"){ [1,2,3].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_YELLOW; }); }
+    if(r.highlight==="red"){ [1,2,3].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_RED; }); }
     row+=1;
   });
   row+=1;
@@ -1280,18 +1315,22 @@ function writeConsiderListSection(sheet, startRow, section){
   row+=1;
   sheet.getCell(row,1).value="＊赤色＝受注工事で専任配置が重複する技術者（現在別の受注工事に専任で配置されている人）";
   row+=1;
-  sheet.columns=[{width:24},{width:10},{width:40}];
+  sheet.getCell(row,1).value="＊配置予定と重複：丸数字＝重複人数、青字＝受注工事（工番）、赤字＝未受注案件。該当実績なし・受注重複の技術者は空欄。";
+  row+=1;
+  sheet.columns=[{width:24},{width:10},{width:30},{width:40}];
   return row;
 }
 
 // 1つの工事につき最大4件（製作/据付 × 現場代理人/監理技術者）の検討を1シートに横並びでまとめて書き込む
-// （「まとめ資料」用）。各検討は氏名・年齢の2列を使い、技術者要件／検討リスト／技術者リストの各ブロックの
-// 開始行は、4件のうち最も行数が多いものに揃える（短い検討は単に空欄のまま）。
+// （「まとめ資料」用）。各検討は氏名・年齢・配置予定と重複の3列を使い、技術者要件／検討リスト／技術者リスト
+// の各ブロックの開始行は、4件のうち最も行数が多いものに揃える（短い検討は単に空欄のまま）。
 // sections は必ず4件（SUMMARY_DOC_SECTIONSの順）。見つからなかった検討は {def, found:false} とする。
 function writeSummaryDocSheet(sheet, opts){
-  const {projectTitle, overallPeriod, installTiming, sections}=opts;
+  const {projectTitle, overallPeriod, installTiming, sections, conflictFn}=opts;
+  const SEC_COLS=3; // 氏名・年齢・配置予定と重複
+  const totalCols=SEC_COLS*sections.length;
   let row=1;
-  sheet.mergeCells(row,1,row,8);
+  sheet.mergeCells(row,1,row,totalCols);
   sheet.getCell(row,1).value=projectTitle||"";
   sheet.getCell(row,1).font={bold:true, size:14};
   row+=2;
@@ -1302,7 +1341,8 @@ function writeSummaryDocSheet(sheet, opts){
 
   const headerRow=row;
   sections.forEach((s,i)=>{
-    const col=1+2*i;
+    const col=1+SEC_COLS*i;
+    sheet.mergeCells(headerRow,col,headerRow,col+SEC_COLS-1);
     sheet.getCell(headerRow,col).value=s.def.label;
     sheet.getCell(headerRow,col).font={bold:true, size:13};
   });
@@ -1310,7 +1350,8 @@ function writeSummaryDocSheet(sheet, opts){
 
   const reqRow=row;
   sections.forEach((s,i)=>{
-    const col=1+2*i;
+    const col=1+SEC_COLS*i;
+    sheet.mergeCells(reqRow,col,reqRow,col+SEC_COLS-1);
     sheet.getCell(reqRow,col).value="技術者要件";
     sheet.getCell(reqRow,col).font={bold:true};
     sheet.getCell(reqRow,col).fill=EXCEL_FILL_HEADER;
@@ -1321,7 +1362,7 @@ function writeSummaryDocSheet(sheet, opts){
   const reqLines=sections.map((s)=> s.found ? (s.summaryLines.length ? s.summaryLines : ["（条件の指定なし）"]) : ["（保存された検討リストなし）"]);
   const maxReqLines=Math.max(1, ...reqLines.map((l)=>l.length));
   sections.forEach((s,i)=>{
-    const col=1+2*i;
+    const col=1+SEC_COLS*i;
     reqLines[i].forEach((line,li)=>{ sheet.getCell(reqLinesStart+li,col).value=line; });
   });
   row=reqLinesStart+maxReqLines+1;
@@ -1329,7 +1370,8 @@ function writeSummaryDocSheet(sheet, opts){
   const considerHeaderRow=row;
   const sortedConsider=sections.map((s)=> s.found ? sortByAgeDesc(s.considerList) : []);
   sections.forEach((s,i)=>{
-    const col=1+2*i;
+    const col=1+SEC_COLS*i;
+    sheet.mergeCells(considerHeaderRow,col,considerHeaderRow,col+SEC_COLS-1);
     sheet.getCell(considerHeaderRow,col).value="検討リスト（"+sortedConsider[i].length+"名）";
     sheet.getCell(considerHeaderRow,col).font={bold:true};
     sheet.getCell(considerHeaderRow,col).fill=EXCEL_FILL_HEADER;
@@ -1337,17 +1379,19 @@ function writeSummaryDocSheet(sheet, opts){
   row+=1;
   const considerColHeaderRow=row;
   sections.forEach((s,i)=>{
-    const col=1+2*i;
+    const col=1+SEC_COLS*i;
     sheet.getCell(considerColHeaderRow,col).value="氏名"; sheet.getCell(considerColHeaderRow,col).font={bold:true};
     sheet.getCell(considerColHeaderRow,col+1).value="年齢"; sheet.getCell(considerColHeaderRow,col+1).font={bold:true};
+    sheet.getCell(considerColHeaderRow,col+2).value="配置予定と重複"; sheet.getCell(considerColHeaderRow,col+2).font={bold:true};
   });
   row+=1;
   const considerDataStart=row;
   sections.forEach((s,i)=>{
-    const col=1+2*i;
+    const col=1+SEC_COLS*i;
     sortedConsider[i].forEach((r,ri)=>{
       sheet.getCell(considerDataStart+ri,col).value=r.name||"";
       sheet.getCell(considerDataStart+ri,col+1).value=(r.age===null||r.age===undefined) ? "" : r.age;
+      sheet.getCell(considerDataStart+ri,col+2).value=buildAssignConflictCellValue(r, conflictFn, false);
     });
   });
   const maxConsider=Math.max(0, ...sortedConsider.map((l)=>l.length));
@@ -1356,7 +1400,8 @@ function writeSummaryDocSheet(sheet, opts){
   const techHeaderRow=row;
   const sortedTech=sections.map((s)=> s.found ? sortByAgeDesc(s.technicianList) : []);
   sections.forEach((s,i)=>{
-    const col=1+2*i;
+    const col=1+SEC_COLS*i;
+    sheet.mergeCells(techHeaderRow,col,techHeaderRow,col+SEC_COLS-1);
     sheet.getCell(techHeaderRow,col).value="技術者リスト（"+sortedTech[i].length+"名）";
     sheet.getCell(techHeaderRow,col).font={bold:true};
     sheet.getCell(techHeaderRow,col).fill=EXCEL_FILL_HEADER;
@@ -1364,21 +1409,24 @@ function writeSummaryDocSheet(sheet, opts){
   row+=1;
   const techColHeaderRow=row;
   sections.forEach((s,i)=>{
-    const col=1+2*i;
+    const col=1+SEC_COLS*i;
     sheet.getCell(techColHeaderRow,col).value="氏名"; sheet.getCell(techColHeaderRow,col).font={bold:true};
     sheet.getCell(techColHeaderRow,col+1).value="年齢"; sheet.getCell(techColHeaderRow,col+1).font={bold:true};
+    sheet.getCell(techColHeaderRow,col+2).value="配置予定と重複"; sheet.getCell(techColHeaderRow,col+2).font={bold:true};
   });
   row+=1;
   const techDataStart=row;
   sections.forEach((s,i)=>{
-    const col=1+2*i;
+    const col=1+SEC_COLS*i;
     sortedTech[i].forEach((r,ri)=>{
       const nameCell=sheet.getCell(techDataStart+ri,col);
       const ageCell=sheet.getCell(techDataStart+ri,col+1);
+      const conflictCell=sheet.getCell(techDataStart+ri,col+2);
       nameCell.value=r.name||"";
       ageCell.value=(r.age===null||r.age===undefined) ? "" : r.age;
-      if(r.highlight==="yellow"){ nameCell.fill=EXCEL_FILL_YELLOW; ageCell.fill=EXCEL_FILL_YELLOW; }
-      if(r.highlight==="red"){ nameCell.fill=EXCEL_FILL_RED; ageCell.fill=EXCEL_FILL_RED; }
+      conflictCell.value=buildAssignConflictCellValue(r, conflictFn, true);
+      if(r.highlight==="yellow"){ nameCell.fill=EXCEL_FILL_YELLOW; ageCell.fill=EXCEL_FILL_YELLOW; conflictCell.fill=EXCEL_FILL_YELLOW; }
+      if(r.highlight==="red"){ nameCell.fill=EXCEL_FILL_RED; ageCell.fill=EXCEL_FILL_RED; conflictCell.fill=EXCEL_FILL_RED; }
     });
   });
   const maxTech=Math.max(0, ...sortedTech.map((l)=>l.length));
@@ -1387,10 +1435,11 @@ function writeSummaryDocSheet(sheet, opts){
   sheet.getCell(row,1).value="＊黄色＝該当実績なし（実績はあるが確認ではすべて×だった人）";
   row+=1;
   sheet.getCell(row,1).value="＊赤色＝受注工事で専任配置が重複する技術者（現在別の受注工事に専任で配置されている人）";
+  row+=1;
+  sheet.getCell(row,1).value="＊配置予定と重複：丸数字＝重複人数、青字＝受注工事（工番）、赤字＝未受注案件。該当実績なし・受注重複の技術者は空欄。";
 
-  sheet.columns=[
-    {width:36},{width:9},{width:36},{width:9},{width:36},{width:9},{width:36},{width:9},
-  ];
+  const perSectionCols=[{width:30},{width:8},{width:26}];
+  sheet.columns=sections.flatMap(()=>perSectionCols);
 }
 
 async function downloadWorkbook(wb, filename){
@@ -4754,6 +4803,7 @@ function App(){
         name: r.name,
         age: (r.age===null||r.age===undefined) ? null : r.age,
         highlight: r.excludedForAwardedDutyOverlap ? "red" : (r.allRejected ? "yellow" : null),
+        assignConflicts: r.assignConflicts || [],
       }));
   };
   const doSaveConsiderList=async()=>{
@@ -4841,6 +4891,7 @@ function App(){
       summaryLines: filtersToSummaryLines(buildFilterSnapshot()),
       considerList, considerRole,
       technicianList: buildTechnicianListSnapshot(),
+      conflictFn: buildAssignConflictSegments,
     });
     await downloadWorkbook(wb, (currentListTitle||"配置検討リスト").replace(/[\\/:*?"<>|]/g,"_")+".xlsx");
     setToast("Excelを出力しました");
@@ -4914,6 +4965,7 @@ function App(){
         overallPeriod: summaryDocPeriod.trim(),
         installTiming: summaryDocInstallTiming.trim(),
         sections,
+        conflictFn: buildAssignConflictSegments,
       });
       // 参考として、見つかった検討ごとの詳細（検討中の配置の内訳つき）シートも併せて収録する。
       sections.filter((s)=>s.found).forEach((s)=>{
@@ -4921,6 +4973,7 @@ function App(){
         writeConsiderListSection(sheet, 1, {
           heading:s.def.label, summaryLines:s.summaryLines,
           considerList:s.considerList, considerRole:s.considerRole, technicianList:s.technicianList,
+          conflictFn: buildAssignConflictSegments,
         });
       });
       await downloadWorkbook(wb, koban.replace(/[\\/:*?"<>|]/g,"_")+"_配置候補者お伺い資料.xlsx");
@@ -5222,6 +5275,19 @@ function App(){
   };
   const CIRCLED_NUM=["","①","②","③","④","⑤","⑥","⑦","⑧","⑨","⑩","⑪","⑫","⑬","⑭","⑮","⑯","⑰","⑱","⑲","⑳"];
   const circledNum=(n)=> CIRCLED_NUM[n] || ("("+n+")");
+
+  // Excel出力の「配置予定と重複」列用：画面表示・印刷用一覧と同じ丸数字＋区分略称（例：⑧据/監）のラベルを、
+  // 工番（受注済み）＝青／案件（未受注）＝赤の色分け付きで組み立てる。assignConflictsは候補カード作成時に
+  // 保存されたスナップショット（koban/kobanType/kubun/role/assignFrom/assignTo）をそのまま使う。
+  const buildAssignConflictSegments=(assignConflicts)=>{
+    return (assignConflicts||[]).map((a)=>{
+      const sesu=classifySesu(a.kubun) || "-";
+      const dupGroup=dutyCountGroup(a.role);
+      const dupCount=dupGroup ? countDutyOverlap(a.koban, dupGroup, a.assignFrom, a.assignTo, a.kubun) : 1;
+      const label=(dupCount>=2 ? circledNum(dupCount) : "")+sesu+"/"+shortRoleLabel(a.role);
+      return {label, color: a.kobanType==="案件" ? "red" : "blue"};
+    });
+  };
 
   const isKoshuOn=(v)=> v!==undefined && v!==null && v!=="" && String(parseFloat(v))==="1";
   // 「必要資格」の各項目について、その技術者が保有しているかどうかを判定する
