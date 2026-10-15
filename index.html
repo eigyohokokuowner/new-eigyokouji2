@@ -1311,11 +1311,11 @@ function writeConsiderListSection(sheet, startRow, section){
     row+=1;
   });
   row+=1;
-  sheet.getCell(row,1).value="＊黄色＝該当実績なし（実績はあるが確認ではすべて×だった人）";
+  sheet.getCell(row,1).value="＊黄色＝該当実績なし";
   row+=1;
   sheet.getCell(row,1).value="＊赤色＝受注工事で専任配置が重複する技術者（現在別の受注工事に専任で配置されている人）";
   row+=1;
-  sheet.getCell(row,1).value="＊配置予定と重複：丸数字＝重複人数、青字＝受注工事（工番）、赤字＝未受注案件。該当実績なし・受注重複の技術者は空欄。";
+  sheet.getCell(row,1).value="＊配置予定と重複：丸数字＝自分を含む、同一工事に同じ役割で配置予定とされている人数、青字＝受注工事（工番）、赤字＝未受注案件。";
   row+=1;
   sheet.columns=[{width:24},{width:10},{width:30},{width:40}];
   return row;
@@ -1432,11 +1432,11 @@ function writeSummaryDocSheet(sheet, opts){
   const maxTech=Math.max(0, ...sortedTech.map((l)=>l.length));
   row=techDataStart+maxTech+2;
 
-  sheet.getCell(row,1).value="＊黄色＝該当実績なし（実績はあるが確認ではすべて×だった人）";
+  sheet.getCell(row,1).value="＊黄色＝該当実績なし";
   row+=1;
   sheet.getCell(row,1).value="＊赤色＝受注工事で専任配置が重複する技術者（現在別の受注工事に専任で配置されている人）";
   row+=1;
-  sheet.getCell(row,1).value="＊配置予定と重複：丸数字＝重複人数、青字＝受注工事（工番）、赤字＝未受注案件。該当実績なし・受注重複の技術者は空欄。";
+  sheet.getCell(row,1).value="＊配置予定と重複：丸数字＝自分を含む、同一工事に同じ役割で配置予定とされている人数、青字＝受注工事（工番）、赤字＝未受注案件。";
 
   const perSectionCols=[{width:13},{width:8},{width:45}];
   sheet.columns=sections.flatMap(()=>perSectionCols);
