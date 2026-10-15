@@ -5277,15 +5277,19 @@ function App(){
   const circledNum=(n)=> CIRCLED_NUM[n] || ("("+n+")");
 
   // Excel出力の「配置予定と重複」列用：画面表示・印刷用一覧と同じ丸数字＋区分略称（例：⑧据/監）のラベルを、
-  // 工番（受注済み）＝青／案件（未受注）＝赤の色分け付きで組み立てる。assignConflictsは候補カード作成時に
-  // 保存されたスナップショット（koban/kobanType/kubun/role/assignFrom/assignTo）をそのまま使う。
+  // ユーザー指定の色分けで組み立てる（工事番号が"H"で始まる＝classifyKoubanでいう「案件」＝青／
+  // "○○G-○○○○"のような工番形式＝classifyKoubanでいう「工番」＝赤）。classifyKouban()は"H"始まりを
+  // 「案件（未受注）」、それ以外の工番形式を「工番（受注済み）」と判定するため、工番＝赤・案件＝青となる
+  // （受注済みで専任配置が重複している方が深刻な赤表示、というのが元々の赤色の使われ方とも整合する）。
+  // assignConflictsは候補カード作成時に保存されたスナップショット（koban/kobanType/kubun/role/
+  // assignFrom/assignTo）をそのまま使う。
   const buildAssignConflictSegments=(assignConflicts)=>{
     return (assignConflicts||[]).map((a)=>{
       const sesu=classifySesu(a.kubun) || "-";
       const dupGroup=dutyCountGroup(a.role);
       const dupCount=dupGroup ? countDutyOverlap(a.koban, dupGroup, a.assignFrom, a.assignTo, a.kubun) : 1;
       const label=(dupCount>=2 ? circledNum(dupCount) : "")+sesu+"/"+shortRoleLabel(a.role);
-      return {label, color: a.kobanType==="案件" ? "red" : "blue"};
+      return {label, color: a.kobanType==="工番" ? "red" : "blue"};
     });
   };
 
