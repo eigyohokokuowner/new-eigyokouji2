@@ -1248,6 +1248,29 @@ function buildAssignConflictCellValue(r, conflictFn, isTechnicianRow){
   return {richText};
 }
 
+// 「配置予定と重複」の内訳（区分/役割・工番・案件名の組み合わせ）をE列から横並びで書き込むための列位置。
+const CONFLICT_DETAIL_START_COL=5; // E列
+// 内訳のヘッダー（「区分/役割」「工番・案件名」のペア）をmaxPairs個分書き込む。
+function writeConflictDetailHeaders(sheet, row, maxPairs){
+  for(let i=0;i<maxPairs;i++){
+    const c1=CONFLICT_DETAIL_START_COL+2*i, c2=c1+1;
+    sheet.getCell(row,c1).value="区分/役割"; sheet.getCell(row,c1).font={bold:true};
+    sheet.getCell(row,c2).value="工番・案件名"; sheet.getCell(row,c2).font={bold:true};
+  }
+}
+// 1人分の「配置予定と重複」の内訳を、conflictFnが返すセグメント（丸数字つき区分/役割・工番・案件名・色）から
+// E列以降に横並びで書き込む（例：③据付/監理　H200868A0【随契】高浜水門１号水門扉改修工事）。
+function writeConflictDetailRow(sheet, row, segments){
+  (segments||[]).forEach((seg,i)=>{
+    const c1=CONFLICT_DETAIL_START_COL+2*i, c2=c1+1;
+    const argb = seg.color==="red" ? EXCEL_FONT_RED_ARGB : EXCEL_FONT_BLUE_ARGB;
+    sheet.getCell(row,c1).value=seg.full||"";
+    sheet.getCell(row,c1).font={color:{argb}};
+    sheet.getCell(row,c2).value=((seg.koban||"")+" "+(seg.projName||"")).trim();
+    sheet.getCell(row,c2).font={color:{argb}};
+  });
+}
+
 // 「配置予定と重複」欄の注意書き（「青字＝受注工事（工番）、赤字＝未受注案件」）の、"青字"・"赤字"の
 // 部分だけをそれぞれ青・赤の文字色にしたrichText値を組み立てる。
 function buildConflictLegendValue(){
@@ -1291,19 +1314,29 @@ function writeConsiderListSection(sheet, startRow, section){
     row+=1;
   });
   row+=1;
+  // 検討リスト・技術者リストそれぞれについて、1人あたりの「配置予定と重複」件数の最大値を先に求めておく
+  // （E列以降に区分/役割・工番・案件名のペアを、最大件数分だけ横並びで用意するため）。
+  const considerSegments=considerList.map((r)=> (conflictFn ? (conflictFn(r.assignConflicts)||[]) : []));
+  const technicianSegments=technicianList.map((r)=> (r.highlight ? [] : (conflictFn ? (conflictFn(r.assignConflicts)||[]) : [])));
+  const maxConsiderPairs=Math.max(0, ...considerSegments.map((s)=>s.length));
+  const maxTechPairs=Math.max(0, ...technicianSegments.map((s)=>s.length));
+  const maxPairs=Math.max(maxConsiderPairs, maxTechPairs);
+
   sheet.getCell(row,1).value="検討リスト（"+considerList.length+"名）";
   sheet.getCell(row,1).font={bold:true};
   sheet.getCell(row,1).fill=EXCEL_FILL_HEADER;
   row+=1;
   sheet.getCell(row,1).value="氏名"; sheet.getCell(row,2).value="年齢"; sheet.getCell(row,3).value="配置予定と重複"; sheet.getCell(row,4).value="検討中の配置";
   [1,2,3,4].forEach((c)=>{ sheet.getCell(row,c).font={bold:true}; });
+  writeConflictDetailHeaders(sheet, row, maxConsiderPairs);
   row+=1;
-  considerList.forEach((r)=>{
+  considerList.forEach((r,ri)=>{
     const cr=(considerRole && considerRole[r.engcd]) || {};
     sheet.getCell(row,1).value=r.name || "";
     sheet.getCell(row,2).value=(r.age===null || r.age===undefined) ? "" : r.age;
     sheet.getCell(row,3).value=buildAssignConflictCellValue(r, conflictFn, false);
     sheet.getCell(row,4).value=[cr.kubun, cr.role].filter(Boolean).join("／");
+    writeConflictDetailRow(sheet, row, considerSegments[ri]);
     row+=1;
   });
   row+=1;
@@ -1313,13 +1346,15 @@ function writeConsiderListSection(sheet, startRow, section){
   row+=1;
   sheet.getCell(row,1).value="氏名"; sheet.getCell(row,2).value="年齢"; sheet.getCell(row,3).value="配置予定と重複";
   [1,2,3].forEach((c)=>{ sheet.getCell(row,c).font={bold:true}; });
+  writeConflictDetailHeaders(sheet, row, maxTechPairs);
   row+=1;
-  technicianList.forEach((r)=>{
+  technicianList.forEach((r,ri)=>{
     sheet.getCell(row,1).value=r.name || "";
     sheet.getCell(row,2).value=(r.age===null || r.age===undefined) ? "" : r.age;
     sheet.getCell(row,3).value=buildAssignConflictCellValue(r, conflictFn, true);
     if(r.highlight==="yellow"){ [1,2,3].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_YELLOW; }); }
     if(r.highlight==="red"){ [1,2,3].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_RED; }); }
+    writeConflictDetailRow(sheet, row, technicianSegments[ri]);
     row+=1;
   });
   row+=1;
@@ -1331,7 +1366,9 @@ function writeConsiderListSection(sheet, startRow, section){
   row+=1;
   sheet.getCell(row,1).value=buildConflictLegendValue();
   row+=1;
-  sheet.columns=[{width:24},{width:10},{width:30},{width:40}];
+  const pairCols=[];
+  for(let i=0;i<maxPairs;i++){ pairCols.push({width:16},{width:45}); }
+  sheet.columns=[{width:24},{width:10},{width:30},{width:40}].concat(pairCols);
   return row;
 }
 
@@ -5304,8 +5341,12 @@ function App(){
       const sesu=classifySesu(a.kubun) || "-";
       const dupGroup=dutyCountGroup(a.role);
       const dupCount=dupGroup ? countDutyOverlap(a.koban, dupGroup, a.assignFrom, a.assignTo, a.kubun) : 1;
-      const label=(dupCount>=2 ? circledNum(dupCount) : "")+sesu+"/"+shortRoleLabel(a.role);
-      return {label, color: a.kobanType==="工番" ? "red" : "blue"};
+      const numPrefix=dupCount>=2 ? circledNum(dupCount) : "";
+      const label=numPrefix+sesu+"/"+shortRoleLabel(a.role);
+      // full：区分/役割の内訳欄（E列以降）用に、略称ではなく元の区分・役割の表記のまま丸数字を付けたもの
+      // （例：③据付/監理）。koban・projNameは工番・案件名欄用。
+      const full=numPrefix+(a.kubun||"-")+"/"+(a.role||"-");
+      return {label, full, koban:a.koban||"", projName:a.name||"", color: a.kobanType==="工番" ? "red" : "blue"};
     });
   };
 
