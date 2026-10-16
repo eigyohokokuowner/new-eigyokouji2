@@ -1839,7 +1839,7 @@ function parseCorinsXml(xmlString, literalMap, employeeMap){
   };
 }
 
-function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalMap, employeeMap, initialConstno, jumpNonce, canEdit, onSaveProject, onSaveKinds, onSaveEng, onCreateProject}){
+function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalMap, employeeMap, initialConstno, jumpNonce, canEdit, onSaveProject, onSaveKinds, onSaveEng, onSaveKindsAndEng, onCreateProject, onImportCorins}){
   const [query,setQuery]=useState("");
   const [selected,setSelected]=useState(null);
   const [editingHeader,setEditingHeader]=useState(false);
@@ -2067,8 +2067,11 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
   };
   const cancelEditRows=()=>setEditingRows(false);
   const saveRows=()=>{
-    onSaveKinds(selected, kindsDraft.map((k,i)=>({...k, CONSTNO:selected, SEQNO:String(i+1)})));
-    onSaveEng(selected, engDraft.map((e,i)=>({...e, CONSTNO:selected, SEQNO:String(i+1)})));
+    // 種別と技術者情報は1回の保存でまとめて反映する（2回に分けると、後の保存が古いデータを土台にして
+    // 先に保存した種別の変更を画面上で元に戻してしまうため）
+    onSaveKindsAndEng(selected,
+      kindsDraft.map((k,i)=>({...k, CONSTNO:selected, SEQNO:String(i+1)})),
+      engDraft.map((e,i)=>({...e, CONSTNO:selected, SEQNO:String(i+1)})));
     setEditingRows(false);
   };
   const addKindRow=()=>setKindsDraft([...kindsDraft, {CONSTNO:selected, SEQNO:"", KBN:"", KIND:"", KGAI:"", KIKA:"", ZAIS:"", KEIK:"", HEIGH:"", INZU:"", SUIS:"", SYUS:"", HORYU:""}]);
@@ -2122,21 +2125,22 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
     if(parsed.error){ setXmlError(parsed.error); return; }
 
     const exists=constrsltRecords.some((r)=>r.CONSTNO===cn);
-    if(exists){
-      onSaveProject(cn, parsed.header);
-    } else {
-      onCreateProject({CONSTNO:cn, ...parsed.header});
-    }
 
     // ②種別：既存工番への追加取込みでは種別には一切触れない（新規登録時のみXMLの種別情報を登録する）。
-    if(!exists){
-      const newKinds=parsed.kindRows.map((k)=>({CONSTNO:cn, SEQNO:"", KBN:k.KBN, KIND:k.KIND, KGAI:k.KGAI, KIKA:k.KIKA, ZAIS:k.ZAIS, KEIK:k.KEIK, HEIGH:k.HEIGH, INZU:k.INZU, SUIS:k.SUIS, SYUS:k.SYUS, HORYU:k.HORYU}));
-      onSaveKinds(cn, newKinds.map((k,i)=>({...k, CONSTNO:cn, SEQNO:String(i+1)})));
-    }
+    const newKinds = exists ? null : parsed.kindRows
+      .map((k)=>({CONSTNO:cn, SEQNO:"", KBN:k.KBN, KIND:k.KIND, KGAI:k.KGAI, KIKA:k.KIKA, ZAIS:k.ZAIS, KEIK:k.KEIK, HEIGH:k.HEIGH, INZU:k.INZU, SUIS:k.SUIS, SYUS:k.SYUS, HORYU:k.HORYU}))
+      .map((k,i)=>({...k, SEQNO:String(i+1)}));
 
     // ③技術者情報：既存行への追加ではなく、XMLの内容を正として全て置き換える。
-    const newEng=parsed.engRows.map((e)=>({CONSTNO:cn, SEQNO:"", POSICD:e.POSICD, ENGCD:e.ENGCD, KOKF01:e.KOKF01, KOKT01:e.KOKT01, KOKF02:e.KOKF02, KOKT02:e.KOKT02, KOKF03:e.KOKF03, KOKT03:e.KOKT03, JWARI:e.JWARI}));
-    onSaveEng(cn, newEng.map((e,i)=>({...e, CONSTNO:cn, SEQNO:String(i+1)})));
+    const newEng=parsed.engRows
+      .map((e)=>({CONSTNO:cn, SEQNO:"", POSICD:e.POSICD, ENGCD:e.ENGCD, KOKF01:e.KOKF01, KOKT01:e.KOKT01, KOKF02:e.KOKF02, KOKT02:e.KOKT02, KOKF03:e.KOKF03, KOKT03:e.KOKT03, JWARI:e.JWARI}))
+      .map((e,i)=>({...e, SEQNO:String(i+1)}));
+
+    // 工事情報・種別・技術者情報は、必ず1回の保存でまとめて反映する。
+    // （以前は onSaveProject → onSaveKinds → onSaveEng と3回に分けて保存しており、各保存が
+    //   「呼び出し時点の古いデータ」を土台にしていたため、最後の技術者情報の保存で
+    //   直前に更新した工事情報（登録種別・変更回数など）が画面上で元に戻ってしまっていた）
+    onImportCorins(cn, exists, parsed.header, newKinds, newEng);
 
     const unmatched=parsed.engRows.filter((e)=>!e.matched).map((e)=>e.name);
     let msg=exists
@@ -6272,6 +6276,39 @@ function App(){
               records: [...datasets.constrslt.records, newProj],
               filename: datasets.constrslt.filename,
             }};
+            persist(next);
+          }}
+          onSaveKindsAndEng={(constno, newKinds, newEng)=>{
+            const next={...datasets,
+              kind:{
+                records: [...datasets.kind.records.filter((r)=>r.CONSTNO!==constno), ...newKinds],
+                filename: datasets.kind.filename,
+              },
+              eng:{
+                records: [...(datasets.eng?.records || []).filter((r)=>r.CONSTNO!==constno), ...newEng],
+                filename: datasets.eng?.filename,
+              },
+            };
+            persist(next);
+          }}
+          onImportCorins={(constno, exists, header, newKinds, newEng)=>{
+            // コリンズXML取込：工事情報・種別・技術者情報を1回の保存でまとめて反映する
+            const constrsltRecs = exists
+              ? datasets.constrslt.records.map((r)=> r.CONSTNO===constno ? {...r, ...header, CONSTNO:constno} : r)
+              : [...datasets.constrslt.records, {CONSTNO:constno, ...header}];
+            const next={...datasets,
+              constrslt:{records: constrsltRecs, filename: datasets.constrslt.filename},
+              eng:{
+                records: [...(datasets.eng?.records || []).filter((r)=>r.CONSTNO!==constno), ...newEng],
+                filename: datasets.eng?.filename,
+              },
+            };
+            if(newKinds){
+              next.kind={
+                records: [...datasets.kind.records.filter((r)=>r.CONSTNO!==constno), ...newKinds],
+                filename: datasets.kind.filename,
+              };
+            }
             persist(next);
           }}
         />
