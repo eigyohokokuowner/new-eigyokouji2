@@ -1765,6 +1765,8 @@ function parseCorinsXml(xmlString, literalMap, employeeMap){
   const header={
     TNO: xmlFindText(root,"登録番号"),
     TKIND: tkind,
+    // 変更登録の場合のみ、<登録種別><変更回数>を保持する（画面では「変更１回」のように表示）
+    CHGCNT: tkindText.includes("変更") ? xmlFindText(root,"登録種別","変更回数").replace(/[^\d０-９]/g,"") : "",
     NAM1: xmlFindText(root,"件名"),
     NAM2: "",
     KYKN: isNaN(kyknIncl) ? "" : String(Math.round(kyknIncl/1.1)), // コリンズの請負金額は税込のため税抜きに変換
@@ -1785,28 +1787,27 @@ function parseCorinsXml(xmlString, literalMap, employeeMap){
   };
 
   const engBlocks=xmlAll(root,"技術者情報");
-  const projTotalDays=totalDays(header.KOKF, header.KOKT);
   const engRows=engBlocks.map((el)=>{
     const name=xmlFindText(el,"氏名");
     const roleText=xmlFindText(el,"役割");
     const emp=Object.values(employeeMap||{}).find((e)=>normName(e.ID_NAME)===normName(name));
-    const kokf01=xmlFindText(el,"従事期間","開始年月日");
-    const kokt01=xmlFindText(el,"従事期間","完了年月日");
-    // 従事割合はXMLに無いため、従事期間1の日数 ÷ 工期全体の日数 から算出する
-    const periodDays=totalDays(kokf01, kokt01);
-    const jwari=(projTotalDays>0 && periodDays>0)
-      ? String(Math.min(100, Math.round((periodDays/projTotalDays)*1000)/10))
-      : "";
+    // 技術者情報ブロック内に<従事期間>が複数ある場合（従事期間1〜3に相当）、全て取り込む。
+    // 1件もしくは0件の場合もあるため、足りない分は空欄で埋める。
+    const periodEls=xmlAll(el,"従事期間").slice(0,3);
+    const periods=periodEls.map((p)=>({from:xmlFindText(p,"開始年月日"), to:xmlFindText(p,"完了年月日")}));
+    while(periods.length<3) periods.push({from:"", to:""});
+    // 従事割合はXMLに無いため、従事期間（複数あれば全て）の合計日数 ÷ 工期全体の日数から算出する
+    const jwariPct=computeEngagementPct(periods.filter((p)=>p.from), header.KOKF, header.KOKT);
     return {
       role: roleText,
       POSICD: findCodeByName(literalMap,"TRGT",roleText),
       name,
       ENGCD: emp ? emp.ENGCD : "",
       matched: !!emp,
-      KOKF01: kokf01,
-      KOKT01: kokt01,
-      KOKF02:"", KOKT02:"", KOKF03:"", KOKT03:"",
-      JWARI: jwari,
+      KOKF01: periods[0].from, KOKT01: periods[0].to,
+      KOKF02: periods[1].from, KOKT02: periods[1].to,
+      KOKF03: periods[2].from, KOKT03: periods[2].to,
+      JWARI: jwariPct===null ? "" : String(jwariPct),
     };
   });
 
@@ -2031,6 +2032,15 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
   const kyktOpts=useMemo(()=>optionsFromLiteral(literalMap,"KYKT"),[literalMap]);
   const jcktOpts=useMemo(()=>optionsFromLiteral(literalMap,"JCKT"),[literalMap]);
   const tsbtOpts=useMemo(()=>optionsFromLiteral(literalMap,"TSBT"),[literalMap]);
+  // 登録種別の表示：「変更」で変更回数（CHGCNT）があれば「変更１回」「変更２回」のように表示する
+  const toZenDigits=(s)=>String(s).replace(/[0-9]/g,(c)=>String.fromCharCode(c.charCodeAt(0)+0xFEE0));
+  const toHanDigits=(s)=>String(s||"").replace(/[０-９]/g,(c)=>String.fromCharCode(c.charCodeAt(0)-0xFEE0));
+  const tkindLabel=(p)=>{
+    const name=lit(literalMap,"TSBT",p && p.TKIND) || "";
+    const cnt=toHanDigits(p && p.CHGCNT).replace(/[^\d]/g,"").replace(/^0+/,"");
+    if(name.includes("変更") && cnt) return "変更"+toZenDigits(cnt)+"回";
+    return name;
+  };
   const kosyOpts=useMemo(()=>optionsFromLiteral(literalMap,"KOSY"),[literalMap]);
   const kataOpts=useMemo(()=>optionsFromLiteral(literalMap,"KATA"),[literalMap]);
   const sesuOpts=useMemo(()=>optionsFromLiteral(literalMap,"SESU"),[literalMap]);
@@ -2118,20 +2128,23 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
       onCreateProject({CONSTNO:cn, ...parsed.header});
     }
 
-    const existingKinds=kindByConst[cn]||[];
-    const newKinds=parsed.kindRows.map((k)=>({CONSTNO:cn, SEQNO:"", KBN:k.KBN, KIND:k.KIND, KGAI:k.KGAI, KIKA:k.KIKA, ZAIS:k.ZAIS, KEIK:k.KEIK, HEIGH:k.HEIGH, INZU:k.INZU, SUIS:k.SUIS, SYUS:k.SYUS, HORYU:k.HORYU}));
-    onSaveKinds(cn, [...existingKinds, ...newKinds].map((k,i)=>({...k, CONSTNO:cn, SEQNO:String(i+1)})));
+    // ②種別：既存工番への追加取込みでは種別には一切触れない（新規登録時のみXMLの種別情報を登録する）。
+    if(!exists){
+      const newKinds=parsed.kindRows.map((k)=>({CONSTNO:cn, SEQNO:"", KBN:k.KBN, KIND:k.KIND, KGAI:k.KGAI, KIKA:k.KIKA, ZAIS:k.ZAIS, KEIK:k.KEIK, HEIGH:k.HEIGH, INZU:k.INZU, SUIS:k.SUIS, SYUS:k.SYUS, HORYU:k.HORYU}));
+      onSaveKinds(cn, newKinds.map((k,i)=>({...k, CONSTNO:cn, SEQNO:String(i+1)})));
+    }
 
-    const existingEng=engRecords.filter((r)=>r.CONSTNO===cn);
-    const newEng=parsed.engRows.map((e)=>({CONSTNO:cn, SEQNO:"", POSICD:e.POSICD, ENGCD:e.ENGCD, KOKF01:e.KOKF01, KOKT01:e.KOKT01, KOKF02:"", KOKT02:"", KOKF03:"", KOKT03:"", JWARI:e.JWARI}));
-    onSaveEng(cn, [...existingEng, ...newEng].map((e,i)=>({...e, CONSTNO:cn, SEQNO:String(i+1)})));
+    // ③技術者情報：既存行への追加ではなく、XMLの内容を正として全て置き換える。
+    const newEng=parsed.engRows.map((e)=>({CONSTNO:cn, SEQNO:"", POSICD:e.POSICD, ENGCD:e.ENGCD, KOKF01:e.KOKF01, KOKT01:e.KOKT01, KOKF02:e.KOKF02, KOKT02:e.KOKT02, KOKF03:e.KOKF03, KOKT03:e.KOKT03, JWARI:e.JWARI}));
+    onSaveEng(cn, newEng.map((e,i)=>({...e, CONSTNO:cn, SEQNO:String(i+1)})));
 
     const unmatched=parsed.engRows.filter((e)=>!e.matched).map((e)=>e.name);
-    let msg=(exists?"既存の工事に追加取込みしました。":"新規登録しました。")
-      +"種別"+parsed.kindRows.length+"件、技術者"+parsed.engRows.length+"件を取り込みました。";
-    if(parsed.unsupportedKind) msg+=" ※この工種カテゴリの種別自動判定には対応していないため、種別は0件です。手動で追加してください。";
+    let msg=exists
+      ? ("既存の工事を更新しました。工事情報を更新し、技術者"+parsed.engRows.length+"件をXMLの内容で置き換えました（種別は変更していません）。")
+      : ("新規登録しました。種別"+parsed.kindRows.length+"件、技術者"+parsed.engRows.length+"件を取り込みました。");
+    if(!exists && parsed.unsupportedKind) msg+=" ※この工種カテゴリの種別自動判定には対応していないため、種別は0件です。手動で追加してください。";
     if(unmatched.length) msg+=" ※社員データに見つからなかった技術者："+unmatched.join("、")+"（技術者在籍・所属管理で先に登録してから、種別・技術者の編集でコードを入力してください）";
-    msg+=" 必ず内容を確認・修正してください（従事割合は従事期間1÷工期全体日数から自動算出した参考値、製据区分などXMLに無い項目は空欄になっています。金額は税込→税抜きに換算済みです）。";
+    msg+=" 必ず内容を確認・修正してください（従事割合は従事期間（XMLに複数あれば合計）と工期全体から自動算出した参考値、製据区分などXMLに無い項目は空欄になっています。金額は税込→税抜きに換算済みです）。";
     setXmlResultMsg(msg);
     setSelected(cn);
     setQuery(cn);
@@ -2158,8 +2171,9 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
         <div className="master-add-form" style={{flexDirection:"column", alignItems:"stretch", marginBottom:18}}>
           <p style={{fontSize:12,color:"var(--muted)",margin:"0 0 10px"}}>
             コリンズから出力したXMLを貼り付けると、工事情報・種別・技術者を自動で取り込みます。
-            工番はXMLに含まれないため、既存の工番なら追加取込み、新しい工番なら新規登録になります。
-            取り込み後は必ず内容を確認・修正してください（従事割合は従事期間1と工期全体から自動算出した参考値、製据区分などXMLに無い項目は空欄になります。金額は税込→税抜きに換算します）。
+            工番はXMLに含まれないため、既存の工番なら工事情報・技術者情報を更新し、新しい工番なら工事情報・種別・技術者を新規登録します。
+            既存の工番の技術者情報は、追加ではなくXMLの内容で全て置き換わります（種別は変更しません）。
+            取り込み後は必ず内容を確認・修正してください（従事割合は従事期間（複数ある場合は合計）と工期全体から自動算出した参考値、製据区分などXMLに無い項目は空欄になります。金額は税込→税抜きに換算します）。
           </p>
           <DTInput value={xmlConstno} onChange={setXmlConstno} placeholder="工番（例：99G-9999）" mono/>
           <div className={"drop xml-drop"+(xmlDragOver?" over":"")} style={{marginTop:10, padding:"18px"}}
@@ -2477,7 +2491,16 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
                 </tr>
                 <tr>
                   <th>受注形態</th><td>{editingHeader ? <DTSelect value={hf("JTYP")} onChange={setHf("JTYP")} options={jcktOpts}/> : (lit(literalMap,"JCKT",proj.JTYP) || "-")}</td>
-                  <th>登録種別</th><td>{editingHeader ? <DTSelect value={hf("TKIND")} onChange={setHf("TKIND")} options={tsbtOpts}/> : (lit(literalMap,"TSBT",proj.TKIND) || "-")}</td>
+                  <th>登録種別</th><td>{editingHeader
+                    ? <span style={{display:"flex", gap:6, alignItems:"center"}}>
+                        <DTSelect value={hf("TKIND")} onChange={setHf("TKIND")} options={tsbtOpts}/>
+                        {(lit(literalMap,"TSBT",hf("TKIND"))||"").includes("変更") &&
+                          <span style={{display:"flex", gap:4, alignItems:"center", whiteSpace:"nowrap"}}>
+                            <span style={{width:56}}><DTInput value={hf("CHGCNT")} onChange={setHf("CHGCNT")} placeholder="回数" mono/></span>回
+                          </span>
+                        }
+                      </span>
+                    : (tkindLabel(proj) || "-")}</td>
                   <th>登録番号</th><td>{editingHeader ? <DTInput value={hf("TNO")} onChange={setHf("TNO")} mono/> : (proj.TNO || "-")}</td>
                   <th>関連工番</th><td>{editingHeader ? <DTInput value={hf("KRNO")} onChange={setHf("KRNO")} mono/> : (proj.KRNO || "-")}</td>
                 </tr>
