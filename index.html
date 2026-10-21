@@ -1214,6 +1214,21 @@ async function deleteConsiderListFromFirestore(id){
 const EXCEL_FILL_YELLOW={type:"pattern", pattern:"solid", fgColor:{argb:"FFFFF2A8"}};
 const EXCEL_FILL_RED={type:"pattern", pattern:"solid", fgColor:{argb:"FFFFC7CE"}};
 const EXCEL_FILL_HEADER={type:"pattern", pattern:"solid", fgColor:{argb:"FFE8E8E8"}};
+// 紫：「非表示にする区分」（例：修理・修繕／更新）の実績しか無いため、該当実績なしとみなす技術者
+const EXCEL_FILL_PURPLE={type:"pattern", pattern:"solid", fgColor:{argb:"FFE4DFEC"}};
+function highlightFill(h){
+  return h==="red" ? EXCEL_FILL_RED : h==="purple" ? EXCEL_FILL_PURPLE : h==="yellow" ? EXCEL_FILL_YELLOW : null;
+}
+// 紫の行がある場合だけ注意書きを出す（区分名は、紫の行に保存されている除外区分から集める）。無ければnull。
+function buildKbnLegendText(rows){
+  const names=[];
+  (rows||[]).forEach((r)=>{
+    if(r && r.highlight==="purple") (r.hiddenKbn||[]).forEach((k)=>{ if(k && !names.includes(k)) names.push(k); });
+  });
+  if(!(rows||[]).some((r)=>r && r.highlight==="purple")) return null;
+  const label = names.length ? names.map((n)=>"“"+n+"”").join("") : "除外した区分";
+  return "＊"+label+"は実績として認められないため、該当実績なし";
+}
 // 「配置予定と重複」列の文字色：工番（受注済み）＝青、案件（未受注）＝赤。
 const EXCEL_FONT_BLUE_ARGB="FF0070C0";
 const EXCEL_FONT_RED_ARGB="FFC00000";
@@ -1352,8 +1367,8 @@ function writeConsiderListSection(sheet, startRow, section){
     sheet.getCell(row,1).value=r.name || "";
     sheet.getCell(row,2).value=(r.age===null || r.age===undefined) ? "" : r.age;
     sheet.getCell(row,3).value=buildAssignConflictCellValue(r, conflictFn, true);
-    if(r.highlight==="yellow"){ [1,2,3].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_YELLOW; }); }
-    if(r.highlight==="red"){ [1,2,3].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_RED; }); }
+    const fill=highlightFill(r.highlight);
+    if(fill){ [1,2,3].forEach((c)=>{ sheet.getCell(row,c).fill=fill; }); }
     writeConflictDetailRow(sheet, row, technicianSegments[ri]);
     row+=1;
   });
@@ -1366,6 +1381,12 @@ function writeConsiderListSection(sheet, startRow, section){
   row+=1;
   sheet.getCell(row,1).value=buildConflictLegendValue();
   row+=1;
+  const kbnLegend=buildKbnLegendText(technicianList);
+  if(kbnLegend){
+    sheet.getCell(row,1).value=kbnLegend;
+    [1,2,3,4].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_PURPLE; });
+    row+=1;
+  }
   const pairCols=[];
   for(let i=0;i<maxPairs;i++){ pairCols.push({width:16},{width:45}); }
   sheet.columns=[{width:24},{width:10},{width:30},{width:40}].concat(pairCols);
@@ -1476,8 +1497,8 @@ function writeSummaryDocSheet(sheet, opts){
       nameCell.value=r.name||"";
       ageCell.value=(r.age===null||r.age===undefined) ? "" : r.age;
       conflictCell.value=buildAssignConflictCellValue(r, conflictFn, true);
-      if(r.highlight==="yellow"){ nameCell.fill=EXCEL_FILL_YELLOW; ageCell.fill=EXCEL_FILL_YELLOW; conflictCell.fill=EXCEL_FILL_YELLOW; }
-      if(r.highlight==="red"){ nameCell.fill=EXCEL_FILL_RED; ageCell.fill=EXCEL_FILL_RED; conflictCell.fill=EXCEL_FILL_RED; }
+      const fill=highlightFill(r.highlight);
+      if(fill){ nameCell.fill=fill; ageCell.fill=fill; conflictCell.fill=fill; }
     });
   });
   const maxTech=Math.max(0, ...sortedTech.map((l)=>l.length));
@@ -1490,6 +1511,12 @@ function writeSummaryDocSheet(sheet, opts){
   [1,2,3,4].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_RED; });
   row+=1;
   sheet.getCell(row,1).value=buildConflictLegendValue();
+  const kbnLegendSummary=buildKbnLegendText(sections.flatMap((s)=> s.found ? (s.technicianList||[]) : []));
+  if(kbnLegendSummary){
+    row+=1;
+    sheet.getCell(row,1).value=kbnLegendSummary;
+    [1,2,3,4].forEach((c)=>{ sheet.getCell(row,c).fill=EXCEL_FILL_PURPLE; });
+  }
 
   const perSectionCols=[{width:13},{width:8},{width:45}];
   sheet.columns=sections.flatMap(()=>perSectionCols);
@@ -4875,16 +4902,30 @@ function App(){
   };
   // 検討リスト保存時に「技術者リスト」として凍結保存するスナップショットを作る。
   // 検討リストに入れた人は技術者リストから除く。実績なし＝黄、受注工事で専任配置あり＝赤（両方当てはまる場合は赤を優先）。
+  // 実績確認状況は「非表示にする区分」で絞り込んだ後（画面に表示されている状態）のものを反映する。
+  // 区分の絞り込みで一覧から消える人（＝その区分の実績しか無い人）は紫（hiddenKbn にその区分名を保持）。
+  // 優先順位：赤（受注重複）＞ 紫（除外区分の実績のみ）＞ 黄（据付実績なし）。
   const buildTechnicianListSnapshot=()=>{
+    const kbnStatusByEngcd={};
+    exportKbnStatusPool.forEach((r)=>{ kbnStatusByEngcd[r.engcd]=r; });
+    const kbnActive = excludedKbnTypes.length>0;
     return exportCandidatePool
       .filter((r)=>!isInConsiderList(r.engcd))
-      .map((r)=>({
-        engcd: r.engcd,
-        name: r.name,
-        age: (r.age===null||r.age===undefined) ? null : r.age,
-        highlight: r.excludedForAwardedDutyOverlap ? "red" : (r.allRejected ? "yellow" : null),
-        assignConflicts: r.assignConflicts || [],
-      }));
+      .map((r)=>{
+        const kr=kbnStatusByEngcd[r.engcd];
+        const onlyExcludedKbn = kbnActive && !kr;
+        const rejected = kr ? kr.allRejected : r.allRejected;
+        const highlight = r.excludedForAwardedDutyOverlap ? "red" : (onlyExcludedKbn ? "purple" : (rejected ? "yellow" : null));
+        const out={
+          engcd: r.engcd,
+          name: r.name,
+          age: (r.age===null||r.age===undefined) ? null : r.age,
+          highlight,
+          assignConflicts: r.assignConflicts || [],
+        };
+        if(highlight==="purple") out.hiddenKbn=[...excludedKbnTypes];
+        return out;
+      });
   };
   const doSaveConsiderList=async()=>{
     const title=saveTitleInput.trim();
@@ -5405,8 +5446,11 @@ function App(){
   // 受注工事で専任配置が重複する技術者を除く、など「見やすくするための絞り込み」まで適用した結果＝results。
   // applyDisplayFilters=false はそれらの絞り込みを適用しない「技術者要件にさえ合致していれば含む」候補プールで、
   // Excel／まとめ資料の技術者リスト（黄＝据付実績なし・赤＝受注工事で専任配置重複、を見せるための母集団）に使う。
-  const computeCandidatePool=(applyDisplayFilters)=>{
+  // applyKbnFilter：「非表示にする区分」だけを個別に適用するかどうか（省略時はapplyDisplayFiltersと同じ）。
+  // Excel用に「区分の絞り込みだけ反映した実績確認状況」を求めるとき、(false, true) で呼ぶ。
+  const computeCandidatePool=(applyDisplayFilters, applyKbnFilterArg)=>{
     if(!requiredLoaded || !searched) return [];
+    const applyKbnFilter = applyKbnFilterArg===undefined ? applyDisplayFilters : applyKbnFilterArg;
     const keikMinN = keikMin==="" ? null : parseFloat(keikMin);
     const heighMinN = heighMin==="" ? null : parseFloat(heighMin);
     const areaMinN = areaMin==="" ? null : parseFloat(areaMin);
@@ -5519,10 +5563,11 @@ function App(){
 
       // 「非表示にする区分」フィルター（画面表示用）：選択した区分（例：修理・修繕／更新）の実績を候補一覧から除外する。
       // 技術者要件そのものではなく表示の絞り込みなので、Excel／まとめ資料用の候補プール（applyDisplayFilters=false）には適用しない。
-      const kbnFilteredKinds = (applyDisplayFilters && excludedKbnTypes.length)
+      // ＊Excel／まとめ資料では、この区分絞り込み後の実績確認状況を色分けに使う（exportKbnStatusPool参照）。
+      const kbnFilteredKinds = (applyKbnFilter && excludedKbnTypes.length)
         ? (proj.kinds||[]).filter((k)=> !excludedKbnTypes.includes(lookupLit("SESU", k.KBN)))
         : (proj.kinds||[]);
-      if(applyDisplayFilters && excludedKbnTypes.length && kbnFilteredKinds.length===0) return;
+      if(applyKbnFilter && excludedKbnTypes.length && kbnFilteredKinds.length===0) return;
 
       const hasKindFilter = selectedGateCategory.length || selectedGateType.length || selectedGateStructure.length || selectedKaihei.length || keikMinN!==null || heighMinN!==null || areaMinN!==null || suisMinN!==null || syusMinN!==null || horyuMinN!==null;
       const matchingKinds=kbnFilteredKinds.filter((k)=>{
@@ -5784,6 +5829,11 @@ function App(){
   // Excel／まとめ資料の「技術者リスト」専用：表示絞り込み（実績確認状況・検討リスト追加済み・受注重複を除く等）の影響を受けない候補プール。
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const exportCandidatePool=useMemo(()=>computeCandidatePool(false), candidatePoolDeps);
+  // Excel／まとめ資料の色分け用：「非表示にする区分」だけを反映した候補プール（他の表示絞り込みは適用しない）。
+  // ここに居ない人＝その区分の実績しか持たない人（紫：実績として認められないため該当実績なし）。
+  // ここに居る人は、区分絞り込み後の実績確認状況（据付実績なし→黄）で色分けする。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const exportKbnStatusPool=useMemo(()=>computeCandidatePool(false, true), candidatePoolDeps);
 
   const sortedResults=useMemo(()=>{
     if(sortMode==="default") return results;
