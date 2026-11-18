@@ -379,6 +379,10 @@
     padding:10px 14px;border-bottom:1px solid var(--line-soft);font-size:13px;background:var(--panel);}
   .master-row:last-child{border-bottom:none;}
   .master-row.retired{background:var(--panel-raised);opacity:.75;}
+  /* 退職者一覧だけ「退職日」列を追加する */
+  .master-list.retired-list .master-row{grid-template-columns:90px 64px 150px 1fr 120px 92px 76px 136px 138px;}
+  .m-retire-date{font-family:var(--mono);font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;
+    background:var(--panel);color:var(--ink);width:100%;min-width:0;}
   .master-row-head{background:var(--panel-raised);font-family:var(--mono);font-size:10.5px;color:var(--muted2);
     letter-spacing:.04em;padding:8px 14px;}
   .m-code{font-family:var(--mono);color:var(--cyan);font-size:12px;}
@@ -445,7 +449,7 @@
   .detail-table td.num{font-family:var(--mono);text-align:right;}
   .detail-table td.empty{text-align:center;color:var(--faint);white-space:normal;background:#fff;}
   @media(max-width:720px){
-    .master-row{grid-template-columns:70px 1fr 70px;}
+    .master-row, .master-list.retired-list .master-row{grid-template-columns:70px 1fr 70px;}
     .master-row .m-comp{display:none;}
     .master-row .m-gender{display:none;}
     .master-row .m-office{display:none;}
@@ -907,7 +911,7 @@ function parseCsvFile(file){
 // 再取り込み時に、CSVには含まれず画面上で手入力した項目を消さないための設定
 // fallback系＝CSV側が空/列なしのときだけ既存値を残す。always系＝CSVに値があっても常に既存値を残す（上書きしない）。
 const MANUAL_KEYS = {
-  employee:["OFFICE_TECH"],
+  employee:["OFFICE_TECH","RETIRE_DATE"],
 };
 const ALWAYS_KEEP_KEYS = {
   constrslt:["SSDAY","KOJDAY","CORINS_URL","SCHEDULE_URL","SCHEDULE_NA","SCHED_CHECKED","RATING_PDF_URL","AWARD_PDF_URL"],
@@ -3165,6 +3169,15 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
     onSave(next);
     setEditingCode(null);
   };
+  // 退職日（RETIRE_DATE）はアプリ内の他の日付と同じくYYYYMMDDで保存し、入力欄（type="date"）とはYYYY-MM-DDで受け渡す
+  const retireDateToInput=(v)=>{ const d=normDigits8(v); return d ? d.slice(0,4)+"-"+d.slice(4,6)+"-"+d.slice(6,8) : ""; };
+  const setRetireDate=(engcd, inputVal)=>{
+    const v=String(inputVal||"").replace(/-/g,"");
+    if(v && !/^\d{8}$/.test(v)) return;
+    const cur=employees.find((e)=>e.ENGCD===engcd);
+    if(cur && (cur.RETIRE_DATE||"")===v) return;
+    onSave(employees.map((e)=> e.ENGCD===engcd ? {...e, RETIRE_DATE:v} : e));
+  };
   const toggleStatus=(emp)=>{
     const next=employees.map((e)=> e.ENGCD===emp.ENGCD ? {...e, STATUS: e.STATUS==="retired" ? "active" : "retired"} : e);
     onSave(next);
@@ -3372,6 +3385,16 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
           const isEditing=editingCode===emp.ENGCD;
           const licCodes=engLicMap[emp.ENGCD]||[];
           const licOpen=expandedLic===emp.ENGCD;
+          // 退職日：その場で入力・変更でき、日付が確定した時点で保存される（クリアも可）
+          const retireCell=(
+            <span>
+              <input type="date" className="m-retire-date" title="退職日"
+                key={emp.ENGCD+"|"+(emp.RETIRE_DATE||"")}
+                defaultValue={retireDateToInput(emp.RETIRE_DATE)}
+                onBlur={(e)=>setRetireDate(emp.ENGCD, e.target.value)}
+                onKeyDown={(e)=>{ if(e.key==="Enter") e.target.blur(); }}/>
+            </span>
+          );
           return (
             <React.Fragment key={emp.ENGCD}>
             <div className={"master-row"+(retired?" retired":"")}>
@@ -3397,6 +3420,7 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
                   </span>
                   <span></span>
                   <span></span>
+                  {retired && retireCell}
                   <span className="m-actions">
                     <button className="btn-outline" onClick={()=>saveEdit(emp.ENGCD)}>保存</button>
                     <button className="btn-ghost" onClick={cancelEdit}>取消</button>
@@ -3418,6 +3442,7 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
                     資格 {licCodes.length}件 {licOpen ? <Ic.Down/> : <Ic.Right/>}
                   </button>
                   <span className={"m-badge"+(retired?" retired":"")}>{retired ? "退職" : "在職"}</span>
+                  {retired && retireCell}
                   <span className="m-actions">
                     <button className="btn-ghost" onClick={()=>startEdit(emp)}><Ic.Edit/></button>
                     <button className="btn-ghost" onClick={()=>toggleStatus(emp)}>
@@ -3455,7 +3480,7 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
 
         const activeList=filtered.filter((e)=>e.STATUS!=="retired");
         const retiredList=filtered.filter((e)=>e.STATUS==="retired");
-        const head=(
+        const makeHead=(withRetireDate)=>(
           <div className="master-row master-row-head">
             <span className="m-code">コード</span>
             <span className="m-gender">性別</span>
@@ -3464,6 +3489,7 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
             <span className="m-office">営業所専任技術者</span>
             <span>資格</span>
             <span className="m-status">状態</span>
+            {withRetireDate && <span>退職日</span>}
             <span></span>
           </div>
         );
@@ -3472,14 +3498,14 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
           <React.Fragment>
             <div className="master-group-label">在職者（{activeList.length}名）</div>
             <div className="master-list">
-              {head}
+              {makeHead(false)}
               {activeList.map(renderRow)}
               {activeList.length===0 && <div className="empty">該当する在職者がいません</div>}
             </div>
 
             <div className="master-group-label retired">退職者（{retiredList.length}名）</div>
-            <div className="master-list">
-              {head}
+            <div className="master-list retired-list">
+              {makeHead(true)}
               {retiredList.map(renderRow)}
               {retiredList.length===0 && <div className="empty">該当する退職者がいません</div>}
             </div>
