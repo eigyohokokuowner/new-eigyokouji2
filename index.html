@@ -4446,8 +4446,8 @@ function LoginUsageModal({onClose, employees}){
   );
 }
 
-function MasterMaintenance({literals, onSaveLiterals, employees}){
-  const [activeMaster,setActiveMaster]=useState("SHRU"); // 現状は「種別」のみ。将来他のコード種別を追加する余地を残す
+function MasterMaintenance({literals, onSaveLiterals, employees, licenses, engLicenses, onSaveLicenses}){
+  const [activeMaster,setActiveMaster]=useState("SHRU"); // "SHRU"=種別（コードマスタ）／"LIC"=資格（資格マスタ）
   const [query,setQuery]=useState("");
   const [editingCode,setEditingCode]=useState(null);
   const [editDraft,setEditDraft]=useState("");
@@ -4459,27 +4459,62 @@ function MasterMaintenance({literals, onSaveLiterals, employees}){
 
   const MASTERS=[
     {type:"SHRU", label:"種別"},
+    // 資格：技術者在籍・所属管理の「資格を選択して追加...」プルダウンに出る一覧（資格マスタ datasets.licenses）
+    {type:"LIC", label:"資格"},
   ];
+  const isLic = activeMaster==="LIC";
 
+  // 資格ごとの保有登録人数（削除時の注意表示・一覧表示用）
+  const licHolderCount=useMemo(()=>{
+    const map={};
+    (engLicenses||[]).forEach((r)=>{ const c=normLicCode(r.LICCD); map[c]=(map[c]||0)+1; });
+    return map;
+  },[engLicenses]);
+
+  // 一覧は種別・資格とも {LTLCD:コード, LTLNM:名称} の形にそろえて表示する
   const rows=useMemo(()=>{
-    const list=(literals||[]).filter((r)=>r.CDTYP===activeMaster);
+    const list = isLic
+      ? (licenses||[]).map((l)=>({LTLCD:l.LICCD, LTLNM:l.LICNM}))
+      : (literals||[]).filter((r)=>r.CDTYP===activeMaster);
     const q=query.trim();
     return list
       .filter((r)=> !q || (r.LTLNM||"").includes(q) || String(r.LTLCD||"").includes(q))
       .sort((a,b)=>parseFloat(a.LTLCD)-parseFloat(b.LTLCD));
-  },[literals, activeMaster, query]);
+  },[literals, licenses, isLic, activeMaster, query]);
+
+  // 資格の新規登録時に、既存の最大コード＋1を初期値として入れておく（4桁ゼロ埋め）
+  const nextLicCode=()=>{
+    const max=(licenses||[]).reduce((m,l)=>{ const n=parseInt(l.LICCD,10); return isNaN(n) ? m : Math.max(m,n); }, 0);
+    return normLicCode(String(max+1));
+  };
 
   const startEdit=(r)=>{ setEditingCode(r.LTLCD); setEditDraft(r.LTLNM||""); };
   const cancelEdit=()=>{ setEditingCode(null); setEditDraft(""); };
   const saveEdit=(code)=>{
     const name=editDraft.trim();
     if(!name){ return; }
-    const next=(literals||[]).map((r)=> (r.CDTYP===activeMaster && r.LTLCD===code) ? {...r, LTLNM:name} : r);
-    onSaveLiterals(next);
+    if(isLic){
+      if((licenses||[]).some((l)=> l.LICCD!==code && normLicName(l.LICNM)===normLicName(name))){
+        window.alert("同じ名称の資格が既に登録されています"); return;
+      }
+      onSaveLicenses((licenses||[]).map((l)=> l.LICCD===code ? {...l, LICNM:name} : l));
+    } else {
+      const next=(literals||[]).map((r)=> (r.CDTYP===activeMaster && r.LTLCD===code) ? {...r, LTLNM:name} : r);
+      onSaveLiterals(next);
+    }
     setEditingCode(null);
   };
   const deleteRow=(code)=>{
     if(!confirmDeletePassword()) return;
+    if(isLic){
+      const holders=licHolderCount[normLicCode(code)]||0;
+      const msg = holders>0
+        ? ("この資格は現在"+holders+"名が保有登録しています。\n削除すると選択肢から消え、保有者の資格表示は「資格("+code+")」のようなコード表示になり、資格での検索にも引っかからなくなります（保有登録自体は残ります）。\n削除してよろしいですか？")
+        : "この資格を削除します（保有登録している人はいません）。よろしいですか？";
+      if(!window.confirm(msg)) return;
+      onSaveLicenses((licenses||[]).filter((l)=> l.LICCD!==code));
+      return;
+    }
     if(!window.confirm("この種別を削除します。既存の工事データで使われている場合、名称がコード表示になります。よろしいですか？")) return;
     const next=(literals||[]).filter((r)=> !(r.CDTYP===activeMaster && r.LTLCD===code));
     onSaveLiterals(next);
@@ -4488,11 +4523,18 @@ function MasterMaintenance({literals, onSaveLiterals, employees}){
     const code=newCode.trim();
     const name=newName.trim();
     if(!/^\d+$/.test(code)){ setFormError("コードは数字で入力してください"); return; }
-    if((literals||[]).some((r)=> r.CDTYP===activeMaster && normCode(r.LTLCD)===normCode(code))){
-      setFormError("そのコードは既に登録されています"); return;
-    }
     if(!name){ setFormError("名称を入力してください"); return; }
-    onSaveLiterals([...(literals||[]), {CDTYP:activeMaster, LTLCD:code, LTLNM:name}]);
+    if(isLic){
+      const lc=normLicCode(code);
+      if((licenses||[]).some((l)=> normLicCode(l.LICCD)===lc)){ setFormError("そのコードは既に登録されています"); return; }
+      if((licenses||[]).some((l)=> normLicName(l.LICNM)===normLicName(name))){ setFormError("同じ名称の資格が既に登録されています"); return; }
+      onSaveLicenses([...(licenses||[]), {LICCD:lc, LICNM:name, LICEFG:""}]);
+    } else {
+      if((literals||[]).some((r)=> r.CDTYP===activeMaster && normCode(r.LTLCD)===normCode(code))){
+        setFormError("そのコードは既に登録されています"); return;
+      }
+      onSaveLiterals([...(literals||[]), {CDTYP:activeMaster, LTLCD:code, LTLNM:name}]);
+    }
     setNewCode(""); setNewName(""); setShowAdd(false); setFormError("");
   };
 
@@ -4507,7 +4549,10 @@ function MasterMaintenance({literals, onSaveLiterals, employees}){
           <button className="btn-outline" onClick={()=>setShowLoginUsage(true)}>
             <Ic.Chart/> ログイン・利用状況
           </button>
-          <button className="btn-outline" onClick={()=>{ setShowAdd((v)=>!v); setFormError(""); }}>
+          <button className="btn-outline" onClick={()=>{
+            if(!showAdd && isLic && !newCode) setNewCode(nextLicCode());
+            setShowAdd((v)=>!v); setFormError("");
+          }}>
             <Ic.Plus/> 新規{MASTERS.find((m)=>m.type===activeMaster).label}を登録
           </button>
         </div>
@@ -4518,7 +4563,7 @@ function MasterMaintenance({literals, onSaveLiterals, employees}){
       <div className="tabs" style={{marginBottom:14}}>
         {MASTERS.map((m)=>(
           <button key={m.type} className={"tab-btn"+(activeMaster===m.type?" active":"")}
-            onClick={()=>{ setActiveMaster(m.type); setQuery(""); setShowAdd(false); cancelEdit(); }}>
+            onClick={()=>{ setActiveMaster(m.type); setQuery(""); setShowAdd(false); setNewCode(""); setNewName(""); setFormError(""); cancelEdit(); }}>
             {m.label}
           </button>
         ))}
@@ -4537,21 +4582,23 @@ function MasterMaintenance({literals, onSaveLiterals, employees}){
         value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="コード・名称で検索"/>
 
       <div className="master-list">
-        <div className="master-row master-row-head" style={{gridTemplateColumns:"110px 1fr 160px"}}>
+        <div className="master-row master-row-head" style={{gridTemplateColumns: isLic ? "110px 1fr 100px 160px" : "110px 1fr 160px"}}>
           <span className="m-code">コード</span>
           <span className="m-name">名称</span>
+          {isLic && <span>保有者数</span>}
           <span></span>
         </div>
         {rows.map((r)=>{
           const isEditing=editingCode===r.LTLCD;
           return (
-            <div key={r.LTLCD} className="master-row" style={{gridTemplateColumns:"110px 1fr 160px"}}>
+            <div key={r.LTLCD} className="master-row" style={{gridTemplateColumns: isLic ? "110px 1fr 100px 160px" : "110px 1fr 160px"}}>
               <span className="m-code">{r.LTLCD}</span>
               {isEditing ? (
                 <input className="m-input" value={editDraft} onChange={(e)=>setEditDraft(e.target.value)}/>
               ) : (
                 <span className="m-name">{r.LTLNM}</span>
               )}
+              {isLic && <span style={{fontSize:12.5, color:"var(--muted)"}}>{(licHolderCount[normLicCode(r.LTLCD)]||0)+"名"}</span>}
               <span className="m-actions">
                 {isEditing ? (
                   <React.Fragment>
@@ -6462,6 +6509,12 @@ function App(){
             persist(next);
           }}
           employees={datasets.employee?.records || []}
+          licenses={datasets.licenses?.records || []}
+          engLicenses={datasets.englicense?.records || []}
+          onSaveLicenses={(records)=>{
+            const next={...datasets, licenses:{records, filename: datasets.licenses?.filename || "手動編集"}};
+            persist(next);
+          }}
         />
       }
 
