@@ -414,7 +414,14 @@
   .m-detail-field label{font-size:11px;color:var(--muted);font-weight:600;}
   .m-detail-field input[type="text"],.m-detail-field input[type="date"]{font-size:12.5px;padding:6px 8px;border:1px solid var(--line);
     border-radius:6px;background:var(--panel);color:var(--ink);min-width:0;width:100%;}
-  .m-detail-field input:disabled{background:transparent;border-color:transparent;padding-left:0;color:var(--ink);}
+  .m-detail-field select{font-size:12.5px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;
+    background:var(--panel);color:var(--ink);min-width:0;width:100%;}
+  .m-detail-name{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:12px;}
+  .m-detail-name label{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink);cursor:pointer;}
+  .m-detail-name input[type="checkbox"]{width:15px;height:15px;}
+  .m-detail-name input[type="text"]{font-size:12.5px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;
+    background:var(--panel);color:var(--ink);width:220px;max-width:100%;}
+  .m-detail-name input[type="text"]:disabled{background:var(--panel-raised);color:var(--muted);}
   .m-detail-checks{display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-top:12px;}
   .m-detail-checks label{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink);cursor:pointer;}
   .m-detail-checks input[type="checkbox"]{width:15px;height:15px;}
@@ -924,7 +931,7 @@ function parseCsvFile(file){
 // 再取り込み時に、CSVには含まれず画面上で手入力した項目を消さないための設定
 // fallback系＝CSV側が空/列なしのときだけ既存値を残す。always系＝CSVに値があっても常に既存値を残す（上書きしない）。
 const MANUAL_KEYS = {
-  employee:["OFFICE_TECH","RETIRE_DATE","HR_DATE","CONST_KBN","WORKPLACE","EMP_TYPE","OLD_NAME","NEW_NAME","REG_CPDS","REG_CPD_NORIN","REG_CORINS"],
+  employee:["OFFICE_TECH","RETIRE_DATE","HR_DATE","CONST_KBN","WORKPLACE","EMP_TYPE","OLD_NAME","NEW_NAME","NAME_CHANGE_TYPE","NAME_CHANGE","REG_CPDS","REG_CPD_NORIN","REG_CORINS"],
 };
 const ALWAYS_KEEP_KEYS = {
   constrslt:["SSDAY","KOJDAY","CORINS_URL","SCHEDULE_URL","SCHEDULE_NA","SCHED_CHECKED","RATING_PDF_URL","AWARD_PDF_URL"],
@@ -3130,34 +3137,33 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
   const [detailDraft,setDetailDraft]=useState({});
 
   // 詳細情報の項目定義（保存キーはemployeeレコードに直接持たせる）
+  // 建設業区分・勤務地・雇用区分名はプルダウンで選ぶ（選択肢は固定）
   const DETAIL_TEXT_FIELDS=[
-    {key:"CONST_KBN", label:"建設業区分"},
-    {key:"WORKPLACE", label:"勤務地"},
-    {key:"EMP_TYPE",  label:"雇用区分名"},
-    {key:"OLD_NAME",  label:"旧姓"},
-    {key:"NEW_NAME",  label:"新姓"},
+    {key:"CONST_KBN", label:"建設業区分", options:["イロハ","事務","その他","？"]},
+    {key:"WORKPLACE", label:"勤務地", options:["本社（西条）","東京（東茅場町）","北海道（江別市）","仙台","新潟","静岡営業所","名古屋","大阪","本社（中四国）","久留米"]},
+    {key:"EMP_TYPE",  label:"雇用区分名", options:["役員","年俸","社員","契約社員"]},
   ];
+  // 旧姓／新姓：どちらか一方にチェックして名前を入力する（NAME_CHANGE_TYPE="旧姓"|"新姓"、NAME_CHANGE=名前）
+  const NAME_CHANGE_TYPES=["旧姓","新姓"];
   const DETAIL_CHECKS=[
     {key:"REG_CPDS",      label:"建設系CPDS"},
     {key:"REG_CPD_NORIN", label:"農林系CPD"},
     {key:"REG_CORINS",    label:"コリンズ"},
   ];
-  const DETAIL_KEYS=["HR_DATE", ...DETAIL_TEXT_FIELDS.map((f)=>f.key), ...DETAIL_CHECKS.map((c)=>c.key)];
-  const hasDetail=(emp)=> DETAIL_KEYS.some((k)=> emp[k]);
-  // 建設業区分・勤務地・雇用区分名は、入力済みの値を候補として出し表記ゆれを防ぐ
-  const detailSuggestions=useMemo(()=>{
-    const out={};
-    ["CONST_KBN","WORKPLACE","EMP_TYPE"].forEach((k)=>{
-      out[k]=[...new Set(employees.map((e)=>String(e[k]||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"ja"));
-    });
-    return out;
-  },[employees]);
+  const DETAIL_KEYS=["HR_DATE", ...DETAIL_TEXT_FIELDS.map((f)=>f.key), "NAME_CHANGE", ...DETAIL_CHECKS.map((c)=>c.key)];
+  const hasDetail=(emp)=> DETAIL_KEYS.some((k)=> emp[k]) || emp.OLD_NAME || emp.NEW_NAME;
   const ymd8ToInput=(v)=>{ const d=normDigits8(v); return d ? d.slice(0,4)+"-"+d.slice(4,6)+"-"+d.slice(6,8) : ""; };
   const openDetail=(emp)=>{
     if(expandedDetail===emp.ENGCD){ setExpandedDetail(null); return; }
     const d={};
     DETAIL_KEYS.forEach((k)=>{ d[k]=emp[k]||""; });
     d.HR_DATE=ymd8ToInput(emp.HR_DATE);
+    d.NAME_CHANGE_TYPE=emp.NAME_CHANGE_TYPE||"";
+    // 前の版で旧姓・新姓を別々の欄（OLD_NAME/NEW_NAME）に入れていた場合は、それを引き継いで表示する
+    if(!d.NAME_CHANGE_TYPE && !d.NAME_CHANGE){
+      if(emp.OLD_NAME){ d.NAME_CHANGE_TYPE="旧姓"; d.NAME_CHANGE=emp.OLD_NAME; }
+      else if(emp.NEW_NAME){ d.NAME_CHANGE_TYPE="新姓"; d.NAME_CHANGE=emp.NEW_NAME; }
+    }
     setDetailDraft(d);
     setExpandedDetail(emp.ENGCD);
   };
@@ -3166,6 +3172,11 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
     DETAIL_TEXT_FIELDS.forEach((f)=>{ patch[f.key]=String(detailDraft[f.key]||"").trim(); });
     DETAIL_CHECKS.forEach((c)=>{ patch[c.key]=detailDraft[c.key] ? "1" : ""; });
     patch.HR_DATE=String(detailDraft.HR_DATE||"").replace(/-/g,"");
+    // 旧姓/新姓のどちらにもチェックが無い場合は名前も空にする
+    const nct=NAME_CHANGE_TYPES.includes(detailDraft.NAME_CHANGE_TYPE) ? detailDraft.NAME_CHANGE_TYPE : "";
+    patch.NAME_CHANGE_TYPE=nct;
+    patch.NAME_CHANGE= nct ? String(detailDraft.NAME_CHANGE||"").trim() : "";
+    patch.OLD_NAME=""; patch.NEW_NAME=""; // 旧形式の欄は新形式に移したので空にする
     onSave(employees.map((e)=> e.ENGCD===engcd ? {...e, ...patch} : e));
     setExpandedDetail(null);
   };
@@ -3200,7 +3211,7 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
   const filtered=useMemo(()=>{
     const q=query.trim();
     let list=[...employees].sort((a,b)=>(a.ID_NAME||"").localeCompare(b.ID_NAME||"","ja"));
-    if(q) list=list.filter((e)=>(e.ID_NAME||"").includes(q) || (e.ENGCD||"").includes(q) || (e.OLD_NAME||"").includes(q) || (e.NEW_NAME||"").includes(q));
+    if(q) list=list.filter((e)=>(e.ID_NAME||"").includes(q) || (e.ENGCD||"").includes(q) || (e.NAME_CHANGE||"").includes(q) || (e.OLD_NAME||"").includes(q) || (e.NEW_NAME||"").includes(q));
     return list;
   },[employees,query]);
 
@@ -3522,19 +3533,33 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
                     <input type="date" value={detailDraft.HR_DATE||""}
                       onChange={(e)=>setDetailDraft({...detailDraft, HR_DATE:e.target.value})}/>
                   </div>
-                  {DETAIL_TEXT_FIELDS.map((f)=>(
-                    <div key={f.key} className="m-detail-field">
-                      <label>{f.label}</label>
-                      <input type="text" value={detailDraft[f.key]||""}
-                        list={detailSuggestions[f.key] ? "m-detail-dl-"+f.key : undefined}
-                        onChange={(e)=>setDetailDraft({...detailDraft, [f.key]:e.target.value})}/>
-                      {detailSuggestions[f.key] &&
-                        <datalist id={"m-detail-dl-"+f.key}>
-                          {detailSuggestions[f.key].map((v)=><option key={v} value={v}/>)}
-                        </datalist>
-                      }
-                    </div>
+                  {DETAIL_TEXT_FIELDS.map((f)=>{
+                    const cur=detailDraft[f.key]||"";
+                    // 前の版で自由入力した値が選択肢に無い場合も、消えないよう選択肢に残して表示する
+                    const opts = cur && !f.options.includes(cur) ? [...f.options, cur] : f.options;
+                    return (
+                      <div key={f.key} className="m-detail-field">
+                        <label>{f.label}</label>
+                        <select value={cur} onChange={(e)=>setDetailDraft({...detailDraft, [f.key]:e.target.value})}>
+                          <option value="">未選択</option>
+                          {opts.map((o)=><option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="m-detail-name">
+                  {NAME_CHANGE_TYPES.map((t)=>(
+                    <label key={t}>
+                      <input type="checkbox" checked={detailDraft.NAME_CHANGE_TYPE===t}
+                        onChange={(e)=>setDetailDraft({...detailDraft, NAME_CHANGE_TYPE: e.target.checked ? t : ""})}/>
+                      {t}
+                    </label>
                   ))}
+                  <input type="text" value={detailDraft.NAME_CHANGE||""}
+                    disabled={!detailDraft.NAME_CHANGE_TYPE}
+                    placeholder={detailDraft.NAME_CHANGE_TYPE ? (detailDraft.NAME_CHANGE_TYPE+"を入力") : "旧姓・新姓のどちらかにチェック"}
+                    onChange={(e)=>setDetailDraft({...detailDraft, NAME_CHANGE:e.target.value})}/>
                 </div>
                 <div className="m-detail-checks">
                   <span style={{fontSize:11, color:"var(--muted)", fontWeight:600}}>登録情報</span>
