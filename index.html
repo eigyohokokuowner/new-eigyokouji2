@@ -1768,6 +1768,26 @@ function dakutenNormalize(s){
 function normName(s){
   return (s||"").replace(/[\s　]/g,"");
 }
+// 氏名の旧字体・異体字（例：内藏田→内蔵田、髙→高、﨑→崎、邊→辺）を新字体にそろえる対応表。
+// コリンズのXMLと社員データで字体が違っても同一人物として突き合わせられるようにする。
+const NAME_KANJI_VARIANTS={"藏":"蔵","髙":"高","﨑":"崎","嵜":"崎","邊":"辺","邉":"辺","澤":"沢","齋":"斎","齊":"斉","濱":"浜","廣":"広","櫻":"桜","嶋":"島","嶌":"島","國":"国","德":"徳","惠":"恵","冨":"富","峯":"峰","槇":"槙","遙":"遥","實":"実","壽":"寿","榮":"栄","學":"学","縣":"県","淺":"浅","黑":"黒","瀨":"瀬","龍":"竜","條":"条","眞":"真","與":"与","晉":"晋","曻":"昇","莊":"荘","藝":"芸","萬":"万","廸":"迪","增":"増","爲":"為","圓":"円","鐵":"鉄","聰":"聡","彌":"弥","豐":"豊","禮":"礼","靜":"静","驒":"騨","戶":"戸","團":"団","對":"対","應":"応","傳":"伝","當":"当","恆":"恒","淸":"清","瑤":"瑶","槪":"概","敎":"教","顯":"顕","繩":"縄","雜":"雑","兒":"児","佛":"仏","來":"来","邨":"村","萠":"萌","凉":"涼","乘":"乗","藥":"薬","舘":"館","蘆":"芦","籠":"篭","讚":"讃","滿":"満","勳":"勲","巖":"巌","嚴":"厳"};
+function normNameVariant(s){
+  return normName(s).replace(/./gu,(c)=>NAME_KANJI_VARIANTS[c]||c);
+}
+// 氏名から社員を探す。①スペースだけ無視して完全一致 → ②旧字体・異体字もそろえて一致、の順。
+// ②で複数人見つかった場合は在職者を優先し、それでも複数なら特定できないので見つからない扱い（誤った紐付けを防ぐ）。
+function findEmployeeByName(employeeMap, name){
+  const list=Object.values(employeeMap||{});
+  const key=normName(name);
+  if(!key) return null;
+  const exact=list.find((e)=>normName(e.ID_NAME)===key);
+  if(exact) return exact;
+  const vkey=normNameVariant(name);
+  const hits=list.filter((e)=>normNameVariant(e.ID_NAME)===vkey);
+  if(hits.length<=1) return hits[0]||null;
+  const active=hits.filter((e)=>e.STATUS!=="retired");
+  return active.length===1 ? active[0] : null;
+}
 function findCodeByName(literalMap, type, name){
   if(!name) return "";
   const map=literalMap[type]||{};
@@ -1841,7 +1861,7 @@ function parseCorinsXml(xmlString, literalMap, employeeMap){
   const engRows=engBlocks.map((el)=>{
     const name=xmlFindText(el,"氏名");
     const roleText=xmlFindText(el,"役割");
-    const emp=Object.values(employeeMap||{}).find((e)=>normName(e.ID_NAME)===normName(name));
+    const emp=findEmployeeByName(employeeMap, name);
     // 技術者情報ブロック内に<従事期間>が複数ある場合（従事期間1〜3に相当）、全て取り込む。
     // 1件もしくは0件の場合もあるため、足りない分は空欄で埋める。
     const periodEls=xmlAll(el,"従事期間").slice(0,3);
@@ -2153,8 +2173,7 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
   const resolveEngcdByName=(inputVal)=>{
     const s=String(inputVal||"").trim();
     if(!s || /^\d+$/.test(s)) return null;
-    const key=s.replace(/\s+/g,"");
-    const found=Object.values(employeeMap||{}).find((e)=>(e.ID_NAME||"").replace(/\s+/g,"")===key);
+    const found=findEmployeeByName(employeeMap, s);
     return found ? found.ENGCD : null;
   };
 
