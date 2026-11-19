@@ -63,6 +63,17 @@
   tr.retired td{color:#9a9fae;}
   .sticky-l{position:sticky;z-index:5;background:#fff;}
   th.sticky-l{z-index:20;}
+  .order-bar{display:none;align-items:center;gap:8px;padding:8px 14px;background:#fff7d6;border-bottom:1px solid #ecd27a;}
+  .editing-order .order-bar{display:flex;}
+  .editing-order tbody tr{cursor:grab;}
+  tbody tr.dragging td{opacity:.35;}
+  tbody tr.drop-before td{box-shadow:inset 0 2px 0 #2f6fed;}
+  tbody tr.drop-after td{box-shadow:inset 0 -2px 0 #2f6fed;}
+  tbody tr.moved td{background:#fff3b0!important;}
+  .code-edit{display:flex;align-items:center;gap:3px;justify-content:space-between;}
+  .code-edit .grip{color:#8a90a0;cursor:grab;font-size:13px;}
+  .code-edit button{border:1px solid var(--line);background:#fff;border-radius:4px;padding:0 4px;line-height:15px;font-size:10px;cursor:pointer;}
+  .code-edit button:hover{border-color:var(--accent);color:var(--accent);}
   td.age-alert{color:#d32f2f;font-weight:700;}
 
   .fbtn{width:100%;height:20px;border:none;background:transparent;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:flex-end;padding:0 4px;}
@@ -119,11 +130,19 @@
     <label class="chk"><input type="checkbox" id="extraChk" /> 詳細項目を表示</label>
     <label class="chk"><input type="checkbox" id="freezeChk" checked /> 社員番号〜氏名を固定</label>
     <button class="btn" id="clearBtn">絞り込みをすべて解除</button>
+    <button class="btn" id="orderBtn" hidden>並び順を編集</button>
     <span class="spacer"></span>
     <button class="btn" id="unmatchedBtn">列に無い資格</button>
     <button class="btn" id="reloadBtn">最新データを再取得</button>
     <button class="btn primary" id="xlsxBtn">Excelで出力</button>
     <button class="btn" id="logoutBtn">ログアウト</button>
+  </div>
+  <div class="order-bar">
+    <b>並び順の編集中</b>
+    <span>行をドラッグするか、社員番号の横の ▲▼ で移動できます。</span>
+    <span class="spacer"></span>
+    <button class="btn" id="orderCancelBtn">キャンセル</button>
+    <button class="btn primary" id="orderSaveBtn">この順で保存</button>
   </div>
   <div class="table-wrap" id="wrap"><div class="loading">データを読み込んでいます…</div></div>
 </div>
@@ -139,7 +158,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 /* =====================================================================
    Firebase設定（新営業工事実績システム２と同じプロジェクト）
@@ -266,7 +285,10 @@ const SORT_ORDER=[
   "900106","910116","491846","960107","990110","100107",
 ];
 const normCode=(v)=>{ const s=String(v||"").trim(); return /^\d+$/.test(s) ? String(parseInt(s,10)) : s; };
-const ORDER_INDEX=new Map(SORT_ORDER.map((c,i)=>[normCode(c),i]));
+let ORDER_INDEX=new Map(SORT_ORDER.map((c,i)=>[normCode(c),i]));
+function setOrder(codes){ ORDER_INDEX=new Map(codes.map((c,i)=>[normCode(c),i])); }
+// 手動で並べ替えた順は Firestore の meta/shikakuSortOrder に保存する（全員で共有）
+const ORDER_DOC=["meta","shikakuSortOrder"];
 
 /* extra:true の列は普段は非表示（ツールバーの「詳細項目を表示」で表示） */
 const AGE_ALERT=65; // この年齢以上は年齢を赤字で表示
@@ -370,15 +392,24 @@ function buildRows(data){
   const unmatched={};
   ROWS=(data.employee||[]).map((e)=>{
     const engcd=String(e.ENGCD||"");
-    const parts=String(e.DEPT||"").split(/[\s　]+/).filter(Boolean);
+    // 所属：通常は DEPT（部署）と POSITION（役職）。両方空のときは、工事実績システムと同じく
+    // COMPCD（「新規社員を登録」の所属欄。例「鉄構本部 / 相談役」）を使う
+    let deptText=String(e.DEPT||"").trim(), posText=String(e.POSITION||"").trim();
+    const comp=String(e.COMPCD||"").trim();
+    if(!deptText && !posText && comp && !/^\d+$/.test(comp)){
+      const ps=comp.split(/[\/／]/);
+      deptText=ps[0].trim();
+      posText=ps.slice(1).join("/").trim();
+    }
+    const parts=deptText.split(/[\s　]+/).filter(Boolean);
     // 役職が空で、所属の最後の区切りが役職名（室長(TL待遇)・課長 など）なら、それを役職に回す
-    let pos=String(e.POSITION||"").trim();
+    let pos=posText;
     if(!pos && parts.length>1 && isPositionText(parts[parts.length-1])) pos=parts.pop();
     const row={
       code:engcd, retired:e.STATUS==="retired",
       dept0:parts[0]||"", dept1:parts[1]||"", dept2:parts[2]||"", dept3:parts[3]||"",
       dept4:parts.slice(4).join(" "),
-      pos, name:e.ID_NAME||"", fullDept:e.DEPT||"",
+      pos, name:e.ID_NAME||"", fullDept:deptText,
     };
     const inf=infoMap[engcd]||{};
     row.hrDate=fmtYmd(e.HR_DATE);
@@ -474,7 +505,10 @@ const esc=(s)=>String(s).replace(/[&<>"]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&g
 const wrapEl=document.getElementById("wrap");
 
 // 表示中の列（詳細項目OFFのときは extra 列を除く）
-function shownCols(){ return ALL_COLS.filter((c)=> state.showExtra || !c.extra); }
+function shownCols(){
+  return ALL_COLS.filter((c)=> state.showExtra || !c.extra)
+    .map((c)=> state.editOrder && c.key==="code" ? {...c, w:128} : c);
+}
 const disp=(c,v)=> v && c.fmt ? c.fmt(v) : v;
 
 function render(){
@@ -534,13 +568,18 @@ function render(){
   h+=`</tr></thead><tbody>`;
   // 本体
   rows.forEach((r)=>{
-    h+=`<tr class="${r.retired?"retired":""}">`;
+    const ed=state.editOrder;
+    h+=`<tr class="${r.retired?"retired":""}${ed&&state.lastMoved===r.code?" moved":""}"${ed?` draggable="true" data-code="${esc(r.code)}"`:""}>`;
     cols.forEach((c,i)=>{
       const v=cellVal(r,c.key), t=disp(c,v);
       let cls=(c.align==="c"?"":"l")+gs(i);
       if(v && c.grp==="qual") cls+=" on";
       if(v && c.grp==="reg") cls+=" reg-on";
       if(c.key==="age" && v && parseInt(v,10)>=AGE_ALERT) cls+=" age-alert";
+      if(ed && c.key==="code"){
+        h+=`<td class="${cls}${stick(c)}"><span class="code-edit"><span class="grip">⠿</span>${esc(t)}<span><button data-mv="up" title="1つ上へ">▲</button> <button data-mv="down" title="1つ下へ">▼</button></span></span></td>`;
+        return;
+      }
       h+=`<td class="${cls}${stick(c)}" title="${esc(t)}">${esc(t)}</td>`;
     });
     h+=`</tr>`;
@@ -575,7 +614,7 @@ function openPop(key, rect){
   const cur=state.filters[key];
   pop.innerHTML=
     `<div style="font-weight:700;margin-bottom:6px">${esc(col.label.replace(/\n/g,""))}</div>`+
-    `<div class="sort"><button class="btn" data-s="1">昇順 ↑</button><button class="btn" data-s="-1">降順 ↓</button></div>`+
+    (state.editOrder ? "" : `<div class="sort"><button class="btn" data-s="1">昇順 ↑</button><button class="btn" data-s="-1">降順 ↓</button></div>`)+
     `<input type="search" placeholder="値を検索">`+
     `<div class="list"><label><input type="checkbox" class="all"> <b>(すべて選択)</b></label>`+
     values.map((v)=>`<label data-v="${esc(v===BLANK?v:disp(col,v))}"><input type="checkbox" value="${esc(v)}" ${!cur||cur.has(v)?"checked":""}> ${esc(v===BLANK?v:disp(col,v))}<span class="cnt">${counts.get(v)}</span></label>`).join("")+
@@ -646,6 +685,92 @@ document.getElementById("xlsxBtn").onclick=()=>{
 };
 
 /* =====================================================================
+   並び順の手動編集（編集権限のある人のみ）
+   ===================================================================== */
+let canEdit=false, orderBackup=null;
+// 全社員（退職者含む）を現在の既定順に並べた社員番号リスト
+function fullOrder(){
+  const idx=(r)=>{ const i=ORDER_INDEX.get(normCode(r.code)); return i===undefined ? Infinity : i; };
+  return [...ROWS].sort((a,b)=>(idx(a)-idx(b)) || a.code.localeCompare(b.code,"ja",{numeric:true})).map((r)=>r.code);
+}
+// code を target の前(before=true)／後ろに移動
+function moveCode(code, target, before){
+  if(!code || !target || code===target) return;
+  const list=fullOrder().filter((c)=>c!==code);
+  let i=list.indexOf(target); if(i<0) return;
+  if(!before) i++;
+  list.splice(i,0,code);
+  setOrder(list); state.lastMoved=code; render();
+}
+function setEditMode(on){
+  state.editOrder=on;
+  appEl.classList.toggle("editing-order", on);
+  document.getElementById("orderBtn").hidden = on || !canEdit;
+  if(on){ orderBackup=new Map(ORDER_INDEX); state.sort={key:"__default",dir:1}; state.lastMoved=null; }
+  render();
+}
+document.getElementById("orderBtn").onclick=()=>setEditMode(true);
+document.getElementById("orderCancelBtn").onclick=()=>{ if(orderBackup) ORDER_INDEX=orderBackup; setEditMode(false); };
+document.getElementById("orderSaveBtn").onclick=async ()=>{
+  const btn=document.getElementById("orderSaveBtn"); btn.disabled=true;
+  const order=fullOrder();
+  try{
+    await setDoc(doc(db, ...ORDER_DOC), {order, updatedAt:Date.now(), updatedBy:(auth.currentUser&&auth.currentUser.email)||""});
+    setEditMode(false);
+    alert("並び順を保存しました（全員の表示に反映されます）");
+  }catch(e){
+    console.error(e);
+    alert("保存できませんでした（"+(e.code||e.message)+"）。\nFirestoreのセキュリティルールで meta コレクションへの書き込みが許可されているか確認してください。");
+  }
+  btn.disabled=false;
+};
+// ▲▼ボタン：表示中の1つ上／下の行と入れ替え
+wrapEl.addEventListener("click",(e)=>{
+  const b=e.target.closest("button[data-mv]"); if(!b||!state.editOrder) return;
+  const tr=b.closest("tr"), code=tr.dataset.code;
+  const sib=b.dataset.mv==="up" ? tr.previousElementSibling : tr.nextElementSibling;
+  if(sib && sib.dataset.code) moveCode(code, sib.dataset.code, b.dataset.mv==="up");
+});
+// ドラッグ＆ドロップ
+let dragCode=null;
+wrapEl.addEventListener("dragstart",(e)=>{
+  const tr=e.target.closest && e.target.closest("tr[data-code]"); if(!tr) return;
+  dragCode=tr.dataset.code; tr.classList.add("dragging");
+  e.dataTransfer.effectAllowed="move"; e.dataTransfer.setData("text/plain", dragCode);
+});
+const clearDrop=()=>wrapEl.querySelectorAll(".drop-before,.drop-after").forEach((x)=>x.classList.remove("drop-before","drop-after"));
+wrapEl.addEventListener("dragover",(e)=>{
+  if(!dragCode) return;
+  const tr=e.target.closest("tr[data-code]"); if(!tr) return;
+  e.preventDefault();
+  const r=tr.getBoundingClientRect(), before=e.clientY < r.top+r.height/2;
+  clearDrop(); tr.classList.add(before?"drop-before":"drop-after");
+  // 上下端に近づいたら自動スクロール
+  const w=wrapEl.getBoundingClientRect();
+  if(e.clientY < w.top+120) wrapEl.scrollTop-=12; else if(e.clientY > w.bottom-40) wrapEl.scrollTop+=12;
+});
+wrapEl.addEventListener("drop",(e)=>{
+  const tr=e.target.closest("tr[data-code]"); if(!tr||!dragCode) return;
+  e.preventDefault();
+  const r=tr.getBoundingClientRect(), before=e.clientY < r.top+r.height/2;
+  const c=dragCode; dragCode=null; clearDrop();
+  moveCode(c, tr.dataset.code, before);
+});
+wrapEl.addEventListener("dragend",()=>{ dragCode=null; clearDrop(); wrapEl.querySelectorAll(".dragging").forEach((x)=>x.classList.remove("dragging")); });
+
+async function loadOrderAndRole(){
+  try{
+    const o=await getDoc(doc(db, ...ORDER_DOC));
+    if(o.exists() && Array.isArray(o.data().order) && o.data().order.length) setOrder(o.data().order);
+  }catch(e){ console.warn("並び順の読み込みに失敗（既定の順で表示します）", e); }
+  try{
+    const u=auth.currentUser ? await getDoc(doc(db,"users",auth.currentUser.uid)) : null;
+    canEdit = !!(u && u.exists() && String(u.data().role||"").trim().toLowerCase()==="editor");
+  }catch(e){ canEdit=false; }
+  document.getElementById("orderBtn").hidden = !canEdit || !!state.editOrder;
+}
+
+/* =====================================================================
    ログイン → 読み込み
    ===================================================================== */
 const loginEl=document.getElementById("login"), appEl=document.getElementById("app");
@@ -662,7 +787,8 @@ document.getElementById("loginPw").addEventListener("keydown",(e)=>{ if(e.key===
 async function start(force){
   wrapEl.innerHTML=`<div class="loading">データを読み込んでいます…</div>`;
   try{
-    const {data, latest}=await loadData(force);
+    if(state.editOrder) setEditMode(false);
+    const [{data, latest}]=await Promise.all([loadData(force), loadOrderAndRole()]);
     buildRows(data);
     const d=latest ? new Date(latest) : null, p=(n)=>String(n).padStart(2,"0");
     document.getElementById("metaText").textContent =
