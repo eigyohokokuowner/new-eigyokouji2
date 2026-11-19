@@ -63,8 +63,7 @@
   tr.retired td{color:#9a9fae;}
   .sticky-l{position:sticky;z-index:5;background:#fff;}
   th.sticky-l{z-index:20;}
-  .no-freeze .sticky-l{position:static;}
-  .no-freeze th.sticky-l{position:sticky;left:auto!important;}
+  td.age-alert{color:#d32f2f;font-weight:700;}
 
   .fbtn{width:100%;height:20px;border:none;background:transparent;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:flex-end;padding:0 4px;}
   .fbtn::after{content:"";display:inline-block;width:12px;height:12px;background:#fff;border-radius:2px;
@@ -117,7 +116,8 @@
       <option value="active">在職者のみ</option>
       <option value="all">退職者も含む</option>
     </select>
-    <label class="chk"><input type="checkbox" id="freezeChk" checked /> 社員情報を固定</label>
+    <label class="chk"><input type="checkbox" id="extraChk" /> 詳細項目を表示</label>
+    <label class="chk"><input type="checkbox" id="freezeChk" checked /> 社員番号〜氏名を固定</label>
     <button class="btn" id="clearBtn">絞り込みをすべて解除</button>
     <span class="spacer"></span>
     <button class="btn" id="unmatchedBtn">列に無い資格</button>
@@ -227,16 +227,44 @@ const REG_COLUMNS=[
 ];
 
 /* 社員情報（DEPT を空白で区切って 部門／部署①〜④ に振り分け） */
+/* extra:true の列は普段は非表示（ツールバーの「詳細項目を表示」で表示） */
+const AGE_ALERT=65; // この年齢以上は年齢を赤字で表示
 const EMP_COLUMNS=[
   {key:"code",  label:"社員番号", w:70,  align:"c"},
-  {key:"dept0", label:"部門",     w:84},
-  {key:"dept1", label:"部署①",   w:92},
-  {key:"dept2", label:"部署②",   w:92},
-  {key:"dept3", label:"部署③",   w:92},
-  {key:"dept4", label:"部署④",   w:92},
-  {key:"pos",   label:"役職",     w:76},
+  {key:"dept0", label:"部門",     w:84,  dept:true},
+  {key:"dept1", label:"部署①",   w:92,  dept:true},
+  {key:"dept2", label:"部署②",   w:92,  dept:true},
+  {key:"dept3", label:"部署③",   w:92,  dept:true},
+  {key:"dept4", label:"部署④",   w:92,  dept:true},
+  {key:"pos",   label:"役職",     w:76,  dept:true},
+  {key:"hrDate",    label:"人事発令日",            w:80,  align:"c", extra:true},
+  {key:"constKbn",  label:"建設業\n区分",           w:62,  align:"c", extra:true},
+  {key:"workplace", label:"勤務地",                w:110, extra:true},
+  {key:"empType",   label:"雇用\n区分名",           w:62,  align:"c", extra:true},
+  {key:"officeTech",label:"CPD推進/\n専任技術者",   w:84,  align:"c", extra:true},
   {key:"name",  label:"氏名_漢字", w:96},
+  {key:"kana",      label:"氏名_カナ",  w:120, extra:true},
+  {key:"nameChg",   label:"旧姓/新姓",  w:100, extra:true},
+  {key:"age",       label:"年齢",       w:48,  align:"c", extra:true, num:true, fmt:(v)=>v+"歳"},
+  {key:"years",     label:"勤続\n年数", w:52,  align:"c", extra:true, num:true, fmt:(v)=>v+"年"},
+  {key:"bday",      label:"生年月日",   w:84,  align:"c", extra:true},
+  {key:"nday",      label:"採用\n年月日", w:84, align:"c", extra:true},
 ];
+// YYYYMMDD → 2025/6/1
+function fmtYmd(v){
+  const s=String(v||"").replace(/[^\d]/g,"");
+  if(!/^\d{8}$/.test(s)) return "";
+  return s.slice(0,4)+"/"+parseInt(s.slice(4,6),10)+"/"+parseInt(s.slice(6,8),10);
+}
+// 基準日（今日）時点の満年数
+function fullYears(v){
+  const s=String(v||"").replace(/[^\d]/g,"");
+  if(!/^\d{8}$/.test(s)) return "";
+  const t=new Date(), y=+s.slice(0,4), m=+s.slice(4,6), d=+s.slice(6,8);
+  let n=t.getFullYear()-y;
+  if(t.getMonth()+1<m || (t.getMonth()+1===m && t.getDate()<d)) n--;
+  return n>=0 ? String(n) : "";
+}
 
 /* =====================================================================
    データ読み込み（meta の更新日時が変わっていなければブラウザ内キャッシュを使う）
@@ -305,6 +333,20 @@ function buildRows(data){
       dept4:parts.slice(4).join(" "),
       pos:e.POSITION||"", name:e.ID_NAME||"", fullDept:e.DEPT||"",
     };
+    const inf=infoMap[engcd]||{};
+    row.hrDate=fmtYmd(e.HR_DATE);
+    row.constKbn=e.CONST_KBN||"";
+    row.workplace=e.WORKPLACE||"";
+    row.empType=e.EMP_TYPE||"";
+    row.officeTech=e.OFFICE_TECH ? "専任技術者" : "";
+    row.kana=inf.FURI||"";
+    const nct=e.NAME_CHANGE_TYPE || (e.OLD_NAME ? "旧姓" : (e.NEW_NAME ? "新姓" : ""));
+    const ncn=e.NAME_CHANGE || e.OLD_NAME || e.NEW_NAME || "";
+    row.nameChg= nct && ncn ? nct+"："+ncn : "";
+    row.age=fullYears(inf.BDAY);
+    row.years=fullYears(inf.NDAY);
+    row.bday=fmtYmd(inf.BDAY);
+    row.nday=fmtYmd(inf.NDAY);
     REG_COLUMNS.forEach((c)=>{ row[c.key]=isOn(e[c.key]) ? "○" : ""; });
 
     const names=(held[engcd]||[]).filter(Boolean);
@@ -343,7 +385,7 @@ const ALL_COLS=[
   ...REG_COLUMNS.map((c)=>({...c, grp:"reg", w:62, align:"c"})),
   ...QUAL_COLUMNS.map((c)=>({...c, grp:"qual", w:c.width||Math.max(62, Math.max(...c.label.split("\n").map((l)=>l.length))*12+14), align:"c"})),
 ];
-const state={q:"", status:"active", filters:{}, sort:{key:"code", dir:1}, freeze:true};
+const state={q:"", status:"active", filters:{}, sort:{key:"code", dir:1}, freeze:true, showExtra:false};
 const BLANK="(空白)";
 const cellVal=(r,k)=> r[k]===undefined||r[k]===null ? "" : String(r[k]);
 
@@ -351,7 +393,7 @@ function rowsByStatus(){ return ROWS.filter((r)=> state.status==="all" || !r.ret
 function passes(r, exceptKey){
   if(state.q){
     const q=state.q.replace(/[\s　]/g,"");
-    const hay=(r.code+r.name+r.fullDept+r.pos).replace(/[\s　]/g,"");
+    const hay=(r.code+r.name+r.kana+r.nameChg+r.fullDept+r.pos+r.workplace).replace(/[\s　]/g,"");
     if(!hay.includes(q)) return false;
   }
   for(const [k,set] of Object.entries(state.filters)){
@@ -378,62 +420,79 @@ function visibleRows(){
 const esc=(s)=>String(s).replace(/[&<>"]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const wrapEl=document.getElementById("wrap");
 
+// 表示中の列（詳細項目OFFのときは extra 列を除く）
+function shownCols(){ return ALL_COLS.filter((c)=> state.showExtra || !c.extra); }
+const disp=(c,v)=> v && c.fmt ? c.fmt(v) : v;
+
 function render(){
   const rows=visibleRows();
-  const nEmp=EMP_COLUMNS.length, nReg=REG_COLUMNS.length, nQual=QUAL_COLUMNS.length;
-  // 固定列の left 位置
+  const cols=shownCols();
+  const empCols=cols.filter((c)=>c.grp==="emp");
+  const nReg=REG_COLUMNS.length, nQual=QUAL_COLUMNS.length;
+  // 固定する列：社員番号〜氏名_漢字まで（氏名より右の詳細項目は固定しない）
+  const nameIdx=empCols.findIndex((c)=>c.key==="name");
+  const frozen=new Set(state.freeze ? empCols.slice(0,nameIdx+1).map((c)=>c.key) : []);
   let acc=0; const lefts={};
-  EMP_COLUMNS.forEach((c)=>{ lefts[c.key]=acc; acc+=c.w; });
-  const stick=(c)=> c.grp==="emp" ? ` sticky-l" style="left:${lefts[c.key]}px` : "";
+  empCols.forEach((c)=>{ lefts[c.key]=acc; acc+=c.w; });
+  const stick=(c)=> frozen.has(c.key) ? ` sticky-l" style="left:${lefts[c.key]}px` : "";
   const cnt=(k)=> rows.filter((r)=>cellVal(r,k)).length;
+  const firstReg=cols.findIndex((c)=>c.grp==="reg"), firstQual=cols.findIndex((c)=>c.grp==="qual");
+  const gs=(i)=> (i===firstReg||i===firstQual) ? " grp-start" : "";
+  const lbl=(c)=> esc(c.label).replace(/\n/g,"<br>");
 
-  const totalW=ALL_COLS.reduce((s,c)=>s+c.w,0);
-  let h=`<table class="${state.freeze?"":"no-freeze"}" style="width:${totalW}px"><colgroup>`;
-  ALL_COLS.forEach((c)=>{ h+=`<col style="width:${c.w}px">`; });
+  const totalW=cols.reduce((s,c)=>s+c.w,0);
+  let h=`<table style="width:${totalW}px"><colgroup>`;
+  cols.forEach((c)=>{ h+=`<col style="width:${c.w}px">`; });
   h+=`</colgroup><thead>`;
   // 1段目
-  h+=`<tr class="h1"><th class="emp sticky-l" style="left:0" colspan="${nEmp}">社員情報　（${rows.length}人）</th>`+
-     `<th class="reg grp-start" colspan="${nReg}">登録情報</th><th class="qual grp-start" colspan="${nQual}">有資格一覧</th></tr>`;
+  const nFz=frozen.size, nRest=empCols.length-nFz;
+  h+=`<tr class="h1">`;
+  if(nFz) h+=`<th class="emp sticky-l" style="left:0" colspan="${nFz}">社員情報　（${rows.length}人）</th>`;
+  if(nRest) h+=`<th class="emp" colspan="${nRest}">${nFz?"":"社員情報　（"+rows.length+"人）"}</th>`;
+  h+=`<th class="reg grp-start" colspan="${nReg}">登録情報</th><th class="qual grp-start" colspan="${nQual}">有資格一覧</th></tr>`;
   // 2段目
-  h+=`<tr class="h2"><th class="emp sticky-l" style="left:0" rowspan="2">社員番号</th>`+
-     `<th class="emp sticky-l" style="left:${lefts.dept0}px" colspan="6">所属部署</th>`+
-     `<th class="emp sticky-l" style="left:${lefts.name}px" rowspan="2">氏名_漢字</th>`;
-  [...REG_COLUMNS.map((c)=>({...c,grp:"reg"})), ...QUAL_COLUMNS.map((c)=>({...c,grp:"qual"}))].forEach((c,i)=>{
-    const start=(c.grp==="reg"&&i===0)||(c.grp==="qual"&&i===nReg);
-    h+=`<th class="${c.grp}${start?" grp-start":""}">${esc(c.label).replace(/\n/g,"<br>")}</th>`;
+  h+=`<tr class="h2">`;
+  cols.forEach((c,i)=>{
+    if(c.grp==="emp"){
+      if(c.dept){
+        if(c.key==="dept0") h+=`<th class="emp${stick(c)}" colspan="${empCols.filter((x)=>x.dept).length}">所属部署</th>`;
+        return;
+      }
+      h+=`<th class="emp${stick(c)}" rowspan="2">${lbl(c)}</th>`;
+    } else {
+      h+=`<th class="${c.grp}${gs(i)}">${lbl(c)}</th>`;
+    }
   });
   h+=`</tr>`;
   // 3段目
   h+=`<tr class="h3">`;
-  EMP_COLUMNS.slice(1,7).forEach((c)=>{ h+=`<th class="emp${stick({...c,grp:"emp"})}">${esc(c.label)}</th>`; });
-  ALL_COLS.filter((c)=>c.grp!=="emp").forEach((c,i)=>{
-    const start=i===0||i===nReg;
-    h+=`<th class="${c.grp}${start?" grp-start":""}">${cnt(c.key)}人</th>`;
+  cols.forEach((c,i)=>{
+    if(c.grp==="emp"){ if(c.dept) h+=`<th class="emp${stick(c)}">${lbl(c)}</th>`; return; }
+    h+=`<th class="${c.grp}${gs(i)}">${cnt(c.key)}人</th>`;
   });
   h+=`</tr>`;
   // 4段目（フィルターボタン）
   h+=`<tr class="h4">`;
-  ALL_COLS.forEach((c,i)=>{
+  cols.forEach((c,i)=>{
     const active=!!state.filters[c.key];
     const sorted=state.sort.key===c.key && !(c.key==="code"&&state.sort.dir===1);
-    const start=i===nEmp||i===nEmp+nReg;
-    h+=`<th class="${c.grp}${start?" grp-start":""}${stick(c)}"><button class="fbtn${active?" active":""}${sorted?" sorted":""}" data-k="${c.key}" title="${esc(c.label.replace(/\n/g,""))}で絞り込み・並べ替え"></button></th>`;
+    h+=`<th class="${c.grp}${gs(i)}${stick(c)}"><button class="fbtn${active?" active":""}${sorted?" sorted":""}" data-k="${c.key}" title="${esc(c.label.replace(/\n/g,""))}で絞り込み・並べ替え"></button></th>`;
   });
   h+=`</tr></thead><tbody>`;
   // 本体
   rows.forEach((r)=>{
     h+=`<tr class="${r.retired?"retired":""}">`;
-    ALL_COLS.forEach((c,i)=>{
-      const v=cellVal(r,c.key);
-      const start=i===nEmp||i===nEmp+nReg;
-      let cls=(c.align==="c"?"":"l")+(start?" grp-start":"");
+    cols.forEach((c,i)=>{
+      const v=cellVal(r,c.key), t=disp(c,v);
+      let cls=(c.align==="c"?"":"l")+gs(i);
       if(v && c.grp==="qual") cls+=" on";
       if(v && c.grp==="reg") cls+=" reg-on";
-      h+=`<td class="${cls}${stick(c)}" title="${esc(v)}">${esc(v)}</td>`;
+      if(c.key==="age" && v && parseInt(v,10)>=AGE_ALERT) cls+=" age-alert";
+      h+=`<td class="${cls}${stick(c)}" title="${esc(t)}">${esc(t)}</td>`;
     });
     h+=`</tr>`;
   });
-  if(!rows.length) h+=`<tr><td colspan="${ALL_COLS.length}" class="l" style="padding:16px;color:#888">該当する社員がいません</td></tr>`;
+  if(!rows.length) h+=`<tr><td colspan="${cols.length}" class="l" style="padding:16px;color:#888">該当する社員がいません</td></tr>`;
   h+=`</tbody></table>`;
   const sl=wrapEl.scrollLeft, st=wrapEl.scrollTop;
   wrapEl.innerHTML=h;
@@ -466,7 +525,7 @@ function openPop(key, rect){
     `<div class="sort"><button class="btn" data-s="1">昇順 ↑</button><button class="btn" data-s="-1">降順 ↓</button></div>`+
     `<input type="search" placeholder="値を検索">`+
     `<div class="list"><label><input type="checkbox" class="all"> <b>(すべて選択)</b></label>`+
-    values.map((v)=>`<label data-v="${esc(v)}"><input type="checkbox" value="${esc(v)}" ${!cur||cur.has(v)?"checked":""}> ${esc(v)}<span class="cnt">${counts.get(v)}</span></label>`).join("")+
+    values.map((v)=>`<label data-v="${esc(v===BLANK?v:disp(col,v))}"><input type="checkbox" value="${esc(v)}" ${!cur||cur.has(v)?"checked":""}> ${esc(v===BLANK?v:disp(col,v))}<span class="cnt">${counts.get(v)}</span></label>`).join("")+
     `</div><div class="ft"><button class="btn" data-a="clear">解除</button><button class="btn primary" data-a="ok">OK</button></div>`;
   const allBox=pop.querySelector(".all");
   const boxes=()=>[...pop.querySelectorAll(".list label[data-v]")].filter((l)=>l.style.display!=="none").map((l)=>l.querySelector("input"));
@@ -497,6 +556,15 @@ function openPop(key, rect){
 /* ---- ツールバー ---- */
 document.getElementById("q").oninput=(e)=>{ state.q=e.target.value.trim(); render(); };
 document.getElementById("statusSel").onchange=(e)=>{ state.status=e.target.value; render(); };
+document.getElementById("extraChk").onchange=(e)=>{
+  state.showExtra=e.target.checked;
+  // 非表示にした列の絞り込み・並べ替えは解除する
+  if(!state.showExtra){
+    ALL_COLS.filter((c)=>c.extra).forEach((c)=>delete state.filters[c.key]);
+    if(ALL_COLS.find((c)=>c.key===state.sort.key && c.extra)) state.sort={key:"code",dir:1};
+  }
+  render();
+};
 document.getElementById("freezeChk").onchange=(e)=>{ state.freeze=e.target.checked; render(); };
 document.getElementById("clearBtn").onclick=()=>{
   state.filters={}; state.q=""; state.sort={key:"code",dir:1};
@@ -512,10 +580,11 @@ document.getElementById("reloadBtn").onclick=()=>start(true);
 document.getElementById("logoutBtn").onclick=()=>signOut(auth);
 document.getElementById("xlsxBtn").onclick=()=>{
   const rows=visibleRows();
-  const head=ALL_COLS.map((c)=>c.label.replace(/\n/g,""));
-  const aoa=[head, ...rows.map((r)=>ALL_COLS.map((c)=>{ const v=cellVal(r,c.key); return c.key==="code"&&/^\d+$/.test(v) ? Number(v) : v; }))];
+  const cols=shownCols();
+  const head=cols.map((c)=>c.label.replace(/\n/g,""));
+  const aoa=[head, ...rows.map((r)=>cols.map((c)=>{ const v=cellVal(r,c.key); return (c.num||c.key==="code")&&/^\d+$/.test(v) ? Number(v) : v; }))];
   const ws=XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"]=ALL_COLS.map((c)=>({wch:Math.max(6,Math.round(c.w/7))}));
+  ws["!cols"]=cols.map((c)=>({wch:Math.max(6,Math.round(c.w/7))}));
   ws["!autofilter"]={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:aoa.length-1,c:head.length-1}})};
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "有資格一覧");
