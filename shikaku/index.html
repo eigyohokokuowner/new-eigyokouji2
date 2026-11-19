@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>社員 有資格一覧</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --ink:#1f2330; --muted:#5d6377; --line:#c9ced9; --line-dot:#d5d9e2;
+    --emp-hd:#fbe5c0; --emp-hd2:#fdf1dc;
+    --reg-hd:#d8ebf8; --reg-hd2:#eaf4fb;
+    --qual-hd:#f9d6dc; --qual-hd2:#fce8eb; --qual-on:#fdecef;
+    --filter-bg:#3b3f4a; --accent:#2f6fed;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic UI","Meiryo",sans-serif;color:var(--ink);background:#f4f5f8;font-size:12px;}
+  button,input,select{font-family:inherit;font-size:12px;}
+
+  /* ---- login ---- */
+  #login{max-width:360px;margin:12vh auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:28px;box-shadow:0 8px 30px rgba(0,0,0,.06);}
+  #login h1{font-size:18px;margin:0 0 4px;}
+  #login p{color:var(--muted);margin:0 0 18px;}
+  #login label{display:block;font-weight:700;margin:12px 0 4px;}
+  #login input{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;}
+  #login button{width:100%;margin-top:18px;padding:10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;}
+  #login button:disabled{opacity:.6;}
+  .err{color:#c62828;margin-top:10px;min-height:1em;}
+
+  /* ---- toolbar ---- */
+  .bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:40;}
+  .bar h1{font-size:15px;margin:0 8px 0 0;}
+  .bar .meta{color:var(--muted);}
+  .bar input[type=search]{padding:6px 10px;border:1px solid var(--line);border-radius:6px;width:200px;}
+  .bar select{padding:5px 6px;border:1px solid var(--line);border-radius:6px;}
+  .btn{padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer;}
+  .btn:hover{border-color:var(--accent);color:var(--accent);}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .spacer{flex:1;}
+  .chk{display:flex;align-items:center;gap:4px;}
+
+  /* ---- table ---- */
+  #app:not([hidden]){display:flex;flex-direction:column;height:100vh;}
+  .bar{flex:0 0 auto;}
+  .table-wrap{overflow:auto;flex:1 1 auto;min-height:0;background:#fff;}
+  table{border-collapse:separate;border-spacing:0;table-layout:fixed;}
+  th,td{border-right:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px;}
+  td{border-bottom:1px dotted var(--line-dot);height:20px;text-align:center;}
+  td.l{text-align:left;}
+  th{font-weight:700;text-align:center;line-height:1.25;position:sticky;z-index:10;}
+  tr.h1 th{top:0;height:24px;}
+  tr.h2 th{top:24px;height:34px;}
+  tr.h3 th{top:58px;height:20px;font-weight:600;}
+  tr.h4 th{top:78px;height:20px;padding:0;background:var(--filter-bg)!important;}
+  th.emp{background:var(--emp-hd);} tr.h2 th.emp,tr.h3 th.emp{background:var(--emp-hd2);}
+  th.reg{background:var(--reg-hd);} tr.h2 th.reg,tr.h3 th.reg{background:var(--reg-hd2);}
+  th.qual{background:var(--qual-hd);} tr.h2 th.qual,tr.h3 th.qual{background:var(--qual-hd2);}
+  tr.h1 th, tr.h2 th, tr.h3 th{border-bottom:1px solid var(--line);}
+  th.grp-start, td.grp-start{border-left:2px solid #8a90a0;}
+  td.on{background:var(--qual-on);}
+  td.reg-on{background:#eef6fc;}
+  tbody tr:hover td{background:#fff8d6;}
+  tr.retired td{color:#9a9fae;}
+  .sticky-l{position:sticky;z-index:5;background:#fff;}
+  th.sticky-l{z-index:20;}
+  .no-freeze .sticky-l{position:static;}
+  .no-freeze th.sticky-l{position:sticky;left:auto!important;}
+
+  .fbtn{width:100%;height:20px;border:none;background:transparent;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:flex-end;padding:0 4px;}
+  .fbtn::after{content:"";display:inline-block;width:12px;height:12px;background:#fff;border-radius:2px;
+    -webkit-mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path d="M2 4h8L6 9z"/></svg>') center/10px no-repeat;
+            mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path d="M2 4h8L6 9z"/></svg>') center/10px no-repeat;}
+  .fbtn.active{background:#2f6fed;}
+  .fbtn.active::after{-webkit-mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path d="M1 2h10L7 6.5V10L5 11V6.5z"/></svg>') center/10px no-repeat;
+            mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path d="M1 2h10L7 6.5V10L5 11V6.5z"/></svg>') center/10px no-repeat;}
+  .fbtn.sorted{box-shadow:inset 0 -2px 0 #ffd54a;}
+
+  /* ---- filter popover ---- */
+  #pop{position:fixed;z-index:100;width:240px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:8px;display:none;}
+  #pop .sort{display:flex;gap:6px;margin-bottom:6px;}
+  #pop .sort button{flex:1;}
+  #pop input[type=search]{width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:6px;margin-bottom:6px;}
+  #pop .list{max-height:260px;overflow:auto;border:1px solid #eee;border-radius:6px;padding:4px;}
+  #pop label{display:flex;align-items:center;gap:6px;padding:2px 4px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  #pop label:hover{background:#f1f5ff;}
+  #pop .cnt{margin-left:auto;color:var(--muted);font-size:11px;}
+  #pop .ft{display:flex;gap:6px;justify-content:flex-end;margin-top:8px;}
+
+  /* ---- unmatched panel ---- */
+  #unmatchedDlg{border:1px solid var(--line);border-radius:10px;padding:18px;max-width:560px;width:90vw;}
+  #unmatchedDlg h2{font-size:15px;margin:0 0 6px;}
+  #unmatchedDlg p{color:var(--muted);margin:0 0 10px;}
+  #unmatchedDlg ul{max-height:50vh;overflow:auto;margin:0;padding-left:18px;}
+  .loading{padding:40px;text-align:center;color:var(--muted);}
+  @media print{ .bar{display:none;} .table-wrap{height:auto;overflow:visible;} }
+</style>
+</head>
+<body>
+
+<div id="login" hidden>
+  <h1>社員 有資格一覧</h1>
+  <p>工事実績システムと同じアカウントでログインしてください。</p>
+  <label for="loginId">メールアドレス</label>
+  <input id="loginId" type="email" autocomplete="username" />
+  <label for="loginPw">パスワード</label>
+  <input id="loginPw" type="password" autocomplete="current-password" />
+  <button id="loginBtn">ログイン</button>
+  <div class="err" id="loginErr"></div>
+</div>
+
+<div id="app" hidden>
+  <div class="bar">
+    <h1>社員 有資格一覧</h1>
+    <span class="meta" id="metaText"></span>
+    <input type="search" id="q" placeholder="氏名・社員番号・所属で検索" />
+    <select id="statusSel">
+      <option value="active">在職者のみ</option>
+      <option value="all">退職者も含む</option>
+    </select>
+    <label class="chk"><input type="checkbox" id="freezeChk" checked /> 社員情報を固定</label>
+    <button class="btn" id="clearBtn">絞り込みをすべて解除</button>
+    <span class="spacer"></span>
+    <button class="btn" id="unmatchedBtn">列に無い資格</button>
+    <button class="btn" id="reloadBtn">最新データを再取得</button>
+    <button class="btn primary" id="xlsxBtn">Excelで出力</button>
+    <button class="btn" id="logoutBtn">ログアウト</button>
+  </div>
+  <div class="table-wrap" id="wrap"><div class="loading">データを読み込んでいます…</div></div>
+</div>
+
+<div id="pop"></div>
+<dialog id="unmatchedDlg">
+  <h2>表の列に割り当てられていない資格</h2>
+  <p>保有者がいるのに、どの資格列にも該当しなかった資格名です。必要なものはファイル内の <code>QUAL_COLUMNS</code> にルールを追加してください。</p>
+  <ul id="unmatchedList"></ul>
+  <div style="text-align:right;margin-top:12px"><button class="btn" onclick="this.closest('dialog').close()">閉じる</button></div>
+</dialog>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+/* =====================================================================
+   Firebase設定（新営業工事実績システム２と同じプロジェクト）
+   ===================================================================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyA3FGgHfsjb1a046IJPs5rQmDTOyT90I-Q",
+  authDomain: "new-eigyokouji2.firebaseapp.com",
+  projectId: "new-eigyokouji2",
+  storageBucket: "new-eigyokouji2.firebasestorage.app",
+  messagingSenderId: "337410034328",
+  appId: "1:337410034328:web:5a25fe550b8692dc371eed"
+};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+/* =====================================================================
+   文字列ヘルパー
+   ===================================================================== */
+// 全角英数→半角、全角括弧→半角、空白除去（資格名の表記ゆれ吸収用）
+function N(s){
+  return String(s||"")
+    .replace(/[０-９Ａ-Ｚａ-ｚ]/g,(c)=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+    .replace(/（/g,"(").replace(/）/g,")")
+    .replace(/[\s　]/g,"");
+}
+const KANJI_NUM={"一":1,"二":2,"三":3,"四":4};
+// 「1級」「(1級)」「一級」などから級（数値）を取り出す
+function gradeOf(n){
+  const m=n.match(/([1-4一二三四])級/);
+  if(!m) return null;
+  return KANJI_NUM[m[1]] || parseInt(m[1],10);
+}
+// 「第2種」「第二種」などから「第2種」を返す
+function shuOf(n){
+  const m=n.match(/第?([1-3一二三])種/);
+  if(!m) return null;
+  return "第"+(KANJI_NUM[m[1]] || m[1])+"種";
+}
+const isOn=(v)=> v!==undefined && v!==null && v!=="" && String(parseFloat(v))==="1";
+const normLicCode=(v)=>{ const s=String(v||"").trim(); return /^\d+$/.test(s) ? s.padStart(4,"0") : s; };
+
+/* =====================================================================
+   資格列の定義（ここを編集すると列の追加・並べ替え・判定ルールの変更ができます）
+   - label  : 見出し（\n で2行）
+   - match  : 資格マスタの資格名称(LICNM, 表記ゆれ吸収済み)が該当するか
+   - value  : セルに表示する値（省略時は「○」）
+   - pick   : "grade" のとき、複数該当したら一番上の級だけを表示
+   - info   : 技術者情報(enginfo)から判定する場合の関数
+   ===================================================================== */
+const gradeLabel=(n)=>{ const g=gradeOf(n); return g ? g+"級"+(n.includes("補")?"補":"") : "○"; };
+const QUAL_COLUMNS=[
+  {key:"doboku1",   label:"1級土木",            match:(n)=>n.includes("土木施工管理技士") && !n.includes("技士補") && gradeOf(n)===1},
+  {key:"doboku1ho", label:"1級土木\n技士補",     match:(n)=>n.includes("土木施工管理技士補") && gradeOf(n)===1},
+  {key:"doboku2",   label:"2級土木",            match:(n)=>n.includes("土木施工管理技士") && !n.includes("技士補") && gradeOf(n)===2},
+  {key:"doboku2ho", label:"2級土木\n技士補",     match:(n)=>n.includes("土木施工管理技士補") && gradeOf(n)===2},
+  {key:"kiki",      label:"機械器具",            match:(n)=>n.includes("機械器具"),
+                    info:(i)=> isOn(i.KKI) ? "○" : ""},
+  {key:"gijutsushi",   label:"技術士",          match:(n)=>n.includes("技術士") && !n.includes("技術士補"), value:gijutsuBumon},
+  {key:"gijutsushiho", label:"技術士補",        match:(n)=>n.includes("技術士補"), value:gijutsuBumon},
+  {key:"denkishunin",  label:"電気\n主任技術者", match:(n)=>n.includes("電気主任技術者"), value:(n)=>shuOf(n)||"○"},
+  {key:"denkikoujishi",label:"電気\n工事士",     match:(n)=>n.includes("電気工事士"), value:(n)=>shuOf(n)||"○"},
+  {key:"kenchikushi",  label:"建築士",          match:(n)=>n.includes("建築士"),
+                       value:(n)=> n.includes("木造") ? "木造" : (gradeOf(n) ? gradeOf(n)+"級" : "○"), pick:"grade"},
+  {key:"kankouji",     label:"管工事",          match:(n)=>n.includes("管工事施工管理技士"), value:gradeLabel, pick:"grade"},
+  {key:"denkisekou",   label:"電気工事\n施工管理技士", match:(n)=>n.includes("電気工事施工管理技士"), value:gradeLabel, pick:"grade"},
+  {key:"keiri",        label:"建設業経理士",     match:(n)=>n.includes("建設業経理"), value:gradeLabel, pick:"grade", width:96},
+  {key:"ginoushi",     label:"技能士",          match:(n)=>n.includes("技能士"),
+                       value:(n)=> n.replace(/技能士/,"").replace(/^\(|\)$/g,"") || "○", width:140},
+  {key:"kenchikusekou",label:"建築工事施工\n管理技士", match:(n)=>n.includes("建築施工管理技士"), value:gradeLabel, pick:"grade"},
+  {key:"tokka",        label:"特定化学物質\n作業主任者", match:(n)=>n.includes("特定化学物質")},
+  {key:"kenki",        label:"建設機械\n施工技士", match:(n)=>n.includes("建設機械施工"), value:gradeLabel, pick:"grade"},
+];
+// 技術士の部門名（「技術士（建設部門）」→「建設」）
+function gijutsuBumon(n){
+  const m=n.match(/\(([^)]+?)(部門)?\)/) || n.match(/技術士補?([^()]+?)部門/);
+  return m ? m[1] : "○";
+}
+
+/* 登録情報（社員データのチェック項目） */
+const REG_COLUMNS=[
+  {key:"REG_CPDS",      label:"建設系\nCPDS"},
+  {key:"REG_CPD_NORIN", label:"農林系\nCPD"},
+  {key:"REG_CORINS",    label:"コリンズ"},
+];
+
+/* 社員情報（DEPT を空白で区切って 部門／部署①〜④ に振り分け） */
+const EMP_COLUMNS=[
+  {key:"code",  label:"社員番号", w:70,  align:"c"},
+  {key:"dept0", label:"部門",     w:84},
+  {key:"dept1", label:"部署①",   w:92},
+  {key:"dept2", label:"部署②",   w:92},
+  {key:"dept3", label:"部署③",   w:92},
+  {key:"dept4", label:"部署④",   w:92},
+  {key:"pos",   label:"役職",     w:76},
+  {key:"name",  label:"氏名_漢字", w:96},
+];
+
+/* =====================================================================
+   データ読み込み（meta の更新日時が変わっていなければブラウザ内キャッシュを使う）
+   ===================================================================== */
+const TYPES=["employee","englicense","licenses","enginfo"];
+const CACHE_DB="qualViewerCache";
+function idb(){
+  return new Promise((res,rej)=>{
+    const r=indexedDB.open(CACHE_DB,1);
+    r.onupgradeneeded=()=>r.result.createObjectStore("c");
+    r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
+  });
+}
+async function cacheGet(){
+  try{ const d=await idb(); return await new Promise((res)=>{ const q=d.transaction("c").objectStore("c").get("all"); q.onsuccess=()=>res(q.result||{}); q.onerror=()=>res({}); }); }
+  catch(e){ return {}; }
+}
+async function cacheSet(v){
+  try{ const d=await idb(); d.transaction("c","readwrite").objectStore("c").put(v,"all"); }catch(e){}
+}
+async function loadData(force){
+  const cache=force ? {} : await cacheGet();
+  const next={...cache};
+  const out={}; let latest=0;
+  for(const type of TYPES){
+    let ms=null;
+    try{
+      const m=await getDoc(doc(db,"meta",type));
+      if(m.exists()){ const ts=m.data().updatedAt; ms=typeof ts==="number" ? ts : (ts && ts.toMillis ? ts.toMillis() : null); }
+    }catch(e){}
+    if(ms) latest=Math.max(latest,ms);
+    const c=cache[type];
+    if(c && ms!==null && c.updatedAtMs===ms){ out[type]=c.records; continue; }
+    try{
+      const snap=await getDocs(collection(db,type));
+      const recs=[]; snap.forEach((d)=>recs.push(d.data()));
+      out[type]=recs; next[type]={records:recs, updatedAtMs:ms};
+    }catch(e){ console.error(type,"の読み込みに失敗",e); out[type]=[]; }
+  }
+  cacheSet(next);
+  return {data:out, latest};
+}
+
+/* =====================================================================
+   行データの組み立て
+   ===================================================================== */
+let ROWS=[], UNMATCHED=[];
+function buildRows(data){
+  const licName={};
+  (data.licenses||[]).forEach((l)=>{ licName[normLicCode(l.LICCD)]=l.LICNM||""; });
+  const infoMap={};
+  (data.enginfo||[]).forEach((r)=>{ infoMap[String(r.ENGCD)]=r; });
+  const held={};
+  (data.englicense||[]).forEach((r)=>{
+    const k=String(r.ENGCD);
+    (held[k] ||= []).push(licName[normLicCode(r.LICCD)] || "");
+  });
+
+  const unmatched={};
+  ROWS=(data.employee||[]).map((e)=>{
+    const engcd=String(e.ENGCD||"");
+    const parts=String(e.DEPT||"").split(/[\s　]+/).filter(Boolean);
+    const row={
+      code:engcd, retired:e.STATUS==="retired",
+      dept0:parts[0]||"", dept1:parts[1]||"", dept2:parts[2]||"", dept3:parts[3]||"",
+      dept4:parts.slice(4).join(" "),
+      pos:e.POSITION||"", name:e.ID_NAME||"", fullDept:e.DEPT||"",
+    };
+    REG_COLUMNS.forEach((c)=>{ row[c.key]=isOn(e[c.key]) ? "○" : ""; });
+
+    const names=(held[engcd]||[]).filter(Boolean);
+    const info=infoMap[engcd]||{};
+    const hit=new Set();
+    QUAL_COLUMNS.forEach((col)=>{
+      const vals=[];
+      names.forEach((raw)=>{
+        const n=N(raw);
+        if(col.match && col.match(n)){ hit.add(raw); vals.push(col.value ? col.value(n) : "○"); }
+      });
+      if(col.info){ const v=col.info(info); if(v) vals.push(v); }
+      row[col.key]=combine(vals, col.pick);
+    });
+    if(!row.retired) names.forEach((raw)=>{ if(!hit.has(raw)) unmatched[raw]=(unmatched[raw]||0)+1; });
+    return row;
+  });
+  UNMATCHED=Object.entries(unmatched).sort((a,b)=>b[1]-a[1]);
+}
+function combine(vals, pick){
+  let u=[...new Set(vals.filter(Boolean))];
+  if(u.length>1) u=u.filter((v)=>v!=="○");
+  if(pick==="grade" && u.length>1){
+    const g=(v)=>{ const m=String(v).match(/^(\d)級/); return m ? parseInt(m[1],10) : 9; };
+    u.sort((a,b)=>g(a)-g(b));
+    return u[0];
+  }
+  return u.join("、");
+}
+
+/* =====================================================================
+   表示・絞り込み
+   ===================================================================== */
+const ALL_COLS=[
+  ...EMP_COLUMNS.map((c)=>({...c, grp:"emp"})),
+  ...REG_COLUMNS.map((c)=>({...c, grp:"reg", w:62, align:"c"})),
+  ...QUAL_COLUMNS.map((c)=>({...c, grp:"qual", w:c.width||Math.max(62, Math.max(...c.label.split("\n").map((l)=>l.length))*12+14), align:"c"})),
+];
+const state={q:"", status:"active", filters:{}, sort:{key:"code", dir:1}, freeze:true};
+const BLANK="(空白)";
+const cellVal=(r,k)=> r[k]===undefined||r[k]===null ? "" : String(r[k]);
+
+function rowsByStatus(){ return ROWS.filter((r)=> state.status==="all" || !r.retired); }
+function passes(r, exceptKey){
+  if(state.q){
+    const q=state.q.replace(/[\s　]/g,"");
+    const hay=(r.code+r.name+r.fullDept+r.pos).replace(/[\s　]/g,"");
+    if(!hay.includes(q)) return false;
+  }
+  for(const [k,set] of Object.entries(state.filters)){
+    if(k===exceptKey || !set) continue;
+    const v=cellVal(r,k)||BLANK;
+    if(!set.has(v)) return false;
+  }
+  return true;
+}
+function visibleRows(){
+  const list=rowsByStatus().filter((r)=>passes(r));
+  const {key,dir}=state.sort;
+  const num=(v)=>/^\d+$/.test(v);
+  list.sort((a,b)=>{
+    const va=cellVal(a,key), vb=cellVal(b,key);
+    if(va===vb) return cellVal(a,"code").localeCompare(cellVal(b,"code"),"ja",{numeric:true});
+    if(!va) return 1; if(!vb) return -1;              // 空白は常に下
+    if(num(va)&&num(vb)) return (parseInt(va,10)-parseInt(vb,10))*dir;
+    return va.localeCompare(vb,"ja",{numeric:true})*dir;
+  });
+  return list;
+}
+
+const esc=(s)=>String(s).replace(/[&<>"]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const wrapEl=document.getElementById("wrap");
+
+function render(){
+  const rows=visibleRows();
+  const nEmp=EMP_COLUMNS.length, nReg=REG_COLUMNS.length, nQual=QUAL_COLUMNS.length;
+  // 固定列の left 位置
+  let acc=0; const lefts={};
+  EMP_COLUMNS.forEach((c)=>{ lefts[c.key]=acc; acc+=c.w; });
+  const stick=(c)=> c.grp==="emp" ? ` sticky-l" style="left:${lefts[c.key]}px` : "";
+  const cnt=(k)=> rows.filter((r)=>cellVal(r,k)).length;
+
+  const totalW=ALL_COLS.reduce((s,c)=>s+c.w,0);
+  let h=`<table class="${state.freeze?"":"no-freeze"}" style="width:${totalW}px"><colgroup>`;
+  ALL_COLS.forEach((c)=>{ h+=`<col style="width:${c.w}px">`; });
+  h+=`</colgroup><thead>`;
+  // 1段目
+  h+=`<tr class="h1"><th class="emp sticky-l" style="left:0" colspan="${nEmp}">社員情報　（${rows.length}人）</th>`+
+     `<th class="reg grp-start" colspan="${nReg}">登録情報</th><th class="qual grp-start" colspan="${nQual}">有資格一覧</th></tr>`;
+  // 2段目
+  h+=`<tr class="h2"><th class="emp sticky-l" style="left:0" rowspan="2">社員番号</th>`+
+     `<th class="emp sticky-l" style="left:${lefts.dept0}px" colspan="6">所属部署</th>`+
+     `<th class="emp sticky-l" style="left:${lefts.name}px" rowspan="2">氏名_漢字</th>`;
+  [...REG_COLUMNS.map((c)=>({...c,grp:"reg"})), ...QUAL_COLUMNS.map((c)=>({...c,grp:"qual"}))].forEach((c,i)=>{
+    const start=(c.grp==="reg"&&i===0)||(c.grp==="qual"&&i===nReg);
+    h+=`<th class="${c.grp}${start?" grp-start":""}">${esc(c.label).replace(/\n/g,"<br>")}</th>`;
+  });
+  h+=`</tr>`;
+  // 3段目
+  h+=`<tr class="h3">`;
+  EMP_COLUMNS.slice(1,7).forEach((c)=>{ h+=`<th class="emp${stick({...c,grp:"emp"})}">${esc(c.label)}</th>`; });
+  ALL_COLS.filter((c)=>c.grp!=="emp").forEach((c,i)=>{
+    const start=i===0||i===nReg;
+    h+=`<th class="${c.grp}${start?" grp-start":""}">${cnt(c.key)}人</th>`;
+  });
+  h+=`</tr>`;
+  // 4段目（フィルターボタン）
+  h+=`<tr class="h4">`;
+  ALL_COLS.forEach((c,i)=>{
+    const active=!!state.filters[c.key];
+    const sorted=state.sort.key===c.key && !(c.key==="code"&&state.sort.dir===1);
+    const start=i===nEmp||i===nEmp+nReg;
+    h+=`<th class="${c.grp}${start?" grp-start":""}${stick(c)}"><button class="fbtn${active?" active":""}${sorted?" sorted":""}" data-k="${c.key}" title="${esc(c.label.replace(/\n/g,""))}で絞り込み・並べ替え"></button></th>`;
+  });
+  h+=`</tr></thead><tbody>`;
+  // 本体
+  rows.forEach((r)=>{
+    h+=`<tr class="${r.retired?"retired":""}">`;
+    ALL_COLS.forEach((c,i)=>{
+      const v=cellVal(r,c.key);
+      const start=i===nEmp||i===nEmp+nReg;
+      let cls=(c.align==="c"?"":"l")+(start?" grp-start":"");
+      if(v && c.grp==="qual") cls+=" on";
+      if(v && c.grp==="reg") cls+=" reg-on";
+      h+=`<td class="${cls}${stick(c)}" title="${esc(v)}">${esc(v)}</td>`;
+    });
+    h+=`</tr>`;
+  });
+  if(!rows.length) h+=`<tr><td colspan="${ALL_COLS.length}" class="l" style="padding:16px;color:#888">該当する社員がいません</td></tr>`;
+  h+=`</tbody></table>`;
+  const sl=wrapEl.scrollLeft, st=wrapEl.scrollTop;
+  wrapEl.innerHTML=h;
+  wrapEl.scrollLeft=sl; wrapEl.scrollTop=st;
+}
+
+/* ---- フィルター（Excelのオートフィルター風） ---- */
+const pop=document.getElementById("pop");
+let popKey=null;
+wrapEl.addEventListener("click",(e)=>{
+  const b=e.target.closest(".fbtn"); if(!b) return;
+  e.stopPropagation();
+  openPop(b.dataset.k, b.getBoundingClientRect());
+});
+document.addEventListener("click",(e)=>{ if(pop.style.display==="block" && !pop.contains(e.target)) closePop(); });
+document.addEventListener("keydown",(e)=>{ if(e.key==="Escape") closePop(); });
+function closePop(){ pop.style.display="none"; popKey=null; }
+
+function openPop(key, rect){
+  popKey=key;
+  const col=ALL_COLS.find((c)=>c.key===key);
+  // 他の列の絞り込みを反映した上での候補値
+  const base=rowsByStatus().filter((r)=>passes(r,key));
+  const counts=new Map();
+  base.forEach((r)=>{ const v=cellVal(r,key)||BLANK; counts.set(v,(counts.get(v)||0)+1); });
+  const values=[...counts.keys()].sort((a,b)=> a===BLANK?1 : b===BLANK?-1 : a.localeCompare(b,"ja",{numeric:true}));
+  const cur=state.filters[key];
+  pop.innerHTML=
+    `<div style="font-weight:700;margin-bottom:6px">${esc(col.label.replace(/\n/g,""))}</div>`+
+    `<div class="sort"><button class="btn" data-s="1">昇順 ↑</button><button class="btn" data-s="-1">降順 ↓</button></div>`+
+    `<input type="search" placeholder="値を検索">`+
+    `<div class="list"><label><input type="checkbox" class="all"> <b>(すべて選択)</b></label>`+
+    values.map((v)=>`<label data-v="${esc(v)}"><input type="checkbox" value="${esc(v)}" ${!cur||cur.has(v)?"checked":""}> ${esc(v)}<span class="cnt">${counts.get(v)}</span></label>`).join("")+
+    `</div><div class="ft"><button class="btn" data-a="clear">解除</button><button class="btn primary" data-a="ok">OK</button></div>`;
+  const allBox=pop.querySelector(".all");
+  const boxes=()=>[...pop.querySelectorAll(".list label[data-v]")].filter((l)=>l.style.display!=="none").map((l)=>l.querySelector("input"));
+  const syncAll=()=>{ const b=boxes(); allBox.checked=b.length>0 && b.every((x)=>x.checked); };
+  syncAll();
+  allBox.onchange=()=>boxes().forEach((x)=>x.checked=allBox.checked);
+  pop.querySelectorAll(".list label[data-v] input").forEach((x)=>x.onchange=syncAll);
+  pop.querySelector("input[type=search]").oninput=(e)=>{
+    const t=e.target.value.trim();
+    pop.querySelectorAll(".list label[data-v]").forEach((l)=>{ const hit=!t||l.dataset.v.includes(t); l.style.display=hit?"":"none"; l.querySelector("input").checked=hit; });
+    syncAll();
+  };
+  pop.querySelectorAll("[data-s]").forEach((b)=>b.onclick=()=>{ state.sort={key, dir:parseInt(b.dataset.s,10)}; closePop(); render(); });
+  pop.querySelector("[data-a=clear]").onclick=()=>{ delete state.filters[key]; closePop(); render(); };
+  pop.querySelector("[data-a=ok]").onclick=()=>{
+    const all=[...pop.querySelectorAll(".list label[data-v] input")];
+    const checked=all.filter((x)=>x.checked && x.closest("label").style.display!=="none").map((x)=>x.value);
+    if(checked.length===all.length) delete state.filters[key];
+    else state.filters[key]=new Set(checked);
+    closePop(); render();
+  };
+  pop.style.display="block";
+  const left=Math.min(rect.left, window.innerWidth-250);
+  pop.style.left=Math.max(4,left)+"px";
+  pop.style.top=Math.min(rect.bottom+2, window.innerHeight-pop.offsetHeight-4)+"px";
+}
+
+/* ---- ツールバー ---- */
+document.getElementById("q").oninput=(e)=>{ state.q=e.target.value.trim(); render(); };
+document.getElementById("statusSel").onchange=(e)=>{ state.status=e.target.value; render(); };
+document.getElementById("freezeChk").onchange=(e)=>{ state.freeze=e.target.checked; render(); };
+document.getElementById("clearBtn").onclick=()=>{
+  state.filters={}; state.q=""; state.sort={key:"code",dir:1};
+  document.getElementById("q").value=""; render();
+};
+document.getElementById("unmatchedBtn").onclick=()=>{
+  document.getElementById("unmatchedList").innerHTML = UNMATCHED.length
+    ? UNMATCHED.map(([n,c])=>`<li>${esc(n)}　<span style="color:#888">${c}人</span></li>`).join("")
+    : "<li>ありません（保有資格はすべていずれかの列に表示されています）</li>";
+  document.getElementById("unmatchedDlg").showModal();
+};
+document.getElementById("reloadBtn").onclick=()=>start(true);
+document.getElementById("logoutBtn").onclick=()=>signOut(auth);
+document.getElementById("xlsxBtn").onclick=()=>{
+  const rows=visibleRows();
+  const head=ALL_COLS.map((c)=>c.label.replace(/\n/g,""));
+  const aoa=[head, ...rows.map((r)=>ALL_COLS.map((c)=>{ const v=cellVal(r,c.key); return c.key==="code"&&/^\d+$/.test(v) ? Number(v) : v; }))];
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"]=ALL_COLS.map((c)=>({wch:Math.max(6,Math.round(c.w/7))}));
+  ws["!autofilter"]={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:aoa.length-1,c:head.length-1}})};
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "有資格一覧");
+  const d=new Date(), p=(n)=>String(n).padStart(2,"0");
+  XLSX.writeFile(wb, `社員有資格一覧_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}.xlsx`);
+};
+
+/* =====================================================================
+   ログイン → 読み込み
+   ===================================================================== */
+const loginEl=document.getElementById("login"), appEl=document.getElementById("app");
+const loginBtn=document.getElementById("loginBtn"), loginErr=document.getElementById("loginErr");
+async function doLogin(){
+  loginErr.textContent=""; loginBtn.disabled=true;
+  try{ await signInWithEmailAndPassword(auth, document.getElementById("loginId").value.trim(), document.getElementById("loginPw").value); }
+  catch(e){ loginErr.textContent="ログインに失敗しました（メールアドレスまたはパスワードが違います）"; }
+  loginBtn.disabled=false;
+}
+loginBtn.onclick=doLogin;
+document.getElementById("loginPw").addEventListener("keydown",(e)=>{ if(e.key==="Enter") doLogin(); });
+
+async function start(force){
+  wrapEl.innerHTML=`<div class="loading">データを読み込んでいます…</div>`;
+  try{
+    const {data, latest}=await loadData(force);
+    buildRows(data);
+    const d=latest ? new Date(latest) : null, p=(n)=>String(n).padStart(2,"0");
+    document.getElementById("metaText").textContent =
+      (d ? `データ更新：${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}　` : "") +
+      `登録 ${ROWS.length}名（在職 ${ROWS.filter((r)=>!r.retired).length}名）`;
+    document.getElementById("unmatchedBtn").textContent=`列に無い資格（${UNMATCHED.length}）`;
+    render();
+  }catch(e){
+    console.error(e);
+    wrapEl.innerHTML=`<div class="loading">読み込みに失敗しました（${esc(e.code||e.message)}）</div>`;
+  }
+}
+onAuthStateChanged(auth,(user)=>{
+  if(user){ loginEl.hidden=true; appEl.hidden=false; start(false); }
+  else { appEl.hidden=true; loginEl.hidden=false; }
+});
+</script>
+</body>
+</html>
