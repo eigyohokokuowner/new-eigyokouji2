@@ -1922,6 +1922,10 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
   const [fSyusMin,setFSyusMin]=useState("");
   const [fHoryuMin,setFHoryuMin]=useState("");
   const [fPointMin,setFPointMin]=useState("");
+  // 施工場所（部分一致）・契約金額（税抜、○○円以上／以下）
+  const [fPlace,setFPlace]=useState("");
+  const [fAmount,setFAmount]=useState("");      // 数字のみ（カンマなし）で保持
+  const [fAmountMode,setFAmountMode]=useState("min"); // "min"=以上 / "max"=以下
   const [filterSearched,setFilterSearched]=useState(false);
 
   useEffect(()=>{
@@ -2005,6 +2009,9 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
     const syusMinN=fSyusMin===""?null:parseFloat(fSyusMin);
     const horyuMinN=fHoryuMin===""?null:parseFloat(fHoryuMin);
     const pointMinN=fPointMin===""?null:parseFloat(fPointMin);
+    // 施工場所：空白（全角・半角）を無視して部分一致で比較する（例：「高知県」→施工場所に高知県を含む工事）
+    const placeKw=fPlace.replace(/[\s\u3000]/g,"");
+    const amountN=fAmount==="" ? null : parseFloat(fAmount);
     const hasKindFilter = fSelectedGateCategory.length || fSelectedGateType.length || fSelectedGateStructure.length || fSelectedKaihei.length || fSelectedSesu.length || keikMinN!==null || heighMinN!==null || areaMinN!==null || suisMinN!==null || syusMinN!==null || horyuMinN!==null;
 
     return constrsltRecords.filter((r)=>{
@@ -2018,6 +2025,16 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
       if(pointMinN!==null){
         const pt = (r.POINT===undefined||r.POINT===null||r.POINT==="") ? null : parseFloat(r.POINT);
         if(pt===null || isNaN(pt) || pt<pointMinN) return false;
+      }
+      if(placeKw){
+        const place=String(r.SEAD||"").replace(/[\s\u3000]/g,"");
+        if(!place.includes(placeKw)) return false;
+      }
+      if(amountN!==null && !isNaN(amountN)){
+        const amt=parseFloat(String(r.KYKN===undefined||r.KYKN===null?"":r.KYKN).replace(/[^\d.\-]/g,""));
+        if(isNaN(amt)) return false; // 金額未登録の工事は対象外
+        if(fAmountMode==="min" && amt<amountN) return false;
+        if(fAmountMode==="max" && amt>amountN) return false;
       }
       if(hasKindFilter){
         const kinds=kindByConst[r.CONSTNO]||[];
@@ -2053,13 +2070,14 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
     }).sort((a,b)=>compareConstno(a.CONSTNO,b.CONSTNO)).slice(0,300);
   },[filterSearched, constrsltRecords, kindByConst, fFyFrom, fFyFromMonth, fFyTo, fFyToMonth,
      fSelectedGateCategory, fSelectedGateType, fSelectedGateStructure, fSelectedKaihei, fSelectedSesu, filterGateHierarchyByCode,
-     fKeikMin, fHeighMin, fAreaMin, fAreaIncludeSuis, fSuisMin, fSyusMin, fHoryuMin, fPointMin, query]);
+     fKeikMin, fHeighMin, fAreaMin, fAreaIncludeSuis, fSuisMin, fSyusMin, fHoryuMin, fPointMin, fPlace, fAmount, fAmountMode, query]);
 
   const resetFilter=()=>{
     setFFyFrom(currentFY-9); setFFyFromMonth("04"); setFFyTo(currentFY); setFFyToMonth("04");
     setFSelectedGateCategory([]); setFSelectedGateType([]); setFSelectedGateStructure([]); setFSelectedKaihei([]); setFSelectedSesu([]);
     setFKeikMin(""); setFHeighMin(""); setFAreaMin(""); setFAreaIncludeSuis(false);
     setFSuisMin(""); setFSyusMin(""); setFHoryuMin(""); setFPointMin(""); setQuery("");
+    setFPlace(""); setFAmount(""); setFAmountMode("min");
     setFIncludeRetired(false);
     setFilterSearched(false);
   };
@@ -2403,6 +2421,32 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
               </div>
             </div>
           </div>
+
+          <div className="field-row pair-row">
+            <div className="pair-group-grow">
+              <div className="field-label">施工場所</div>
+              <div className="field-control">
+                <input type="text" value={fPlace} onChange={(e)=>setFPlace(e.target.value)} placeholder="部分一致（任意）例）高知県、江戸川区"/>
+              </div>
+            </div>
+            <div className="pair-group-grow">
+              <div className="field-label">契約金額</div>
+              <div className="field-control" style={{display:"flex", alignItems:"center", gap:8}}>
+                <input type="text" inputMode="numeric" style={{flex:1, minWidth:0, textAlign:"right"}}
+                  value={fAmount==="" ? "" : Number(fAmount).toLocaleString("ja-JP")}
+                  onChange={(e)=>{
+                    const digits=String(e.target.value||"").replace(/[０-９]/g,(c)=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[^\d]/g,"").replace(/^0+(?=\d)/,"");
+                    setFAmount(digits);
+                  }}
+                  placeholder="金額（税抜）例）100,000,000"/>
+                <span style={{whiteSpace:"nowrap", color:"var(--muted)", fontSize:12.5}}>円</span>
+                <select value={fAmountMode} onChange={(e)=>setFAmountMode(e.target.value)} style={{width:"auto", flex:"0 0 auto"}}>
+                  <option value="min">以上</option>
+                  <option value="max">以下</option>
+                </select>
+              </div>
+            </div>
+          </div>
         </div>
         <div className="actions-row">
           <button className="btn-ghost" onClick={resetFilter}><Ic.Reset/> クリア</button>
@@ -2414,10 +2458,16 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
         <div style={{marginTop:16}}>
           <p className="sub" style={{marginBottom:10}}>{filterResults.length}件が該当しました{filterResults.length>=300 && "（上位300件を表示）"}</p>
           <div className="master-list">
-            {filterResults.map((r)=>(
-              <div key={r.CONSTNO} className="master-row" style={{gridTemplateColumns:"110px 1fr 90px 140px 140px", cursor:"pointer"}} onClick={()=>pickFromFilter(r.CONSTNO)}>
+            {filterResults.map((r)=>{
+              // 施工場所・契約金額で絞り込んだときは、その値も一覧に出して確認できるようにする
+              const showPlace=!!fPlace.trim(), showAmount=fAmount!=="";
+              const cols="110px 1fr"+(showPlace?" 180px":"")+(showAmount?" 130px":"")+" 90px 140px 140px";
+              return (
+              <div key={r.CONSTNO} className="master-row" style={{gridTemplateColumns:cols, cursor:"pointer"}} onClick={()=>pickFromFilter(r.CONSTNO)}>
                 <span className="m-code">{r.CONSTNO}</span>
                 <span className="m-name">{r.NAM1}{r.NAM2}</span>
+                {showPlace && <span className="m-comp" title={r.SEAD||""}>{r.SEAD||"-"}</span>}
+                {showAmount && <span className="m-comp" style={{textAlign:"right", fontFamily:"var(--mono)"}}>{fmtMoney(r.KYKN)}円</span>}
                 <span className="m-comp" style={{textAlign:"right", whiteSpace:"nowrap"}}>
                   {r.POINT ? r.POINT+"点" : "-"}
                   {r.AWARD_PDF_URL && <span style={{marginLeft:6}} title="工事表彰あり">🏆</span>}
@@ -2425,7 +2475,8 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
                 <span className="m-comp">{r.KYA1||"-"}</span>
                 <span className="m-comp">{fmtDate(r.KOKF)}〜{fmtDate(r.KOKT)}</span>
               </div>
-            ))}
+              );
+            })}
             {filterResults.length===0 && <div className="empty">条件に合致する工事が見つかりませんでした</div>}
           </div>
         </div>
