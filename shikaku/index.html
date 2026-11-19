@@ -227,6 +227,36 @@ const REG_COLUMNS=[
 ];
 
 /* 社員情報（DEPT を空白で区切って 部門／部署①〜④ に振り分け） */
+// 役職とみなす文字列（末尾が「長」「役」「待遇」など。括弧付きの補足も可）
+function isPositionText(s){
+  const t=String(s||"").replace(/[（(][^）)]*[）)]$/,"");
+  return /(長|役|待遇|主任|主査|主事|参与|参事|顧問|理事|嘱託)$/.test(t) || /待遇/.test(s);
+}
+
+/* 既定の並び順（社員番号）。ここに無い社員は最後に社員番号順で並ぶ */
+const SORT_ORDER=[
+  "000001","000060","900112","000041","687103","666099","807486","970102","614739","990111","100111","990106",
+  "100103","101501","000050","890111","970110","645484","717318","707304","604518","666088","930103","707313",
+  "787442","890114","900102","461308","594385","101104","000054","573953","717321","890101","512361","950102",
+  "807501","614795","787440","747365","960103","645440","980109","727326","757379","807488","807494","532804",
+  "980102","990117","920103","807519","930111","870104","960108","797461","727332","857576","737349","101106",
+  "970109","747362","900104","930102","707311","950101","960106","970106","990116","797465","676685","880104",
+  "990101","990104","676492","625087","676710","807490","807502","807496","807489","990112","950109","950105",
+  "807504","807509","807495","990108","747361","767409","930112","676572","676442","594294","604610","900113",
+  "857578","676674","890102","910115","950104","920105","960105","980104","990109","100108","101102","563710",
+  "807503","757381","807491","573931","687147","940104","101101","614728","807514","625098","757376","890115",
+  "727331","707292","777415","930104","970107","920111","990115","100104","655741","727325","880103","920102",
+  "910117","980105","970108","990107","100105","687159","635263","857577","666101","757378","847558","687227",
+  "880106","980103","543027","707293","890105","101105","910119","666145","666123","707309","625167","890113",
+  "737343","930109","655854","970101","990103","101103","101107","666214","940112","900103","686964","837555",
+  "860101","707306","604632","676641","687193","880109","604621","666191","837556","655821","817529","837547",
+  "847560","890108","890106","920107","930108","950110","100106","100112","940110","655832","747363","614819",
+  "604609","880110","686873","940105","950106","950107","461273","655763","707297","687205","880114","857581",
+  "900106","910116","491846","960107","990110","100107",
+];
+const normCode=(v)=>{ const s=String(v||"").trim(); return /^\d+$/.test(s) ? String(parseInt(s,10)) : s; };
+const ORDER_INDEX=new Map(SORT_ORDER.map((c,i)=>[normCode(c),i]));
+
 /* extra:true の列は普段は非表示（ツールバーの「詳細項目を表示」で表示） */
 const AGE_ALERT=65; // この年齢以上は年齢を赤字で表示
 const EMP_COLUMNS=[
@@ -236,7 +266,7 @@ const EMP_COLUMNS=[
   {key:"dept2", label:"部署②",   w:92,  dept:true},
   {key:"dept3", label:"部署③",   w:92,  dept:true},
   {key:"dept4", label:"部署④",   w:92,  dept:true},
-  {key:"pos",   label:"役職",     w:76,  dept:true},
+  {key:"pos",   label:"役職",     w:100, dept:true},
   {key:"hrDate",    label:"人事発令日",            w:80,  align:"c", extra:true},
   {key:"constKbn",  label:"建設業\n区分",           w:62,  align:"c", extra:true},
   {key:"workplace", label:"勤務地",                w:110, extra:true},
@@ -327,11 +357,14 @@ function buildRows(data){
   ROWS=(data.employee||[]).map((e)=>{
     const engcd=String(e.ENGCD||"");
     const parts=String(e.DEPT||"").split(/[\s　]+/).filter(Boolean);
+    // 役職が空で、所属の最後の区切りが役職名（室長(TL待遇)・課長 など）なら、それを役職に回す
+    let pos=String(e.POSITION||"").trim();
+    if(!pos && parts.length>1 && isPositionText(parts[parts.length-1])) pos=parts.pop();
     const row={
       code:engcd, retired:e.STATUS==="retired",
       dept0:parts[0]||"", dept1:parts[1]||"", dept2:parts[2]||"", dept3:parts[3]||"",
       dept4:parts.slice(4).join(" "),
-      pos:e.POSITION||"", name:e.ID_NAME||"", fullDept:e.DEPT||"",
+      pos, name:e.ID_NAME||"", fullDept:e.DEPT||"",
     };
     const inf=infoMap[engcd]||{};
     row.hrDate=fmtYmd(e.HR_DATE);
@@ -385,7 +418,7 @@ const ALL_COLS=[
   ...REG_COLUMNS.map((c)=>({...c, grp:"reg", w:62, align:"c"})),
   ...QUAL_COLUMNS.map((c)=>({...c, grp:"qual", w:c.width||Math.max(62, Math.max(...c.label.split("\n").map((l)=>l.length))*12+14), align:"c"})),
 ];
-const state={q:"", status:"active", filters:{}, sort:{key:"code", dir:1}, freeze:true, showExtra:false};
+const state={q:"", status:"active", filters:{}, sort:{key:"__default", dir:1}, freeze:true, showExtra:false};
 const BLANK="(空白)";
 const cellVal=(r,k)=> r[k]===undefined||r[k]===null ? "" : String(r[k]);
 
@@ -407,6 +440,11 @@ function visibleRows(){
   const list=rowsByStatus().filter((r)=>passes(r));
   const {key,dir}=state.sort;
   const num=(v)=>/^\d+$/.test(v);
+  if(key==="__default"){
+    const idx=(r)=>{ const i=ORDER_INDEX.get(normCode(r.code)); return i===undefined ? Infinity : i; };
+    list.sort((a,b)=> (idx(a)-idx(b)) || cellVal(a,"code").localeCompare(cellVal(b,"code"),"ja",{numeric:true}));
+    return list;
+  }
   list.sort((a,b)=>{
     const va=cellVal(a,key), vb=cellVal(b,key);
     if(va===vb) return cellVal(a,"code").localeCompare(cellVal(b,"code"),"ja",{numeric:true});
@@ -475,7 +513,7 @@ function render(){
   h+=`<tr class="h4">`;
   cols.forEach((c,i)=>{
     const active=!!state.filters[c.key];
-    const sorted=state.sort.key===c.key && !(c.key==="code"&&state.sort.dir===1);
+    const sorted=state.sort.key===c.key;
     h+=`<th class="${c.grp}${gs(i)}${stick(c)}"><button class="fbtn${active?" active":""}${sorted?" sorted":""}" data-k="${c.key}" title="${esc(c.label.replace(/\n/g,""))}で絞り込み・並べ替え"></button></th>`;
   });
   h+=`</tr></thead><tbody>`;
@@ -561,13 +599,13 @@ document.getElementById("extraChk").onchange=(e)=>{
   // 非表示にした列の絞り込み・並べ替えは解除する
   if(!state.showExtra){
     ALL_COLS.filter((c)=>c.extra).forEach((c)=>delete state.filters[c.key]);
-    if(ALL_COLS.find((c)=>c.key===state.sort.key && c.extra)) state.sort={key:"code",dir:1};
+    if(ALL_COLS.find((c)=>c.key===state.sort.key && c.extra)) state.sort={key:"__default",dir:1};
   }
   render();
 };
 document.getElementById("freezeChk").onchange=(e)=>{ state.freeze=e.target.checked; render(); };
 document.getElementById("clearBtn").onclick=()=>{
-  state.filters={}; state.q=""; state.sort={key:"code",dir:1};
+  state.filters={}; state.q=""; state.sort={key:"__default",dir:1};
   document.getElementById("q").value=""; render();
 };
 document.getElementById("unmatchedBtn").onclick=()=>{
