@@ -213,10 +213,21 @@ const QUAL_COLUMNS=[
   {key:"tokka",        label:"特定化学物質\n作業主任者", match:(n)=>n.includes("特定化学物質")},
   {key:"kenki",        label:"建設機械\n施工技士", match:(n)=>n.includes("建設機械施工"), value:gradeLabel, pick:"grade"},
 ];
-// 技術士の部門名（「技術士（建設部門）」→「建設」）
-function gijutsuBumon(n){
-  const m=n.match(/\(([^)]+?)(部門)?\)/) || n.match(/技術士補?([^()]+?)部門/);
-  return m ? m[1] : "○";
+// 技術士・技術士補の部門名を取り出す（「技術士（建設部門）」→「建設」、「電気電子部門」→「電気・電子」）
+// まず資格名称から、無ければ「建設業法の資格区分」(KBN→コードマスタKGHO)の名称から探す
+const BUMON_DISPLAY={"電気電子":"電気・電子","上下水道":"上下水道","総合技術監理":"総監"};
+function bumonOf(text){
+  const t=N(text);
+  if(!t) return "";
+  let m=t.match(/([^()・\/、]+?)部門/);
+  let b=m ? m[1] : "";
+  if(!b){ m=t.match(/技術士補?\(([^()]+?)[・)]/); b=m ? m[1] : ""; }   // 技術士(建設・総合技術監理(建設)) 形式
+  b=b.replace(/^技術士補?/,"").replace(/^\(/,"").trim();
+  if(!b || /級|試験|登録/.test(b)) return "";
+  return BUMON_DISPLAY[b] || b;
+}
+function gijutsuBumon(n, ctx){
+  return bumonOf(n) || (ctx && ctx.kbn && /技術士|部門/.test(ctx.kbn) ? bumonOf(ctx.kbn) : "") || "○";
 }
 
 /* 登録情報（社員データのチェック項目） */
@@ -299,7 +310,7 @@ function fullYears(v){
 /* =====================================================================
    データ読み込み（meta の更新日時が変わっていなければブラウザ内キャッシュを使う）
    ===================================================================== */
-const TYPES=["employee","englicense","licenses","enginfo"];
+const TYPES=["employee","englicense","licenses","enginfo","literals"];
 const CACHE_DB="qualViewerCache";
 function idb(){
   return new Promise((res,rej)=>{
@@ -347,10 +358,13 @@ function buildRows(data){
   (data.licenses||[]).forEach((l)=>{ licName[normLicCode(l.LICCD)]=l.LICNM||""; });
   const infoMap={};
   (data.enginfo||[]).forEach((r)=>{ infoMap[String(r.ENGCD)]=r; });
+  const kgho={};
+  (data.literals||[]).filter((l)=>l.CDTYP==="KGHO").forEach((l)=>{ kgho[normCode(l.LTLCD)]=l.LTLNM||""; });
   const held={};
   (data.englicense||[]).forEach((r)=>{
     const k=String(r.ENGCD);
-    (held[k] ||= []).push(licName[normLicCode(r.LICCD)] || "");
+    const kbn=(r.KBN!==undefined && r.KBN!==null && r.KBN!=="") ? (kgho[normCode(r.KBN)]||"") : "";
+    (held[k] ||= []).push({name:licName[normLicCode(r.LICCD)] || "", kbn});
   });
 
   const unmatched={};
@@ -382,14 +396,15 @@ function buildRows(data){
     row.nday=fmtYmd(inf.NDAY);
     REG_COLUMNS.forEach((c)=>{ row[c.key]=isOn(e[c.key]) ? "○" : ""; });
 
-    const names=(held[engcd]||[]).filter(Boolean);
+    const heldList=(held[engcd]||[]).filter((h)=>h.name);
+    const names=heldList.map((h)=>h.name);
     const info=infoMap[engcd]||{};
     const hit=new Set();
     QUAL_COLUMNS.forEach((col)=>{
       const vals=[];
-      names.forEach((raw)=>{
+      heldList.forEach(({name:raw, kbn})=>{
         const n=N(raw);
-        if(col.match && col.match(n)){ hit.add(raw); vals.push(col.value ? col.value(n) : "○"); }
+        if(col.match && col.match(n)){ hit.add(raw); vals.push(col.value ? col.value(n, {kbn:N(kbn)}) : "○"); }
       });
       if(col.info){ const v=col.info(info); if(v) vals.push(v); }
       row[col.key]=combine(vals, col.pick);
