@@ -108,6 +108,37 @@
   details.diff{margin-top:6px;}
   details.diff summary{cursor:pointer;font-weight:600;}
   details.diff ul{margin:6px 0 4px;padding-left:20px;line-height:1.7;}
+  /* ---- 現状：年齢構成図 ---- */
+  .now-filters{display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:14px;}
+  .now-filters label{display:flex;align-items:center;gap:4px;}
+  .now-filters .grp{display:flex;align-items:center;gap:8px;}
+  .now-filters .grp>b{font-size:11.5px;color:var(--muted);}
+  .now-filters select{padding:4px 6px;border:1px solid var(--line);border-radius:6px;}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px;}
+  .tile{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;}
+  .tile .k{font-size:11.5px;color:var(--muted);font-weight:600;}
+  .tile .v{font-size:26px;font-weight:800;line-height:1.2;margin-top:4px;font-variant-numeric:tabular-nums;}
+  .tile .v small{font-size:13px;font-weight:600;color:var(--muted);margin-left:2px;}
+  .tile .s{font-size:11.5px;color:var(--muted);margin-top:2px;}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin:4px 0 10px;font-size:12px;color:var(--ink);}
+  .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-2px;}
+  .pyr{display:grid;grid-template-columns:1fr 64px 1.4fr;row-gap:3px;align-items:center;font-size:11.5px;}
+  .pyr .hd{font-weight:700;color:var(--muted);padding-bottom:4px;}
+  .pyr .hd.l{text-align:right;padding-right:6px;} .pyr .hd.r{padding-left:6px;}
+  .pyr .age{text-align:center;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .pyr .side{display:flex;align-items:center;height:18px;gap:6px;}
+  .pyr .side.l{flex-direction:row-reverse;}
+  .pyr .pbar{display:flex;gap:2px;height:100%;}
+  .pyr .side.l .pbar{flex-direction:row-reverse;}
+  .pyr .seg{height:100%;min-width:3px;}
+  .pyr .side.r .pbar .seg:last-child{border-radius:0 4px 4px 0;}
+  .pyr .side.l .pbar .seg:last-child{border-radius:4px 0 0 4px;}
+  .pyr .num{color:var(--muted);font-variant-numeric:tabular-nums;font-size:11px;}
+  .pyr .line{grid-column:1 / -1;border-top:2px dashed #b3261e;position:relative;height:0;margin:2px 0;}
+  .pyr .line span{position:absolute;right:0;top:-9px;background:#fff;color:#b3261e;font-size:10.5px;font-weight:700;padding:0 4px;}
+  #vizTip{position:fixed;z-index:200;pointer-events:none;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);padding:8px 10px;font-size:12px;max-width:320px;display:none;line-height:1.55;}
+  #vizTip b{font-size:12.5px;}
+  #vizTip .nm{color:var(--muted);font-size:11.5px;}
   td.age-alert{color:#d32f2f;font-weight:700;}
 
   .fbtn{width:100%;height:20px;border:none;background:transparent;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:flex-end;padding:0 4px;}
@@ -187,6 +218,7 @@
 </div>
 
 <div id="pop"></div>
+<div id="vizTip"></div>
 <dialog id="unmatchedDlg">
   <h2>表の列に割り当てられていない資格</h2>
   <p>保有者がいるのに、どの資格列にも該当しなかった資格名です。必要なものはファイル内の <code>QUAL_COLUMNS</code> にルールを追加してください。</p>
@@ -434,7 +466,7 @@ async function loadData(force){
 /* =====================================================================
    行データの組み立て
    ===================================================================== */
-let ROWS=[], UNMATCHED=[], EMPLOYEES=[];
+let ROWS=[], UNMATCHED=[], EMPLOYEES=[], HELD_BY_ENGCD={}, INFO_BY_ENGCD={};
 function buildRows(data){
   EMPLOYEES=data.employee||[];
   const licName={};
@@ -447,8 +479,9 @@ function buildRows(data){
   (data.englicense||[]).forEach((r)=>{
     const k=String(r.ENGCD);
     const kbn=(r.KBN!==undefined && r.KBN!==null && r.KBN!=="") ? (kgho[normCode(r.KBN)]||"") : "";
-    (held[k] ||= []).push({name:licName[normLicCode(r.LICCD)] || "", kbn});
+    (held[k] ||= []).push({name:licName[normLicCode(r.LICCD)] || "", kbn, sday:String(r.SDAY||"").replace(/[^\d]/g,"")});
   });
+  HELD_BY_ENGCD=held; INFO_BY_ENGCD=infoMap;
 
   const unmatched={};
   ROWS=(data.employee||[]).map((e)=>{
@@ -845,7 +878,8 @@ const normPersonName=(s)=> String(s||"").normalize("NFKC").replace(/[\s　]/g,""
 const CLS_ORDER=["イロハ","その他","事務",""];
 const clsLabel=(c)=> c || "（空欄）";
 
-const S2={sub:"data", rosters:[], loaded:false, imp:null, msg:"", busy:false};
+const S2={sub:"now", rosters:[], loaded:false, imp:null, msg:"", busy:false,
+  now:{period:null, cls:{"イロハ":true,"その他":false,"事務":false,"":false}, band:5, exp:5}};
 const structEl=document.getElementById("struct");
 const ROSTER_PREFIX="periodRoster_"; // 保存先：Firestore meta/periodRoster_{期}
 
@@ -922,12 +956,14 @@ const clsCounts=(rows)=>{ const c={}; rows.forEach((r)=>{ c[r.cls||""]=(c[r.cls|
 /* ---- 画面 ---- */
 function renderStruct(){
   const subs=[["now","現状"],["trend","推移・再雇用"],["sim","シミュレーション"],["target","対象者リスト"],["data","データ管理"]];
+  const ready=new Set(["now","data"]);
   let h=`<div class="subnav">`+subs.map(([k,l])=>
-    k==="data" ? `<button class="${S2.sub===k?"on":""}" data-sub="${k}">${l}</button>`
-               : `<button disabled title="準備中">${l}<span class="soon">準備中</span></button>`).join("")+`</div>`;
+    ready.has(k) ? `<button class="${S2.sub===k?"on":""}" data-sub="${k}">${l}</button>`
+                 : `<button disabled title="準備中">${l}<span class="soon">準備中</span></button>`).join("")+`</div>`;
   if(S2.msg) h+=`<div class="card err-msg">${esc(S2.msg)}</div>`;
   if(!S2.loaded){ structEl.innerHTML=h+`<div class="loading">読み込み中…</div>`; return; }
-  h+=renderImportCard()+renderRosterListCard()+renderDiffCard();
+  if(S2.sub==="now") h+=renderNow();
+  else h+=renderImportCard()+renderRosterListCard()+renderDiffCard();
   structEl.innerHTML=h;
 }
 
@@ -1003,6 +1039,167 @@ function renderDiffCard(){
   }
   return h+`</div>`;
 }
+
+/* =====================================================================
+   現状：年齢構成図と段階別の人数
+   ・母集団：選んだ期末名簿に載っている全社員。年齢・資格はその期末（9/30）時点で判定。
+   ・技術者＝1級土木施工管理技士。取得日が不明な資格は「その時点で保有」とみなす。
+   ・1級を持っていない人は、対象の分類（初期値：イロハ）の人だけ段階に分け、それ以外は「対象外」。
+   ===================================================================== */
+const STAGES=[ // 色は1色の濃淡（受検前＝薄い → 1級＝濃い）。dataviz の ordinal 検証済み
+  {k:"s5", label:"1級技術者",              color:"#104281"},
+  {k:"s4", label:"二次受検可能（技士補・経験年数到達）", color:"#1c5cab"},
+  {k:"s3", label:"技士補・実務経験中",      color:"#2a78d6"},
+  {k:"s2", label:"一次受検可能（19歳以上）", color:"#5598e7"},
+  {k:"s1", label:"受検前（19歳未満）",       color:"#86b6ef"},
+  {k:"out",label:"対象外の分類",            color:"#d4d3cd"},
+];
+const STAGE_BY_KEY=Object.fromEntries(STAGES.map((x)=>[x.k,x]));
+const qualCol=(key)=> QUAL_COLUMNS.find((c)=>c.key===key);
+// 満年数（from〜to、どちらもYYYYMMDD）
+function yearsBetween(from, to){
+  if(!/^\d{8}$/.test(from||"") || !/^\d{8}$/.test(to||"")) return null;
+  let n=+to.slice(0,4)-+from.slice(0,4);
+  if(to.slice(4)<from.slice(4)) n--;
+  return n;
+}
+// 指定日時点で保有している資格（取得日不明は保有扱い）。最も早い取得日も返す。
+function heldAt(lics, matchKey, d){
+  const col=qualCol(matchKey);
+  const hits=lics.filter((l)=> col.match(N(l.name)) && (!l.sday || l.sday<=d));
+  if(!hits.length) return null;
+  const known=hits.map((l)=>l.sday).filter((x)=>/^\d{8}$/.test(x)).sort();
+  return {sday: known[0]||"", unknown: !known.length};
+}
+function computeNow(roster, opt){
+  const d=periodEnd(roster.period);
+  return roster.rows.map((r)=>{
+    const engcd=r.engcd||"";
+    const info=INFO_BY_ENGCD[engcd]||{};
+    const bday=String(info.BDAY||"").replace(/[^\d]/g,"");
+    const age=yearsBetween(bday, d);
+    const lics=HELD_BY_ENGCD[engcd]||[];
+    const k1=heldAt(lics,"doboku1",d), ho=heldAt(lics,"doboku1ho",d), k2=heldAt(lics,"doboku2",d);
+    const target=!!opt.cls[r.cls||""];
+    let stage, exp=null;
+    if(k1) stage="s5";
+    else if(!target) stage="out";
+    else if(ho){ exp=ho.sday ? yearsBetween(ho.sday,d) : null; stage = exp!==null && exp>=opt.exp ? "s4" : "s3"; }
+    else if(age!==null && age<19) stage="s1";
+    else stage="s2";
+    return {no:r.no, name:r.name, cls:r.cls||"", engcd, age, stage, exp, has2:!!k2,
+      noBday:!bday, licDateUnknown: !!((k1&&k1.unknown)||(ho&&ho.unknown)), unmatched:!engcd};
+  });
+}
+function bandOf(age, w){
+  if(age===null) return null;
+  if(w===1) return Math.max(15, Math.min(80, age));
+  if(age<20) return 15;                // 〜19
+  return Math.min(75, Math.floor(age/5)*5); // 75〜
+}
+const bandLabel=(b,w)=> w===1 ? (b<=15?"〜15":b>=80?"80〜":String(b)) : (b===15?"〜19":b===75?"75〜":`${b}〜${b+4}`);
+
+function renderNow(){
+  if(!S2.rosters.length){
+    return `<div class="card"><h2>現状</h2><p class="desc">期末名簿がまだ登録されていません。「データ管理」で在籍リストを取り込むと表示されます。</p>
+      <button class="btn primary" data-sub="data">データ管理へ</button></div>`;
+  }
+  const o=S2.now;
+  if(!S2.rosters.some((x)=>x.period===o.period)) o.period=S2.rosters[S2.rosters.length-1].period;
+  const roster=S2.rosters.find((x)=>x.period===o.period);
+  const ppl=computeNow(roster,o);
+  const known=ppl.filter((p)=>p.age!==null);
+  const tech=ppl.filter((p)=>p.stage==="s5");
+  const techKnown=tech.filter((p)=>p.age!==null);
+  const avg=(a)=> a.length ? (a.reduce((x,p)=>x+p.age,0)/a.length).toFixed(1) : "-";
+  const nAge=(a,f)=> a.filter((p)=>p.age!==null && f(p.age)).length;
+  const pct=(n,t)=> t ? Math.round(n/t*100) : 0;
+  const cnt=(k)=> ppl.filter((p)=>p.stage===k).length;
+
+  // ---- フィルター（1行） ----
+  let h=`<div class="now-filters">
+    <div class="grp"><b>基準</b><select data-now="period">${S2.rosters.map((x)=>`<option value="${x.period}"${x.period===o.period?" selected":""}>${x.period}期末（${fmtYmdSlash(x.baseDate)}）</option>`).join("")}</select></div>
+    <div class="grp"><b>1級候補とする分類</b>${CLS_ORDER.map((c)=>`<label><input type="checkbox" data-now-cls="${esc(c)}"${o.cls[c]?" checked":""}> ${clsLabel(c)}</label>`).join("")}</div>
+    <div class="grp"><b>年齢区分</b><select data-now="band"><option value="5"${o.band===5?" selected":""}>5歳ごと</option><option value="1"${o.band===1?" selected":""}>1歳ごと</option></select></div>
+    <div class="grp"><b>二次受検に必要な実務経験</b><select data-now="exp"><option value="5"${o.exp===5?" selected":""}>5年</option><option value="3"${o.exp===3?" selected":""}>3年（特定実務経験）</option></select></div>
+  </div>`;
+
+  // ---- 数字のタイル ----
+  const t60=nAge(tech,(a)=>a>=60), t5560=nAge(tech,(a)=>a>=55&&a<60);
+  h+=`<div class="tiles">
+    <div class="tile"><div class="k">1級技術者</div><div class="v">${tech.length}<small>人</small></div><div class="s">平均 ${avg(techKnown)}歳／全社員 ${ppl.length}人中</div></div>
+    <div class="tile"><div class="k">うち60歳以上（再雇用など）</div><div class="v">${t60}<small>人</small></div><div class="s">1級技術者の ${pct(t60,techKnown.length)}%</div></div>
+    <div class="tile"><div class="k">5年以内に60歳になる1級</div><div class="v">${t5560}<small>人</small></div><div class="s">${roster.period}期末時点で55〜59歳</div></div>
+    <div class="tile"><div class="k">次の候補（技士補）</div><div class="v">${cnt("s4")+cnt("s3")}<small>人</small></div><div class="s">うち二次受検可能 ${cnt("s4")}人</div></div>
+    <div class="tile"><div class="k">一次受検可能・受検前</div><div class="v">${cnt("s2")+cnt("s1")}<small>人</small></div><div class="s">対象の分類で、1級・技士補を持たない人</div></div>
+  </div>`;
+
+  // ---- 年齢構成図（左：1級技術者／右：それ以外を段階別に積み上げ） ----
+  const w=o.band, bands=new Map();
+  known.forEach((p)=>{ const b=bandOf(p.age,w); if(!bands.has(b)) bands.set(b,[]); bands.get(b).push(p); });
+  const minB=w===1?Math.max(15,Math.min(...known.map((p)=>p.age),60)):15;
+  const keys=[]; for(let b=(w===1?80:75); b>=minB; b-=w) keys.push(b);
+  const rightKeys=["s4","s3","s2","s1","out"];
+  const maxL=Math.max(1,...keys.map((b)=>(bands.get(b)||[]).filter((p)=>p.stage==="s5").length));
+  const maxR=Math.max(1,...keys.map((b)=>(bands.get(b)||[]).filter((p)=>p.stage!=="s5").length));
+  const scale=Math.max(maxL,maxR);
+  let pyr=`<div class="pyr"><div class="hd l">1級技術者</div><div class="hd" style="text-align:center">年齢</div><div class="hd r">それ以外（段階別）</div>`;
+  keys.forEach((b)=>{
+    const list=bands.get(b)||[];
+    const nL=list.filter((p)=>p.stage==="s5").length;
+    const nR=list.length-nL;
+    pyr+=`<div class="side l"><div class="pbar" style="width:${(nL/scale*100).toFixed(2)}%">${nL?`<span class="seg" style="flex:1;background:${STAGE_BY_KEY.s5.color}" data-tip-band="${b}" data-tip-stage="s5"></span>`:""}</div><span class="num">${nL||""}</span></div>
+      <div class="age">${bandLabel(b,w)}</div>
+      <div class="side r"><div class="pbar" style="width:${(nR/scale*100).toFixed(2)}%">${rightKeys.map((k)=>{ const n=list.filter((p)=>p.stage===k).length; return n?`<span class="seg" style="flex:${n};background:${STAGE_BY_KEY[k].color}" data-tip-band="${b}" data-tip-stage="${k}"></span>`:""; }).join("")}</div><span class="num">${nR||""}</span></div>`;
+    if((w===5 && b===60) || (w===1 && b===60)) pyr+=`<div class="line"><span>↑ 60歳（定年）以上</span></div>`;
+  });
+  pyr+=`</div>`;
+  const noAge=ppl.filter((p)=>p.age===null).length;
+  h+=`<div class="card"><h2>年齢構成図（${roster.period}期末・${fmtYmdSlash(roster.baseDate)}時点の年齢）</h2>
+    <p class="desc">左が1級技術者、右がそれ以外の社員です。右側は1級に近い段階ほど中央寄り・濃い色です。棒にマウスを乗せると氏名が出ます。${noAge?`生年月日が未登録の${noAge}人は図に含めていません（下の「データの確認」参照）。`:""}</p>
+    <div class="legend">${STAGES.map((x)=>`<span><i style="background:${x.color}"></i>${x.label}</span>`).join("")}</div>
+    ${pyr}</div>`;
+
+  // ---- 段階×年齢層の表（図の数値版） ----
+  const groups=[["〜29",(a)=>a<30],["30代",(a)=>a>=30&&a<40],["40代",(a)=>a>=40&&a<50],["50代",(a)=>a>=50&&a<60],["60代",(a)=>a>=60&&a<70],["70〜",(a)=>a>=70]];
+  h+=`<div class="card"><h2>段階別の人数</h2>
+    <table class="grid-tbl"><tr><th>段階</th><th>合計</th>${groups.map((g)=>`<th>${g[0]}</th>`).join("")}<th>年齢不明</th><th>平均年齢</th></tr>`+
+    STAGES.map((x)=>{ const a=ppl.filter((p)=>p.stage===x.k); return `<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${x.color};margin-right:6px"></i>${x.label}</td><td class="n"><b>${a.length}</b></td>${groups.map((g)=>`<td class="n">${nAge(a,g[1])||""}</td>`).join("")}<td class="n">${a.filter((p)=>p.age===null).length||""}</td><td class="n">${avg(a.filter((p)=>p.age!==null))}</td></tr>`; }).join("")+
+    `<tr><td><b>合計</b></td><td class="n"><b>${ppl.length}</b></td>${groups.map((g)=>`<td class="n">${nAge(ppl,g[1])}</td>`).join("")}<td class="n">${noAge}</td><td class="n">${avg(known)}</td></tr></table>
+    <p class="desc" style="margin-top:8px">参考：2級土木施工管理技士を持っている人（1級を除く）… ${ppl.filter((p)=>p.has2 && p.stage!=="s5").length}人</p></div>`;
+
+  // ---- データの確認 ----
+  const listOf=(a)=> a.length ? `<ul>${a.map((p)=>`<li>${esc(p.no)} ${esc(p.name)}（${esc(clsLabel(p.cls))}）</li>`).join("")}</ul>` : "";
+  const chk=[
+    ["生年月日が未登録の人（年齢構成図に入らない）", ppl.filter((p)=>p.noBday && !p.unmatched)],
+    ["社員データと紐付いていない人（年齢・資格が分からない）", ppl.filter((p)=>p.unmatched)],
+    ["1級・技士補の取得日が未登録の人（保有扱いで計算。過去の期の判定や経験年数に影響）", ppl.filter((p)=>p.licDateUnknown)],
+  ];
+  h+=`<div class="card"><h2>データの確認</h2><p class="desc">次の人は、工事実績システムの技術者情報・保有資格に登録すると集計が正確になります。</p>`+
+    chk.map(([t,a])=>`<details class="diff"><summary>${t}：${a.length}人</summary>${listOf(a)}</details>`).join("")+`</div>`;
+
+  S2.nowPeople=ppl; S2.nowBand=w;
+  return h;
+}
+
+/* ---- 年齢構成図のツールチップ（区分・段階・人数・氏名） ---- */
+const vizTip=document.getElementById("vizTip");
+structEl.addEventListener("mousemove",(e)=>{
+  const sg=e.target.closest("[data-tip-stage]");
+  if(!sg || !S2.nowPeople){ vizTip.style.display="none"; return; }
+  const b=parseInt(sg.dataset.tipBand,10), k=sg.dataset.tipStage, w=S2.nowBand;
+  const list=S2.nowPeople.filter((p)=>p.age!==null && bandOf(p.age,w)===b && p.stage===k);
+  vizTip.innerHTML=`<b>${bandLabel(b,w)}歳・${esc(STAGE_BY_KEY[k].label)}</b>：${list.length}人<div class="nm">${list.slice(0,15).map((p)=>esc(p.name)+(p.exp!==null&&k!=="s5"?`（技士補${p.exp}年）`:"")).join("、")}${list.length>15?` ほか${list.length-15}人`:""}</div>`;
+  vizTip.style.display="block";
+  const x=Math.min(e.clientX+14, window.innerWidth-vizTip.offsetWidth-8), y=Math.min(e.clientY+14, window.innerHeight-vizTip.offsetHeight-8);
+  vizTip.style.left=x+"px"; vizTip.style.top=y+"px";
+});
+structEl.addEventListener("mouseleave",()=>{ vizTip.style.display="none"; });
+structEl.addEventListener("change",(e)=>{
+  const t=e.target;
+  if(t.dataset.now){ S2.now[t.dataset.now]=parseInt(t.value,10); renderStruct(); }
+  else if(t.dataset.nowCls!==undefined){ S2.now.cls[t.dataset.nowCls]=t.checked; renderStruct(); }
+});
 
 /* ---- 操作 ---- */
 structEl.addEventListener("click", async (e)=>{
