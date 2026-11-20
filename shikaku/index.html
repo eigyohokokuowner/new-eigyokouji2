@@ -74,6 +74,40 @@
   .code-edit .grip{color:#8a90a0;cursor:grab;font-size:13px;}
   .code-edit button{border:1px solid var(--line);background:#fff;border-radius:4px;padding:0 4px;line-height:15px;font-size:10px;cursor:pointer;}
   .code-edit button:hover{border-color:var(--accent);color:var(--accent);}
+  /* ---- タブ切り替え ---- */
+  .tabsw{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;}
+  .tabsw button{border:none;background:#fff;padding:6px 14px;cursor:pointer;font-weight:700;color:var(--muted);}
+  .tabsw button+button{border-left:1px solid var(--line);}
+  .tabsw button.on{background:var(--accent);color:#fff;}
+  #app.tab-struct .t1{display:none!important;}
+  #app.tab-struct .order-bar{display:none!important;}
+  /* ---- 技術者構成・推移 ---- */
+  .struct{flex:1 1 auto;min-height:0;overflow:auto;padding:14px 18px 40px;}
+  .subnav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;}
+  .subnav button{padding:7px 14px;border:1px solid var(--line);border-radius:999px;background:#fff;cursor:pointer;font-weight:600;color:var(--muted);}
+  .subnav button.on{background:var(--ink);border-color:var(--ink);color:#fff;}
+  .subnav button:disabled{cursor:default;opacity:.55;}
+  .subnav .soon{font-size:10px;margin-left:4px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:14px;}
+  .card h2{font-size:14px;margin:0 0 4px;}
+  .card .desc{color:var(--muted);margin:0 0 12px;line-height:1.6;}
+  .grid-tbl{border-collapse:collapse;font-size:12px;}
+  .grid-tbl th,.grid-tbl td{border:1px solid var(--line);padding:5px 9px;white-space:nowrap;text-align:left;}
+  .grid-tbl th{background:#f1f3f8;font-weight:700;}
+  .grid-tbl td.n{text-align:right;font-variant-numeric:tabular-nums;}
+  .grid-tbl td.c{text-align:center;}
+  .pill{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;}
+  .pill.ok{background:#e6f6ec;color:#1e7b3c;}
+  .pill.warn{background:#fff3cd;color:#8a5a00;}
+  .pill.ng{background:#fde7e9;color:#b3261e;}
+  .imp-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0;}
+  .imp-row input[type=number]{width:70px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;}
+  .imp-row select{padding:5px 6px;border:1px solid var(--line);border-radius:6px;}
+  .muted{color:var(--muted);}
+  .err-msg{color:#b3261e;font-weight:600;}
+  details.diff{margin-top:6px;}
+  details.diff summary{cursor:pointer;font-weight:600;}
+  details.diff ul{margin:6px 0 4px;padding-left:20px;line-height:1.7;}
   td.age-alert{color:#d32f2f;font-weight:700;}
 
   .fbtn{width:100%;height:20px;border:none;background:transparent;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:flex-end;padding:0 4px;}
@@ -121,20 +155,24 @@
 <div id="app" hidden>
   <div class="bar">
     <h1>社員 有資格一覧</h1>
+    <div class="tabsw">
+      <button data-tab="list" class="on">有資格一覧</button>
+      <button data-tab="struct">技術者構成・推移</button>
+    </div>
     <span class="meta" id="metaText"></span>
-    <input type="search" id="q" placeholder="氏名・社員番号・所属で検索" />
-    <select id="statusSel">
+    <input type="search" id="q" class="t1" placeholder="氏名・社員番号・所属で検索" />
+    <select id="statusSel" class="t1">
       <option value="active">在職者のみ</option>
       <option value="all">退職者も含む</option>
     </select>
-    <label class="chk"><input type="checkbox" id="extraChk" /> 詳細項目を表示</label>
-    <label class="chk"><input type="checkbox" id="freezeChk" checked /> 社員番号〜氏名を固定</label>
-    <button class="btn" id="clearBtn">絞り込みをすべて解除</button>
-    <button class="btn" id="orderBtn" hidden>並び順を編集</button>
+    <label class="chk t1"><input type="checkbox" id="extraChk" /> 詳細項目を表示</label>
+    <label class="chk t1"><input type="checkbox" id="freezeChk" checked /> 社員番号〜氏名を固定</label>
+    <button class="btn t1" id="clearBtn">絞り込みをすべて解除</button>
+    <button class="btn t1" id="orderBtn" hidden>並び順を編集</button>
     <span class="spacer"></span>
-    <button class="btn" id="unmatchedBtn">列に無い資格</button>
+    <button class="btn t1" id="unmatchedBtn">列に無い資格</button>
     <button class="btn" id="reloadBtn">最新データを再取得</button>
-    <button class="btn primary" id="xlsxBtn">Excelで出力</button>
+    <button class="btn primary t1" id="xlsxBtn">Excelで出力</button>
     <button class="btn" id="logoutBtn">ログアウト</button>
   </div>
   <div class="order-bar">
@@ -144,7 +182,8 @@
     <button class="btn" id="orderCancelBtn">キャンセル</button>
     <button class="btn primary" id="orderSaveBtn">この順で保存</button>
   </div>
-  <div class="table-wrap" id="wrap"><div class="loading">データを読み込んでいます…</div></div>
+  <div class="table-wrap t1" id="wrap"><div class="loading">データを読み込んでいます…</div></div>
+  <div class="struct" id="struct" hidden></div>
 </div>
 
 <div id="pop"></div>
@@ -158,7 +197,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 /* =====================================================================
    Firebase設定（新営業工事実績システム２と同じプロジェクト）
@@ -285,7 +324,27 @@ const SORT_ORDER=[
   "900106","910116","491846","960107","990110","100107",
 ];
 const normCode=(v)=>{ const s=String(v||"").trim(); return /^\d+$/.test(s) ? String(parseInt(s,10)) : s; };
+/* 社員番号の履歴（工事実績システムの社員データ EMP_NO / EMP_NO_HISTORY）
+   EMP_NO：現在の社員番号（空なら ENGCD と同じ）、EMP_NO_HISTORY：[{from,no,to}]（日付はYYYYMMDD） */
+const empNoHistoryOf=(e)=> Array.isArray(e && e.EMP_NO_HISTORY) ? e.EMP_NO_HISTORY.filter((h)=>h && h.no) : [];
+const currentEmpNo=(e)=> e ? (String(e.EMP_NO||"").trim() || String(e.ENGCD||"")) : "";
+function allEmpNos(e){
+  if(!e) return [];
+  const out=[], seen=new Set();
+  [e.ENGCD, e.EMP_NO, ...empNoHistoryOf(e).map((h)=>h.no)].forEach((v)=>{
+    const s=String(v===undefined||v===null ? "" : v).trim(); if(!s) return;
+    const n=normCode(s); if(seen.has(n)) return; seen.add(n); out.push(s);
+  });
+  return out;
+}
+const empHasNo=(e,no)=>{ const n=normCode(no); return !!n && allEmpNos(e).some((x)=>normCode(x)===n); };
 let ORDER_INDEX=new Map(SORT_ORDER.map((c,i)=>[normCode(c),i]));
+// 並び順での位置：技術者コード→現在・過去の社員番号の順に探す（並び順リストがどちらの番号で書かれていても効くように）
+function orderIdx(r){
+  let i=ORDER_INDEX.get(normCode(r.engcd));
+  if(i===undefined) for(const no of String(r.allNos||"").split(" ")){ const j=ORDER_INDEX.get(normCode(no)); if(j!==undefined){ i=j; break; } }
+  return i===undefined ? Infinity : i;
+}
 function setOrder(codes){ ORDER_INDEX=new Map(codes.map((c,i)=>[normCode(c),i])); }
 // 手動で並べ替えた順は Firestore の meta/shikakuSortOrder に保存する（全員で共有）
 const ORDER_DOC=["meta","shikakuSortOrder"];
@@ -306,6 +365,7 @@ const EMP_COLUMNS=[
   {key:"empType",   label:"雇用\n区分名",           w:62,  align:"c", extra:true},
   {key:"officeTech",label:"CPD推進/\n専任技術者",   w:84,  align:"c", extra:true},
   {key:"name",  label:"氏名_漢字", w:96},
+  {key:"engcd",     label:"技術者\nコード", w:70, align:"c", extra:true},
   {key:"kana",      label:"氏名_カナ",  w:120, extra:true},
   {key:"nameChg",   label:"旧姓/新姓",  w:100, extra:true},
   {key:"age",       label:"年齢",       w:48,  align:"c", extra:true, num:true, fmt:(v)=>v+"歳"},
@@ -374,8 +434,9 @@ async function loadData(force){
 /* =====================================================================
    行データの組み立て
    ===================================================================== */
-let ROWS=[], UNMATCHED=[];
+let ROWS=[], UNMATCHED=[], EMPLOYEES=[];
 function buildRows(data){
+  EMPLOYEES=data.employee||[];
   const licName={};
   (data.licenses||[]).forEach((l)=>{ licName[normLicCode(l.LICCD)]=l.LICNM||""; });
   const infoMap={};
@@ -406,7 +467,7 @@ function buildRows(data){
     let pos=posText;
     if(!pos && parts.length>1 && isPositionText(parts[parts.length-1])) pos=parts.pop();
     const row={
-      code:engcd, retired:e.STATUS==="retired",
+      code:currentEmpNo(e), engcd, allNos:allEmpNos(e).join(" "), retired:e.STATUS==="retired",
       dept0:parts[0]||"", dept1:parts[1]||"", dept2:parts[2]||"", dept3:parts[3]||"",
       dept4:parts.slice(4).join(" "),
       pos, name:e.ID_NAME||"", fullDept:deptText,
@@ -472,7 +533,7 @@ function rowsByStatus(){ return ROWS.filter((r)=> state.status==="all" || !r.ret
 function passes(r, exceptKey){
   if(state.q){
     const q=state.q.replace(/[\s　]/g,"");
-    const hay=(r.code+r.name+r.kana+r.nameChg+r.fullDept+r.pos+r.workplace).replace(/[\s　]/g,"");
+    const hay=(r.allNos+r.name+r.kana+r.nameChg+r.fullDept+r.pos+r.workplace).replace(/[\s　]/g,"");
     if(!hay.includes(q)) return false;
   }
   for(const [k,set] of Object.entries(state.filters)){
@@ -487,7 +548,7 @@ function visibleRows(){
   const {key,dir}=state.sort;
   const num=(v)=>/^\d+$/.test(v);
   if(key==="__default"){
-    const idx=(r)=>{ const i=ORDER_INDEX.get(normCode(r.code)); return i===undefined ? Infinity : i; };
+    const idx=(r)=>{ return orderIdx(r); };
     list.sort((a,b)=> (idx(a)-idx(b)) || cellVal(a,"code").localeCompare(cellVal(b,"code"),"ja",{numeric:true}));
     return list;
   }
@@ -569,7 +630,7 @@ function render(){
   // 本体
   rows.forEach((r)=>{
     const ed=state.editOrder;
-    h+=`<tr class="${r.retired?"retired":""}${ed&&state.lastMoved===r.code?" moved":""}"${ed?` draggable="true" data-code="${esc(r.code)}"`:""}>`;
+    h+=`<tr class="${r.retired?"retired":""}${ed&&state.lastMoved===r.engcd?" moved":""}"${ed?` draggable="true" data-code="${esc(r.engcd)}"`:""}>`;
     cols.forEach((c,i)=>{
       const v=cellVal(r,c.key), t=disp(c,v);
       let cls=(c.align==="c"?"":"l")+gs(i);
@@ -668,7 +729,7 @@ document.getElementById("unmatchedBtn").onclick=()=>{
     : "<li>ありません（保有資格はすべていずれかの列に表示されています）</li>";
   document.getElementById("unmatchedDlg").showModal();
 };
-document.getElementById("reloadBtn").onclick=()=>start(true);
+document.getElementById("reloadBtn").onclick=async ()=>{ await start(true); if(!structEl.hidden){ S2.loaded=false; renderStruct(); await loadRosters(); renderStruct(); } };
 document.getElementById("logoutBtn").onclick=()=>signOut(auth);
 document.getElementById("xlsxBtn").onclick=()=>{
   const rows=visibleRows();
@@ -690,8 +751,8 @@ document.getElementById("xlsxBtn").onclick=()=>{
 let canEdit=false, orderBackup=null;
 // 全社員（退職者含む）を現在の既定順に並べた社員番号リスト
 function fullOrder(){
-  const idx=(r)=>{ const i=ORDER_INDEX.get(normCode(r.code)); return i===undefined ? Infinity : i; };
-  return [...ROWS].sort((a,b)=>(idx(a)-idx(b)) || a.code.localeCompare(b.code,"ja",{numeric:true})).map((r)=>r.code);
+  const idx=(r)=>{ return orderIdx(r); };
+  return [...ROWS].sort((a,b)=>(idx(a)-idx(b)) || a.engcd.localeCompare(b.engcd,"ja",{numeric:true})).map((r)=>r.engcd);
 }
 // code を target の前(before=true)／後ろに移動
 function moveCode(code, target, before){
@@ -769,6 +830,243 @@ async function loadOrderAndRole(){
   }catch(e){ canEdit=false; }
   document.getElementById("orderBtn").hidden = !canEdit || !!state.editOrder;
 }
+
+/* =====================================================================
+   技術者構成・推移タブ
+   ===================================================================== */
+// 期：10月1日始まり。n期 ＝ (n+1956)/10/1 〜 (n+1957)/9/30（例：69期末＝2026/9/30、70期＝2026/10/1〜）
+const periodEnd=(n)=> String(n+1957)+"0930";
+const periodStart=(n)=> String(n+1956)+"1001";
+const currentPeriod=()=>{ const d=new Date(); return (d.getMonth()+1>=10 ? d.getFullYear() : d.getFullYear()-1)-1956; };
+const fmtYmdSlash=(s)=> /^\d{8}$/.test(s||"") ? s.slice(0,4)+"/"+parseInt(s.slice(4,6),10)+"/"+parseInt(s.slice(6,8),10) : "";
+// 氏名の照合用：空白除去・全角英数→半角(NFKC)・旧字体/異体字→新字体（工事実績システムと同じ対応表）
+const NAME_KANJI_VARIANTS={"藏":"蔵","髙":"高","﨑":"崎","嵜":"崎","邊":"辺","邉":"辺","澤":"沢","齋":"斎","齊":"斉","濱":"浜","廣":"広","櫻":"桜","嶋":"島","嶌":"島","國":"国","德":"徳","惠":"恵","冨":"富","峯":"峰","槇":"槙","遙":"遥","實":"実","壽":"寿","榮":"栄","學":"学","縣":"県","淺":"浅","黑":"黒","瀨":"瀬","龍":"竜","條":"条","眞":"真","與":"与","晉":"晋","曻":"昇","莊":"荘","藝":"芸","萬":"万","廸":"迪","增":"増","爲":"為","圓":"円","鐵":"鉄","聰":"聡","彌":"弥","豐":"豊","禮":"礼","靜":"静","驒":"騨","戶":"戸","團":"団","對":"対","應":"応","傳":"伝","當":"当","恆":"恒","淸":"清","瑤":"瑶","槪":"概","敎":"教","顯":"顕","繩":"縄","雜":"雑","兒":"児","佛":"仏","來":"来","邨":"村","萠":"萌","凉":"涼","乘":"乗","藥":"薬","舘":"館","蘆":"芦","籠":"篭","讚":"讃","滿":"満","勳":"勲","巖":"巌","嚴":"厳"};
+const normPersonName=(s)=> String(s||"").normalize("NFKC").replace(/[\s　]/g,"").replace(/./gu,(c)=>NAME_KANJI_VARIANTS[c]||c);
+const CLS_ORDER=["イロハ","その他","事務",""];
+const clsLabel=(c)=> c || "（空欄）";
+
+const S2={sub:"data", rosters:[], loaded:false, imp:null, msg:"", busy:false};
+const structEl=document.getElementById("struct");
+const ROSTER_PREFIX="periodRoster_"; // 保存先：Firestore meta/periodRoster_{期}
+
+async function loadRosters(){
+  try{
+    const snap=await getDocs(collection(db,"meta"));
+    const list=[];
+    snap.forEach((d)=>{ if(String(d.id).startsWith(ROSTER_PREFIX)){ const v=d.data(); if(v && Array.isArray(v.rows)) list.push(v); } });
+    S2.rosters=list.sort((a,b)=>a.period-b.period);
+  }catch(e){ console.error(e); S2.msg="登録済みの名簿を読み込めませんでした（"+(e.code||e.message)+"）"; }
+  S2.loaded=true;
+}
+
+/* ---- 在籍リスト（Excel）の読み取り ---- */
+async function parseRosterFile(file){
+  const wb=XLSX.read(await file.arrayBuffer(), {type:"array"});
+  const sheetName=wb.SheetNames[0];
+  const grid=XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {header:1, raw:false, defval:""});
+  let h=-1, ci={};
+  for(let i=0;i<Math.min(grid.length,10);i++){
+    const row=(grid[i]||[]).map((c)=>String(c||"").trim());
+    const no=row.findIndex((c)=>c.includes("社員番号")||c.includes("社員No")||c==="コード");
+    const nm=row.findIndex((c)=>c.includes("氏名"));
+    if(no>=0 && nm>=0){ h=i; ci={no, nm, cls:row.findIndex((c)=>c.includes("分類")||c.includes("建設業区分"))}; break; }
+  }
+  if(h<0) throw new Error("見出し行（社員番号・氏名）が見つかりません");
+  const rows=[];
+  for(let r=h+1;r<grid.length;r++){
+    const g=grid[r]||[];
+    let no=String(g[ci.no]||"").trim();
+    if(!no) continue;
+    if(/^\d+$/.test(no)) no=no.padStart(6,"0");
+    const rawCls=ci.cls>=0 ? String(g[ci.cls]||"").trim() : "";
+    // 分類に付いている「★」などの印は使わないので取り除く
+    rows.push({no, name:String(g[ci.nm]||"").trim(), cls:rawCls.replace(/[★☆]/g,"").trim()});
+  }
+  const m=(sheetName+" "+file.name).match(/(\d{2,3})\s*期/);
+  return {rows, sheetName, fileName:file.name, hasCls:ci.cls>=0, period: m ? parseInt(m[1],10) : currentPeriod()-1};
+}
+
+/* ---- 社員データとの照合：①番号（技術者コード・現在/過去の社員番号）→ ②氏名 ---- */
+function matchRosterRow(row){
+  const byNo=EMPLOYEES.filter((e)=>empHasNo(e,row.no));
+  if(byNo.length===1) return {engcd:String(byNo[0].ENGCD), how:"番号"};
+  if(byNo.length>1){
+    const exact=byNo.find((e)=>normCode(e.ENGCD)===normCode(row.no));
+    if(exact) return {engcd:String(exact.ENGCD), how:"番号"};
+  }
+  const key=normPersonName(row.name);
+  const byName=key ? EMPLOYEES.filter((e)=>normPersonName(e.ID_NAME)===key) : [];
+  if(byName.length===1) return {engcd:String(byName[0].ENGCD), how:"氏名"};
+  if(byName.length>1) return {engcd:"", how:"同姓同名"};
+  return {engcd:"", how:"なし"};
+}
+const empByEngcd=(c)=> EMPLOYEES.find((e)=>String(e.ENGCD)===String(c));
+const empLabel=(e)=> e ? `${e.ID_NAME||""}（社員番号 ${currentEmpNo(e)}${normCode(currentEmpNo(e))!==normCode(e.ENGCD)?"／技術者 "+e.ENGCD:""}${e.STATUS==="retired"?"・退職":""}）` : "";
+
+/* ---- 期どうしの比較（同じ人＝紐付けた技術者コード、無ければ社員番号で判定） ---- */
+const personKey=(r)=> r.engcd ? "e:"+r.engcd : "n:"+normCode(r.no);
+function diffRosters(prev, cur){
+  const pm=new Map(prev.rows.map((r)=>[personKey(r),r])), cm=new Map(cur.rows.map((r)=>[personKey(r),r]));
+  const left=prev.rows.filter((r)=>!cm.has(personKey(r)));
+  const joined=cur.rows.filter((r)=>!pm.has(personKey(r)));
+  const clsChanged=[], noChanged=[];
+  cur.rows.forEach((r)=>{
+    const p=pm.get(personKey(r)); if(!p) return;
+    if((p.cls||"")!==(r.cls||"")) clsChanged.push({p,r});
+    if(normCode(p.no)!==normCode(r.no)) noChanged.push({p,r});
+  });
+  return {left, joined, clsChanged, noChanged};
+}
+const clsCounts=(rows)=>{ const c={}; rows.forEach((r)=>{ c[r.cls||""]=(c[r.cls||""]||0)+1; }); return c; };
+
+/* ---- 画面 ---- */
+function renderStruct(){
+  const subs=[["now","現状"],["trend","推移・再雇用"],["sim","シミュレーション"],["target","対象者リスト"],["data","データ管理"]];
+  let h=`<div class="subnav">`+subs.map(([k,l])=>
+    k==="data" ? `<button class="${S2.sub===k?"on":""}" data-sub="${k}">${l}</button>`
+               : `<button disabled title="準備中">${l}<span class="soon">準備中</span></button>`).join("")+`</div>`;
+  if(S2.msg) h+=`<div class="card err-msg">${esc(S2.msg)}</div>`;
+  if(!S2.loaded){ structEl.innerHTML=h+`<div class="loading">読み込み中…</div>`; return; }
+  h+=renderImportCard()+renderRosterListCard()+renderDiffCard();
+  structEl.innerHTML=h;
+}
+
+function renderImportCard(){
+  let h=`<div class="card"><h2>期末名簿の取り込み</h2>
+    <p class="desc">各期末（9/30）時点の在籍リスト（社員番号・氏名・分類）を取り込み、期ごとの記録として保存します。工事実績システムの社員データは変更しません。</p>`;
+  if(!canEdit){ return h+`<p class="muted">取り込みは編集権限のある人のみ行えます。</p></div>`; }
+  h+=`<div class="imp-row"><input type="file" id="rosterFile" accept=".xlsx,.xls,.csv"></div>`;
+  const imp=S2.imp;
+  if(imp){
+    const rows=imp.rows, cc=clsCounts(rows);
+    const nNo=rows.filter((r)=>r.how==="番号").length, nName=rows.filter((r)=>r.how==="氏名").length;
+    const nManual=rows.filter((r)=>r.how==="手動").length, nNone=rows.filter((r)=>!r.engcd).length;
+    const exists=S2.rosters.some((x)=>x.period===imp.period);
+    h+=`<div class="imp-row"><b>${esc(imp.fileName)}</b><span class="muted">（シート：${esc(imp.sheetName)}）</span></div>
+      <div class="imp-row">対象の期：<input type="number" id="impPeriod" value="${imp.period}" min="1" max="200"> 期末
+        <span class="muted">＝ 基準日 ${fmtYmdSlash(periodEnd(imp.period))}</span>
+        ${exists?`<span class="pill warn">この期は登録済み（保存すると置き換えます）</span>`:""}</div>
+      <table class="grid-tbl" style="margin:8px 0"><tr><th>人数</th>${CLS_ORDER.map((c)=>`<th>${clsLabel(c)}</th>`).join("")}</tr>
+        <tr><td class="n">${rows.length}</td>${CLS_ORDER.map((c)=>`<td class="n">${cc[c]||0}</td>`).join("")}</tr></table>
+      ${imp.hasCls?"":`<p class="err-msg">「分類」の列が見つかりません（分類は空欄として保存されます）。</p>`}
+      <div class="imp-row">社員データとの照合：
+        <span class="pill ok">番号で一致 ${nNo}</span>
+        <span class="pill warn">氏名で一致 ${nName}</span>
+        ${nManual?`<span class="pill ok">手動で指定 ${nManual}</span>`:""}
+        <span class="pill ng">未照合 ${nNone}</span></div>`;
+    const todo=rows.map((r,i)=>({r,i})).filter(({r})=>r.how!=="番号");
+    if(todo.length){
+      const opts=[...EMPLOYEES].sort((a,b)=>String(a.ID_NAME||"").localeCompare(String(b.ID_NAME||""),"ja"));
+      h+=`<p class="desc" style="margin-top:8px">番号で一致しなかった人です。「氏名で一致」は番号が違うので、同じ人か確認してください（役員昇格などで番号が変わった人は、工事実績システムで番号の履歴を登録すると、次回から番号で一致します）。社員データにいない人（期中の退職者など）は「紐付けない」のままで構いません。</p>
+        <table class="grid-tbl"><tr><th>社員番号</th><th>氏名</th><th>分類</th><th>照合</th><th>紐付ける社員</th></tr>`+
+        todo.map(({r,i})=>`<tr><td>${esc(r.no)}</td><td>${esc(r.name)}</td><td>${esc(clsLabel(r.cls))}</td>
+          <td><span class="pill ${r.how==="氏名"?"warn":r.how==="手動"?"ok":"ng"}">${r.how==="なし"?"該当なし":r.how}</span></td>
+          <td><select data-imp-row="${i}"><option value="">（紐付けない）</option>${opts.map((e)=>`<option value="${esc(e.ENGCD)}"${String(e.ENGCD)===String(r.engcd)?" selected":""}>${esc(empLabel(e))}</option>`).join("")}</select></td></tr>`).join("")+
+        `</table>`;
+    }
+    h+=`<div class="imp-row" style="margin-top:12px"><button class="btn primary" id="impSave"${S2.busy?" disabled":""}>${imp.period}期末の名簿として保存</button>
+      <button class="btn" id="impCancel">取り消す</button></div>`;
+  }
+  return h+`</div>`;
+}
+
+function renderRosterListCard(){
+  let h=`<div class="card"><h2>登録済みの期末名簿</h2>`;
+  if(!S2.rosters.length) return h+`<p class="muted">まだ登録されていません。</p></div>`;
+  h+=`<table class="grid-tbl"><tr><th>期</th><th>基準日</th><th>人数</th>${CLS_ORDER.map((c)=>`<th>${clsLabel(c)}</th>`).join("")}<th>未照合</th><th>取り込み</th>${canEdit?"<th></th>":""}</tr>`+
+    S2.rosters.map((x)=>{ const cc=clsCounts(x.rows); const nn=x.rows.filter((r)=>!r.engcd).length; const d=x.importedAt?new Date(x.importedAt):null;
+      return `<tr><td class="c"><b>${x.period}期末</b></td><td>${fmtYmdSlash(x.baseDate)}</td><td class="n">${x.rows.length}</td>${CLS_ORDER.map((c)=>`<td class="n">${cc[c]||0}</td>`).join("")}
+        <td class="n">${nn?`<span class="pill ng">${nn}</span>`:0}</td>
+        <td class="muted">${d?d.toLocaleDateString("ja-JP")+" ":""}${esc(x.importedBy||"")}<br>${esc(x.fileName||"")}</td>
+        ${canEdit?`<td><button class="btn" data-del-period="${x.period}">削除</button></td>`:""}</tr>`; }).join("")+`</table></div>`;
+  return h;
+}
+
+function renderDiffCard(){
+  if(S2.rosters.length<2) return "";
+  let h=`<div class="card"><h2>期ごとの変化</h2><p class="desc">連続して登録されている期の名簿を比べた結果です。「名簿から外れた人」には退職のほか、番号が変わって紐付けができていない人も含まれることがあります。</p>`;
+  for(let i=1;i<S2.rosters.length;i++){
+    const prev=S2.rosters[i-1], cur=S2.rosters[i];
+    const d=diffRosters(prev,cur);
+    const pc=clsCounts(prev.rows), cc=clsCounts(cur.rows);
+    const line=(r)=>`${esc(r.no)} ${esc(r.name)}（${esc(clsLabel(r.cls))}）`;
+    h+=`<h3 style="font-size:13px;margin:14px 0 6px">${prev.period}期末 → ${cur.period}期末</h3>
+      <table class="grid-tbl"><tr><th></th><th>人数</th>${CLS_ORDER.map((c)=>`<th>${clsLabel(c)}</th>`).join("")}</tr>
+      <tr><td>${prev.period}期末</td><td class="n">${prev.rows.length}</td>${CLS_ORDER.map((c)=>`<td class="n">${pc[c]||0}</td>`).join("")}</tr>
+      <tr><td>${cur.period}期末</td><td class="n">${cur.rows.length}</td>${CLS_ORDER.map((c)=>`<td class="n">${cc[c]||0}</td>`).join("")}</tr>
+      <tr><td>増減</td>${[cur.rows.length-prev.rows.length, ...CLS_ORDER.map((c)=>(cc[c]||0)-(pc[c]||0))].map((v)=>`<td class="n">${v>0?"+":""}${v}</td>`).join("")}</tr></table>`;
+    const sec=(title,items,fmt)=> `<details class="diff"><summary>${title}：${items.length}人</summary>${items.length?`<ul>${items.map(fmt).join("")}</ul>`:""}</details>`;
+    h+=sec("名簿から外れた人（退職など）", d.left, (r)=>`<li>${line(r)}</li>`)
+      +sec("新しく載った人（入社など）", d.joined, (r)=>`<li>${line(r)}</li>`)
+      +sec("分類が変わった人", d.clsChanged, ({p,r})=>`<li>${esc(r.no)} ${esc(r.name)}：${esc(clsLabel(p.cls))} → ${esc(clsLabel(r.cls))}</li>`)
+      +sec("社員番号が変わった人", d.noChanged, ({p,r})=>`<li>${esc(r.name)}：${esc(p.no)} → ${esc(r.no)}</li>`);
+  }
+  return h+`</div>`;
+}
+
+/* ---- 操作 ---- */
+structEl.addEventListener("click", async (e)=>{
+  const sb=e.target.closest("[data-sub]"); if(sb){ S2.sub=sb.dataset.sub; renderStruct(); return; }
+  if(e.target.id==="impCancel"){ S2.imp=null; renderStruct(); return; }
+  if(e.target.id==="impSave"){ await saveRoster(); return; }
+  const del=e.target.closest("[data-del-period]");
+  if(del){
+    const p=parseInt(del.dataset.delPeriod,10);
+    if(!confirm(p+"期末の名簿を削除します。よろしいですか？")) return;
+    try{ await deleteDoc(doc(db,"meta",ROSTER_PREFIX+p)); S2.rosters=S2.rosters.filter((x)=>x.period!==p); }
+    catch(err){ alert("削除できませんでした（"+(err.code||err.message)+"）"); }
+    renderStruct();
+  }
+});
+structEl.addEventListener("change", async (e)=>{
+  if(e.target.id==="rosterFile" && e.target.files[0]){
+    S2.msg="";
+    try{
+      const parsed=await parseRosterFile(e.target.files[0]);
+      parsed.rows=parsed.rows.map((r)=>({...r, ...matchRosterRow(r)}));
+      S2.imp=parsed;
+    }catch(err){ S2.imp=null; S2.msg="ファイルを読み取れませんでした（"+err.message+"）"; }
+    renderStruct(); return;
+  }
+  if(e.target.id==="impPeriod" && S2.imp){ const v=parseInt(e.target.value,10); if(v>0){ S2.imp.period=v; renderStruct(); } return; }
+  if(e.target.dataset.impRow!==undefined && S2.imp){
+    const r=S2.imp.rows[parseInt(e.target.dataset.impRow,10)];
+    r.engcd=e.target.value; r.how=e.target.value ? "手動" : "なし";
+    renderStruct();
+  }
+});
+async function saveRoster(){
+  const imp=S2.imp; if(!imp) return;
+  if(S2.rosters.some((x)=>x.period===imp.period) && !confirm(imp.period+"期末の名簿はすでに登録されています。置き換えますか？")) return;
+  S2.busy=true; renderStruct();
+  const rec={
+    period:imp.period, baseDate:periodEnd(imp.period), fileName:imp.fileName, sheetName:imp.sheetName,
+    importedAt:Date.now(), importedBy:(auth.currentUser&&auth.currentUser.email)||"",
+    rows:imp.rows.map((r)=>({no:r.no, name:r.name, cls:r.cls, engcd:r.engcd||"", how:r.how})),
+  };
+  try{
+    await setDoc(doc(db,"meta",ROSTER_PREFIX+imp.period), rec);
+    S2.rosters=[...S2.rosters.filter((x)=>x.period!==imp.period), rec].sort((a,b)=>a.period-b.period);
+    S2.imp=null; S2.msg="";
+  }catch(err){
+    S2.msg="保存できませんでした（"+(err.code||err.message)+"）。Firestoreのセキュリティルールで meta への書き込みが許可されているか確認してください。";
+  }
+  S2.busy=false; renderStruct();
+}
+
+/* ---- タブ切り替え ---- */
+document.querySelector(".tabsw").addEventListener("click", async (e)=>{
+  const b=e.target.closest("button[data-tab]"); if(!b) return;
+  const tab=b.dataset.tab;
+  document.querySelectorAll(".tabsw button").forEach((x)=>x.classList.toggle("on", x===b));
+  appEl.classList.toggle("tab-struct", tab==="struct");
+  structEl.hidden = tab!=="struct";
+  if(tab==="struct"){
+    if(state.editOrder) setEditMode(false);
+    renderStruct();
+    if(!S2.loaded){ await loadRosters(); renderStruct(); }
+  }
+});
 
 /* =====================================================================
    ログイン → 読み込み
