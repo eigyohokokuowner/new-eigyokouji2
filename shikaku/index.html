@@ -146,6 +146,16 @@
   .flow .f .k{font-size:11px;color:var(--muted);}
   .flow .f .v{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;}
   .flow .op{align-self:center;font-weight:800;color:var(--muted);}
+  .sim-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px 18px;}
+  .sim-grp h4{font-size:12.5px;margin:0 0 6px;}
+  .sim-in{display:flex;align-items:center;gap:6px;margin:4px 0;font-size:12px;}
+  .sim-in span.l{flex:1;}
+  .sim-in input[type=number]{width:64px;padding:3px 6px;border:1px solid var(--line);border-radius:5px;text-align:right;}
+  .sim-in select{padding:3px 4px;border:1px solid var(--line);border-radius:5px;}
+  .src{font-size:10px;font-weight:700;padding:0 6px;border-radius:999px;white-space:nowrap;}
+  .src.act{background:#e6f6ec;color:#1e7b3c;} .src.tmp{background:#fff3cd;color:#8a5a00;} .src.calc{background:#e8efff;color:#2f55c4;}
+  .verdict{font-size:14px;line-height:1.7;}
+  .verdict b.ng{color:#b3261e;} .verdict b.ok{color:#1e7b3c;}
   #vizTip{position:fixed;z-index:200;pointer-events:none;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);padding:8px 10px;font-size:12px;max-width:320px;display:none;line-height:1.55;}
   #vizTip b{font-size:12.5px;}
   #vizTip .nm{color:var(--muted);font-size:11.5px;}
@@ -434,7 +444,7 @@ function fullYears(v){
 /* =====================================================================
    データ読み込み（meta の更新日時が変わっていなければブラウザ内キャッシュを使う）
    ===================================================================== */
-const TYPES=["employee","englicense","licenses","enginfo","literals"];
+const TYPES=["employee","englicense","licenses","enginfo","literals","assign"];
 const CACHE_DB="qualViewerCache";
 function idb(){
   return new Promise((res,rej)=>{
@@ -476,9 +486,10 @@ async function loadData(force){
 /* =====================================================================
    行データの組み立て
    ===================================================================== */
-let ROWS=[], UNMATCHED=[], EMPLOYEES=[], HELD_BY_ENGCD={}, INFO_BY_ENGCD={};
+let ROWS=[], UNMATCHED=[], EMPLOYEES=[], HELD_BY_ENGCD={}, INFO_BY_ENGCD={}, ASSIGN=[];
 function buildRows(data){
   EMPLOYEES=data.employee||[];
+  ASSIGN=data.assign||[];
   const licName={};
   (data.licenses||[]).forEach((l)=>{ licName[normLicCode(l.LICCD)]=l.LICNM||""; });
   const infoMap={};
@@ -966,7 +977,7 @@ const clsCounts=(rows)=>{ const c={}; rows.forEach((r)=>{ c[r.cls||""]=(c[r.cls|
 /* ---- 画面 ---- */
 function renderStruct(){
   const subs=[["now","現状"],["trend","推移・再雇用"],["sim","シミュレーション"],["target","対象者リスト"],["data","データ管理"]];
-  const ready=new Set(["now","trend","data"]);
+  const ready=new Set(["now","trend","sim","data"]);
   let h=`<div class="subnav">`+subs.map(([k,l])=>
     ready.has(k) ? `<button class="${S2.sub===k?"on":""}" data-sub="${k}">${l}</button>`
                  : `<button disabled title="準備中">${l}<span class="soon">準備中</span></button>`).join("")+`</div>`;
@@ -974,6 +985,7 @@ function renderStruct(){
   if(!S2.loaded){ structEl.innerHTML=h+`<div class="loading">読み込み中…</div>`; return; }
   if(S2.sub==="now") h+=renderNow();
   else if(S2.sub==="trend") h+=renderTrend();
+  else if(S2.sub==="sim") h+=renderSim();
   else h+=renderImportCard()+renderRosterListCard()+renderDiffCard();
   structEl.innerHTML=h;
 }
@@ -1343,6 +1355,297 @@ function renderTrend(){
   return h;
 }
 
+/* =====================================================================
+   シミュレーション
+   ・最新の期末名簿の在籍者（1級を持つ人＋1級候補の分類の人）から出発し、1期（1年）ずつ進める。
+   ・毎年：①年齢・勤続に応じた1年の在籍率をかける → ②1歳加齢 → ③段階を進める（一次合格・経験年数・二次合格）→ ④採用を加える。
+   ・人は小数の「重み」で扱う期待値の計算（毎回同じ結果になる）。
+   ===================================================================== */
+// ---- 必要数：配置データの同時配置人数（月ごと）から求める ----
+const roleCat=(t)=>{ const s=String(t||""); if(s.includes("監理")) return "監理"; if(s.includes("主任")) return "主任"; return ""; };
+const isAnken=(k)=>{ const s=String(k||"").trim(); return /^H/i.test(s) || /^\d{5}[A-Za-z]-\d+$/.test(s); };
+const d8=(v)=>{ const x=String(v||"").replace(/[^\d]/g,""); return /^\d{8}$/.test(x)?x:""; };
+function needByPeriod(opt, periods){
+  const parents={}; ASSIGN.forEach((r)=>{ if(r["タイプ"]==="案件・工番") parents[r.ID]=r; });
+  const techs=[];
+  ASSIGN.forEach((r)=>{
+    if(r["タイプ"]!=="技術者") return;
+    const cat=roleCat(r["役割"]); if(!cat || !opt.roles[cat]) return;
+    const par=parents[r.PARENT]||{};
+    if(!opt.anken && isAnken(par["工番・案件"])) return;
+    const from=d8(r["配置期間(自)"])||d8(par["工期(自)"]), to=d8(r["配置期間(至)"])||d8(par["工期(至)"]);
+    if(!from||!to) return;
+    techs.push({name:String(r["技術者名"]||"").replace(/[\s　]/g,""), from, to});
+  });
+  return periods.map((p)=>{
+    let peak=0, sum=0, peakYM="";
+    for(let i=0;i<12;i++){
+      const y=p+1956+(i>=3?1:0), m=((9+i)%12)+1; // 10月〜翌9月
+      const ms=`${y}${String(m).padStart(2,"0")}01`, me=`${y}${String(m).padStart(2,"0")}31`;
+      const set=new Set(techs.filter((t)=>t.from<=me && t.to>=ms).map((t)=>t.name));
+      sum+=set.size; if(set.size>peak){ peak=set.size; peakYM=`${y}/${m}`; }
+    }
+    return {period:p, peak, avg:sum/12, peakYM};
+  });
+}
+
+// ---- 前提条件の初期値（実績があれば実績、少なければ仮の値） ----
+const RET_KEYS=[["u55","54歳以下",(a)=>a<55,96],["b5559","55〜59歳",(a)=>a>=55&&a<60,96],["b6064","60〜64歳",(a)=>a>=60&&a<65,90],["b6569","65〜69歳",(a)=>a>=65&&a<70,80],["b70","70歳以上",(a)=>a>=70,65]];
+function simDefaults(){
+  const opt={...S2.now, cls:S2.now.cls};
+  const P={years:15, exp:S2.now.exp, ret:{}, src:{}, newbie:90, p1:15, p2:30,
+    hireHigh:0, hireUniv:0, midNone:0, midHo:0, mid1:0, midAge:35,
+    lever:{hire:2, pass:100, mid1:1},
+    need:{mode:"peak3", manual:0, roles:{"監理":true,"主任":false}, anken:true, margin:0}};
+  RET_KEYS.forEach(([k,,,def])=>{ P.ret[k]=def; P.src["ret_"+k]="仮"; });
+  P.src.newbie=P.src.p1=P.src.p2="仮"; P.src.hire="仮";
+  const R=S2.rosters;
+  const pairs=[]; for(let i=1;i<R.length;i++) if(R[i].period===R[i-1].period+1) pairs.push([R[i-1],R[i]]);
+  if(!pairs.length) return P;
+  // 段階・年齢つきで期末ごとの人を作る
+  const at=(roster)=>{ const d=periodEnd(roster.period);
+    return computeNow(roster,opt).map((p)=>{ const info=INFO_BY_ENGCD[p.engcd]||{};
+      return {...p, key:p.engcd?"e:"+p.engcd:"n:"+normCode(p.no), tenure:yearsBetween(String(info.NDAY||"").replace(/[^\d]/g,""), d)}; }); };
+  const acc={ret:{}, newbie:[0,0], p1:[0,0], p2:[0,0], hire:{high:0, univ:0, mid:0, mid1:0}};
+  RET_KEYS.forEach(([k])=>acc.ret[k]=[0,0]);
+  pairs.forEach(([a,b])=>{
+    const A=at(a), B=at(b), bm=new Map(B.map((p)=>[p.key,p])), am=new Set(A.map((p)=>p.key));
+    A.forEach((p)=>{
+      const stay=bm.has(p.key);
+      if(p.tenure!==null && p.tenure<3){ acc.newbie[0]++; if(stay) acc.newbie[1]++; }
+      else if(p.age!==null){ const k=RET_KEYS.find(([,,f])=>f(p.age)); if(k){ acc.ret[k[0]][0]++; if(stay) acc.ret[k[0]][1]++; } }
+      if(!stay) return;
+      const q=bm.get(p.key);
+      if(p.stage==="s2"){ acc.p1[0]++; if(["s3","s4","s5"].includes(q.stage)) acc.p1[1]++; }
+      if(p.stage==="s4"){ acc.p2[0]++; if(q.stage==="s5") acc.p2[1]++; }
+    });
+    B.forEach((q)=>{ if(am.has(q.key) || (q.stage==="out")) return; // 1級候補の分類（＋1級保有者）だけを採用として数える
+      if(q.stage==="s5") acc.hire.mid1++; else if(q.age!==null && q.age<=19) acc.hire.high++; else if(q.age!==null && q.age<=25) acc.hire.univ++; else acc.hire.mid++; });
+  });
+  const n=pairs.length;
+  RET_KEYS.forEach(([k])=>{ const [t,st]=acc.ret[k]; if(t>=8){ P.ret[k]=Math.round(st/t*100); P.src["ret_"+k]=`実績 ${st}/${t}人`; } });
+  if(acc.newbie[0]>=5){ P.newbie=Math.round(acc.newbie[1]/acc.newbie[0]*100); P.src.newbie=`実績 ${acc.newbie[1]}/${acc.newbie[0]}人`; }
+  if(acc.p1[0]>=10){ P.p1=Math.round(acc.p1[1]/acc.p1[0]*100); P.src.p1=`実績 ${acc.p1[1]}/${acc.p1[0]}人`; }
+  if(acc.p2[0]>=5){ P.p2=Math.round(acc.p2[1]/acc.p2[0]*100); P.src.p2=`実績 ${acc.p2[1]}/${acc.p2[0]}人`; }
+  P.hireHigh=Math.round(acc.hire.high/n); P.hireUniv=Math.round(acc.hire.univ/n); P.midNone=Math.round(acc.hire.mid/n); P.mid1=Math.round(acc.hire.mid1/n);
+  P.src.hire=`実績（直近${n}期の平均。1級候補の分類で新しく載った人）`;
+  return P;
+}
+
+// ---- 計算本体 ----
+function simInit(P){
+  const roster=S2.rosters[S2.rosters.length-1];
+  const ppl=computeNow(roster,{...S2.now, exp:P.exp}).filter((p)=>p.stage!=="out");
+  const d=periodEnd(roster.period);
+  const avgAge=(st)=>{ const a=ppl.filter((p)=>p.stage===st && p.age!==null); return a.length ? Math.round(a.reduce((x,p)=>x+p.age,0)/a.length) : 45; };
+  return ppl.map((p)=>{ const info=INFO_BY_ENGCD[p.engcd]||{};
+    const t=yearsBetween(String(info.NDAY||"").replace(/[^\d]/g,""), d);
+    return {age: p.age!==null ? p.age : avgAge(p.stage), stage:p.stage, exp: p.exp!==null ? p.exp : (p.stage==="s4"?P.exp:0), nb: t===null?3:Math.min(3,t), w:1}; });
+}
+function simulate(init, P){
+  const rate=(age,nb)=>{ if(nb<3) return P.newbie/100; const k=RET_KEYS.find(([,,f])=>f(age)); return P.ret[k[0]]/100; };
+  let st=new Map();
+  const add=(m,o)=>{ const k=`${o.age}|${o.stage}|${o.exp}|${o.nb}`; const c=m.get(k); if(c) c.w+=o.w; else m.set(k,{...o}); };
+  init.forEach((o)=>add(st,o));
+  const snap=()=>{ const r={s5:0,s4:0,s3:0,s2:0,s1:0,s5_60:0}; st.forEach((o)=>{ r[o.stage]+=o.w; if(o.stage==="s5"&&o.age>=60) r.s5_60+=o.w; }); return r; };
+  const out=[snap()];
+  for(let y=1;y<=P.years;y++){
+    const nx=new Map();
+    st.forEach((o)=>{
+      const w=o.w*rate(o.age,o.nb); if(w<1e-6) return;
+      const b={age:o.age+1, stage:o.stage, exp:o.exp, nb:Math.min(3,o.nb+1), w};
+      if(b.stage==="s1"){ if(b.age>=19) b.stage="s2"; add(nx,b); }
+      else if(b.stage==="s2"){ const pass=w*P.p1/100; if(pass>0) add(nx,{...b, stage:"s3", exp:0, w:pass}); if(w-pass>0) add(nx,{...b, w:w-pass}); }
+      else if(b.stage==="s3"){ b.exp=o.exp+1; if(b.exp>=P.exp) b.stage="s4"; add(nx,b); }
+      else if(b.stage==="s4"){ const pass=w*P.p2/100; if(pass>0) add(nx,{...b, stage:"s5", w:pass}); if(w-pass>0) add(nx,{...b, w:w-pass}); }
+      else add(nx,b);
+    });
+    const hire=(n,o)=>{ if(n>0) add(nx,{...o, nb:0, w:n}); };
+    hire(P.hireHigh,{age:18, stage:"s1", exp:0});
+    hire(P.hireUniv,{age:22, stage:"s2", exp:0});
+    hire(P.midNone,{age:P.midAge, stage:"s2", exp:0});
+    hire(P.midHo,{age:P.midAge, stage:"s3", exp:0});
+    hire(P.mid1,{age:P.midAge, stage:"s5", exp:0});
+    st=nx; out.push(snap());
+  }
+  return out;
+}
+// 不足が始まる期（出発時点＝今は打ち手で変えられないので、翌期以降で判定する）
+const firstShort=(res,need)=>{ for(let i=1;i<res.length;i++) if(res[i].s5 < need-1e-9) return i; return -1; };
+// 打ち手の逆算：不足をゼロにできる最小値を探す（無理なら「最大でも不足が残る期」を返す）
+function backCalc(init, P, need, kind){
+  const mk=(v)=>{ const Q=JSON.parse(JSON.stringify(P));
+    if(kind==="hire") Q.hireUniv=P.hireUniv+v; else if(kind==="mid1") Q.mid1=P.mid1+v; else { Q.p1=Math.max(P.p1,v); Q.p2=Math.max(P.p2,v); } return Q; };
+  const vals= kind==="pass" ? Array.from({length:101},(_,i)=>i) : Array.from({length:41},(_,i)=>i);
+  for(const v of vals){ const r=simulate(init,mk(v)); if(firstShort(r,need)<0) return {ok:true, v}; }
+  const maxV=vals[vals.length-1], r=simulate(init,mk(maxV));
+  return {ok:false, v:maxV, short:r.map((x,i)=>i>0&&x.s5<need-1e-9?i:-1).filter((i)=>i>=0)};
+}
+
+function renderSim(){
+  if(!S2.rosters.length){
+    return `<div class="card"><h2>シミュレーション</h2><p class="desc">期末名簿がまだ登録されていません。「データ管理」で在籍リストを取り込むと使えます。</p>
+      <button class="btn primary" data-sub="data">データ管理へ</button></div>`;
+  }
+  if(!S2.sim || S2.simBase!==S2.rosters.map((r)=>r.period).join(",")){ S2.sim=simDefaults(); S2.simBase=S2.rosters.map((r)=>r.period).join(","); }
+  const P=S2.sim, base=S2.rosters[S2.rosters.length-1].period;
+  // 必要数
+  const nperiods=[]; for(let p=base-2;p<=base+2;p++) nperiods.push(p);
+  const nb=needByPeriod(P.need, nperiods);
+  const past=nb.filter((x)=>x.period<=base);
+  const auto= P.need.mode==="peak3" ? Math.max(0,...past.map((x)=>x.peak)) : past.reduce((s,x)=>s+x.avg,0)/past.length;
+  const need0= P.need.mode==="manual" ? P.need.manual : Math.ceil(auto*(1+P.need.margin/100));
+  const init=simInit(P);
+  const scen=[
+    {k:"A", name:"現状のまま", color:"#2a78d6", P},
+    {k:"B", name:`新卒（大卒）を毎年＋${P.lever.hire}人`, color:"#eb6834", P:{...P, hireUniv:P.hireUniv+P.lever.hire}},
+    {k:"C", name:`合格率を${P.lever.pass}%に（一発合格）`, color:"#1baf7a", P:{...P, p1:Math.max(P.p1,P.lever.pass), p2:Math.max(P.p2,P.lever.pass)}},
+    {k:"D", name:`中途（1級保有）を毎年＋${P.lever.mid1}人`, color:"#eda100", P:{...P, mid1:P.mid1+P.lever.mid1}},
+  ].map((x)=>({...x, res:simulate(init,x.P)}));
+  const cats=scen[0].res.map((_,i)=>`${base+i}期末`);
+  const A=scen[0].res, fsA=firstShort(A,need0);
+  S2.simTip={cats, scen, need0};
+
+  // ---- 結論 ----
+  const fmt=(v)=> (Math.round(v*10)/10).toFixed(1).replace(/\.0$/,"");
+  const fsTxt=(i)=> i<0 ? `<b class="ok">${base+1}〜${base+P.years}期末は不足しません</b>` : `<b class="ng">${base+i}期末から不足します</b>`;
+  const gapNow=need0-A[0].s5;
+  let h=`<div class="card"><h2>結論（${base}期末から${P.years}期分の予測）</h2>
+    <div class="verdict">必要数 <b>${need0}人</b> に対し、現在（${base}期末）の1級技術者は <b>${fmt(A[0].s5)}人</b>${gapNow>1e-9?`で、<b class="ng">すでに${fmt(gapNow)}人不足</b>しています`:""}。
+    現状のままだと ${fsTxt(fsA)}（${P.years}年後は約${fmt(A[A.length-1].s5)}人）。</div>
+    ${P.p1===0||P.p2===0?`<div class="note-box">⚠ ${P.p1===0?"一次検定":""}${P.p1===0&&P.p2===0?"・":""}${P.p2===0?"二次検定":""}の合格の割合が <b>0%</b> になっているため、新しく1級になる人が出ません（新卒を増やしても1級は増えない計算になります）。実績が少ないことが原因の場合は、下の「前提条件」で実態に近い値に直してください。</div>`:""}
+    ${S2.now.cls["その他"]?"":`<div class="note-box">「現状」画面で1級候補とする分類が「イロハ」だけになっています。「その他」に入っている技術系の若手は、出発時点の人数・採用の実績に含まれません。</div>`}
+    <table class="grid-tbl" style="margin-top:10px"><tr><th>シナリオ</th><th>不足が始まる期</th><th>5年後</th><th>10年後</th><th>${P.years}年後</th></tr>`+
+    scen.map((x)=>{ const f=firstShort(x.res,need0); return `<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${x.color};margin-right:6px"></i>${x.k}：${esc(x.name)}</td>
+      <td>${f<0?"不足なし":base+f+"期末"}</td>${[5,10,P.years].map((y)=>`<td class="n">${x.res[y]?fmt(x.res[y].s5):"–"}</td>`).join("")}</tr>`; }).join("")+`</table></div>`;
+
+  // ---- 予測グラフ ----
+  const series=scen.map((x)=>({name:x.k, color:x.color, values:x.res.map((r)=>Math.round(r.s5*10)/10)}));
+  h+=`<div class="card"><h2>1級技術者数の予測</h2>
+    <p class="desc">点線が必要数です。線の右端の文字はシナリオ名（A〜D）です。点にマウスを乗せると各シナリオの人数が出ます。</p>
+    <div class="legend">${scen.map((x)=>`<span><i style="background:${x.color}"></i>${x.k}：${esc(x.name)}</span>`).join("")}<span><i style="background:#fff;border:2px dashed #b3261e;width:10px;height:10px"></i>必要数（${need0}人）</span></div>
+    ${simChartSVG(cats, series, need0)}
+    <table class="grid-tbl" style="margin-top:10px"><tr><th>期末</th>${cats.map((c)=>`<th>${c.replace("期末","")}</th>`).join("")}</tr>`+
+    scen.map((x)=>`<tr><td>${x.k}</td>${x.res.map((r)=>`<td class="n"${r.s5<need0-1e-9?` style="color:#b3261e;font-weight:700"`:""}>${fmt(r.s5)}</td>`).join("")}</tr>`).join("")+
+    `<tr><td class="muted">A：うち60歳以上</td>${A.map((r)=>`<td class="n muted">${fmt(r.s5_60)}</td>`).join("")}</tr>
+     <tr><td class="muted">A：技士補（経験中＋二次受検可能）</td>${A.map((r)=>`<td class="n muted">${fmt(r.s3+r.s4)}</td>`).join("")}</tr></table>
+    <p class="desc" style="margin-top:6px">赤字は必要数を下回る期です。人数は期待値なので小数になります。</p></div>`;
+
+  // ---- 打ち手の逆算 ----
+  const bh=backCalc(init,P,need0,"hire"), bp=backCalc(init,P,need0,"pass"), bm=backCalc(init,P,need0,"mid1");
+  const lead=(kind)=> kind==="hire" ? `最短でも入社から約${1+P.exp+1}年（一次検定→実務経験${P.exp}年→二次検定）` : kind==="pass" ? "今いる技士補・受検可能者にすぐ効く（1〜数年）" : "入社したその期から";
+  const res=(b,kind)=>{
+    if(fsA<0) return "現状のままで不足なし";
+    if(b.ok){
+      if(kind!=="pass") return `毎年 <b>＋${b.v}人</b>（今の計画に上乗せ）`;
+      const up=[P.p1<b.v?`一次（今 ${P.p1}%）`:"", P.p2<b.v?`二次（今 ${P.p2}%）`:""].filter(Boolean);
+      return `${up.join("・")}の合格の割合を <b>${b.v}%</b> 以上に`;
+    }
+    return `<b class="ng">この打ち手だけでは解消できません</b>（最大の${kind==="pass"?"100%":"＋"+b.v+"人/年"}でも ${b.short.map((i)=>base+i).join("・")}期末が不足）`;
+  };
+  h+=`<div class="card"><h2>不足をなくすには（打ち手ごとの逆算）</h2>
+    <p class="desc">それぞれの打ち手を<b>単独で</b>使ったとき、${base+1}〜${base+P.years}期末の間ずっと必要数（${need0}人）を下回らないために必要な量です（今の期末の人数は打ち手では変えられないので対象外です）。</p>
+    <table class="grid-tbl"><tr><th>打ち手</th><th>効き始めるまで</th><th>不足をなくすのに必要な量</th></tr>
+      <tr><td>新卒（大卒）を増やす</td><td>${lead("hire")}</td><td>${res(bh,"hire")}</td></tr>
+      <tr><td>一発合格を徹底する</td><td>${lead("pass")}</td><td>${res(bp,"pass")}</td></tr>
+      <tr><td>中途（1級保有者）を採る</td><td>${lead("mid1")}</td><td>${res(bm,"mid1")}</td></tr></table>
+    ${fsA>0 && fsA<=1+P.exp+1 ? `<div class="note-box">⚠ 不足が始まるのは ${base+fsA}期末で、新卒が1級になるまでの年数（約${1+P.exp+1}年）より早く来ます。<b>直近の不足には中途採用か合格率の改善</b>でしか間に合いません。新卒はその後の不足への備えになります。</div>`:""}</div>`;
+
+  h+=renderSimInputs(P, nb, base, auto, need0);
+  return h;
+}
+
+function simChartSVG(cats, series, need){
+  const W=860, H=280, L=44, R=40, T=14, B=34;
+  const vals=series.flatMap((s)=>s.values).concat([need]);
+  const maxV=Math.max(1,...vals);
+  const step=maxV<=10?2:maxV<=25?5:maxV<=60?10:maxV<=150?25:50;
+  const top=Math.ceil(maxV*1.05/step)*step;
+  const x=(i)=> L+(W-L-R)*i/Math.max(1,cats.length-1), y=(v)=> T+(H-T-B)*(1-v/top);
+  let g=`<svg class="lc" viewBox="0 0 ${W} ${H}" role="img" aria-label="1級技術者数の予測">`;
+  g+=`<g class="grid">`; for(let v=0;v<=top;v+=step) g+=`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}"/>`; g+=`</g>`;
+  g+=`<g class="axis">`; for(let v=0;v<=top;v+=step) g+=`<text x="${L-6}" y="${y(v)+4}" text-anchor="end">${v}</text>`;
+  cats.forEach((c,i)=>{ if(cats.length<=16 || i%2===0) g+=`<text x="${x(i)}" y="${H-12}" text-anchor="middle">${esc(c.replace("期末",""))}</text>`; });
+  g+=`</g>`;
+  g+=`<line x1="${L}" x2="${W-R}" y1="${y(need)}" y2="${y(need)}" stroke="#b3261e" stroke-width="2" stroke-dasharray="6 4"/>`;
+  // 端のラベルが重ならないよう少しずらす
+  const ends=series.map((s)=>({s, yy:y(s.values[s.values.length-1])})).sort((a,b)=>a.yy-b.yy);
+  for(let i=1;i<ends.length;i++) if(ends[i].yy-ends[i-1].yy<12) ends[i].yy=ends[i-1].yy+12;
+  series.forEach((s)=>{
+    const d=s.values.map((v,i)=>(i?"L":"M")+x(i)+" "+y(v)).join(" ");
+    g+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  });
+  ends.forEach(({s,yy})=>{ g+=`<text x="${W-R+6}" y="${yy+4}" font-size="12" font-weight="700" fill="#1f2330">${s.name}</text>`; });
+  cats.forEach((c,i)=>{ const half=(W-L-R)/Math.max(1,cats.length-1)/2;
+    g+=`<rect class="hit" x="${x(i)-half}" y="${T}" width="${half*2}" height="${H-T-B}" data-sim-i="${i}"/>`; });
+  return g+`</svg>`;
+}
+
+function renderSimInputs(P, nb, base, auto, need0){
+  const num=(path,val,step=1,min=0,max=1000)=>`<input type="number" data-sim="${path}" value="${val}" step="${step}" min="${min}" max="${max}">`;
+  const src=(t)=> !t ? "" : `<span class="src ${t.startsWith("実績")?"act":t==="仮"?"tmp":"calc"}">${esc(t)}</span>`;
+  let h=`<div class="card"><h2>前提条件</h2>
+    <p class="desc">数値を変えると、すぐに計算し直します。<span class="src act">実績</span>は期末名簿の比較から、<span class="src tmp">仮</span>は実績が少ないための仮の値です。仮の値は、分かる範囲で実態に近い値に直してください。</p>
+    <div class="sim-grid">
+    <div class="sim-grp"><h4>在籍率（1年後も在籍している割合）</h4>`+
+      RET_KEYS.map(([k,label])=>`<div class="sim-in"><span class="l">${label}</span>${num("ret."+k,P.ret[k],1,0,100)}%${src(P.src["ret_"+k])}</div>`).join("")+
+      `<div class="sim-in"><span class="l">入社3年以内の人</span>${num("newbie",P.newbie,1,0,100)}%${src(P.src.newbie)}</div></div>
+    <div class="sim-grp"><h4>資格</h4>
+      <div class="sim-in"><span class="l">一次検定：受検できる人のうち、1年で技士補になる割合</span>${num("p1",P.p1,1,0,100)}%${src(P.src.p1)}</div>
+      <div class="sim-in"><span class="l">二次検定：受検できる人のうち、1年で1級になる割合</span>${num("p2",P.p2,1,0,100)}%${src(P.src.p2)}</div>
+      <div class="sim-in"><span class="l">二次受検に必要な実務経験</span><select data-sim="exp"><option value="5"${P.exp===5?" selected":""}>5年</option><option value="3"${P.exp===3?" selected":""}>3年</option></select></div>
+      <div class="sim-in"><span class="l">予測する期間</span>${num("years",P.years,1,5,25)}年</div></div>
+    <div class="sim-grp"><h4>毎年の採用（今の計画）${src(P.src.hire)}</h4>
+      <div class="sim-in"><span class="l">新卒・高卒（18歳）</span>${num("hireHigh",P.hireHigh)}人</div>
+      <div class="sim-in"><span class="l">新卒・大卒（22歳）</span>${num("hireUniv",P.hireUniv)}人</div>
+      <div class="sim-in"><span class="l">中途・資格なし</span>${num("midNone",P.midNone)}人</div>
+      <div class="sim-in"><span class="l">中途・技士補あり</span>${num("midHo",P.midHo)}人</div>
+      <div class="sim-in"><span class="l">中途・1級あり</span>${num("mid1",P.mid1)}人</div>
+      <div class="sim-in"><span class="l">中途の入社時の年齢</span>${num("midAge",P.midAge,1,18,70)}歳</div></div>
+    <div class="sim-grp"><h4>比較する打ち手（B〜D）</h4>
+      <div class="sim-in"><span class="l">B：新卒（大卒）の上乗せ</span>${num("lever.hire",P.lever.hire)}人/年</div>
+      <div class="sim-in"><span class="l">C：一次・二次の合格率</span>${num("lever.pass",P.lever.pass,1,0,100)}%</div>
+      <div class="sim-in"><span class="l">D：中途（1級保有）の上乗せ</span>${num("lever.mid1",P.lever.mid1)}人/年</div></div>
+    </div>`;
+  // 必要数
+  h+=`<h3 style="font-size:13px;margin:16px 0 6px">必要数（1級技術者が何人いればよいか）</h3>
+    <div class="sim-in" style="flex-wrap:wrap;gap:12px">
+      <select data-sim="need.mode"><option value="peak3"${P.need.mode==="peak3"?" selected":""}>配置データ：直近3期の同時配置のピーク</option><option value="avg3"${P.need.mode==="avg3"?" selected":""}>配置データ：直近3期の同時配置の平均</option><option value="manual"${P.need.mode==="manual"?" selected":""}>手入力</option></select>
+      ${P.need.mode==="manual" ? `<span>必要数 ${num("need.manual",P.need.manual)}人</span>` : `<span>余裕 ${num("need.margin",P.need.margin,5,0,200)}% を上乗せ</span>`}
+      <label><input type="checkbox" data-sim-chk="need.roles.監理"${P.need.roles["監理"]?" checked":""}> 監理技術者</label>
+      <label><input type="checkbox" data-sim-chk="need.roles.主任"${P.need.roles["主任"]?" checked":""}> 主任技術者</label>
+      <label><input type="checkbox" data-sim-chk="need.anken"${P.need.anken?" checked":""}> 受注前の案件も含める</label>
+      <span>→ <b>${need0}人</b></span></div>
+    <table class="grid-tbl" style="margin-top:6px"><tr><th>期</th>${nb.map((x)=>`<th>${x.period}期${x.period>base?"（見込み）":""}</th>`).join("")}</tr>
+      <tr><td>同時配置のピーク</td>${nb.map((x)=>`<td class="n">${x.peak}${x.peakYM?`<span class="muted">（${x.peakYM}）</span>`:""}</td>`).join("")}</tr>
+      <tr><td>同時配置の平均</td>${nb.map((x)=>`<td class="n">${x.avg.toFixed(1)}</td>`).join("")}</tr></table>
+    <p class="desc" style="margin-top:6px">配置データの技術者のうち、役割が選んだ区分（監理・主任）の人を月ごとに数え、同じ月に同時に配置されている人数（同じ人は1人）を出しています。見込みの期は、受注前の案件の配置予定を含めた場合のみ数字が入ります。
+    ${ASSIGN.length?"":"<br><b>配置データが読み込めていません。</b>必要数は手入力にしてください。"}</p></div>`;
+  return h;
+}
+
+/* ---- シミュレーションの入力 ---- */
+const setPath=(o,path,v)=>{ const ks=path.split("."); let c=o; for(let i=0;i<ks.length-1;i++) c=c[ks[i]]; c[ks[ks.length-1]]=v; };
+structEl.addEventListener("change",(e)=>{
+  const t=e.target; if(!S2.sim) return;
+  if(t.dataset.sim){ const v=t.tagName==="SELECT" && isNaN(parseFloat(t.value)) ? t.value : parseFloat(t.value);
+    if(typeof v==="number" && isNaN(v)) return;
+    setPath(S2.sim, t.dataset.sim, v);
+    if(t.dataset.sim==="ret."+t.dataset.sim.split(".")[1] || ["newbie","p1","p2"].includes(t.dataset.sim)) S2.sim.src[t.dataset.sim.startsWith("ret.")?"ret_"+t.dataset.sim.split(".")[1]:t.dataset.sim]="手入力";
+    if(["hireHigh","hireUniv","midNone","midHo","mid1"].includes(t.dataset.sim)) S2.sim.src.hire="手入力";
+    renderStruct(); }
+  else if(t.dataset.simChk){ setPath(S2.sim, t.dataset.simChk, t.checked); renderStruct(); }
+});
+structEl.addEventListener("mousemove",(e)=>{
+  const hit=e.target.closest("[data-sim-i]"); if(!hit || !S2.simTip) return;
+  const i=parseInt(hit.dataset.simI,10), t=S2.simTip;
+  vizTip.innerHTML=`<b>${esc(t.cats[i])}</b>（必要数 ${t.need0}人）<br>`+t.scen.map((x)=>`<span style="color:${x.color}">■</span> ${x.k}：${(Math.round(x.res[i].s5*10)/10)}人`).join("<br>");
+  vizTip.style.display="block";
+  vizTip.style.left=Math.min(e.clientX+14, window.innerWidth-vizTip.offsetWidth-8)+"px";
+  vizTip.style.top=Math.min(e.clientY+14, window.innerHeight-vizTip.offsetHeight-8)+"px";
+});
+
+/* ---- 推移・再雇用 ---- */
 /* ---- C. 再雇用：何歳まで残っているか ---- */
 const RET_BANDS=[["55〜58歳",(a)=>a>=55&&a<=58],["59歳（定年の前年）",(a)=>a===59],["60〜64歳",(a)=>a>=60&&a<=64],["65〜69歳",(a)=>a>=65&&a<=69],["70歳以上",(a)=>a>=70]];
 function renderRetention(stats){
@@ -1416,7 +1719,7 @@ structEl.addEventListener("mousemove",(e)=>{
 /* ---- 年齢構成図のツールチップ（区分・段階・人数・氏名） ---- */
 const vizTip=document.getElementById("vizTip");
 structEl.addEventListener("mousemove",(e)=>{
-  if(e.target.closest("[data-lc-i]")) return; // 折れ線グラフ側のツールチップに任せる
+  if(e.target.closest("[data-lc-i]") || e.target.closest("[data-sim-i]")) return; // 折れ線グラフ側のツールチップに任せる
   const sg=e.target.closest("[data-tip-stage]");
   if(!sg || !S2.nowPeople){ vizTip.style.display="none"; return; }
   const b=parseInt(sg.dataset.tipBand,10), k=sg.dataset.tipStage, w=S2.nowBand;
