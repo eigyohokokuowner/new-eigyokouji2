@@ -938,7 +938,7 @@ const empByEngcd=(c)=> EMPLOYEES.find((e)=>String(e.ENGCD)===String(c));
 const empLabel=(e)=> e ? `${e.ID_NAME||""}（社員番号 ${currentEmpNo(e)}${normCode(currentEmpNo(e))!==normCode(e.ENGCD)?"／技術者 "+e.ENGCD:""}${e.STATUS==="retired"?"・退職":""}）` : "";
 
 /* ---- 期どうしの比較（同じ人＝紐付けた技術者コード、無ければ社員番号で判定） ---- */
-const personKey=(r)=> r.engcd ? "e:"+r.engcd : "n:"+normCode(r.no);
+const personKey=(r)=>{ const e=resolveEngcd(r); return e ? "e:"+e : "n:"+normCode(r.no); };
 function diffRosters(prev, cur){
   const pm=new Map(prev.rows.map((r)=>[personKey(r),r])), cm=new Map(cur.rows.map((r)=>[personKey(r),r]));
   const left=prev.rows.filter((r)=>!cm.has(personKey(r)));
@@ -1071,10 +1071,17 @@ function heldAt(lics, matchKey, d){
   const known=hits.map((l)=>l.sday).filter((x)=>/^\d{8}$/.test(x)).sort();
   return {sday: known[0]||"", unknown: !known.length};
 }
+// 名簿の行がどの社員に当たるか：手動で選んだ紐付けはそのまま、それ以外は「今の」社員データで照合し直す
+// （取り込んだ後に工事実績システムで番号の履歴などを登録した場合も、正しい社員に紐付くように）
+function resolveEngcd(r){
+  if(r.how==="手動") return r.engcd||"";
+  const m=matchRosterRow(r);
+  return m.engcd || r.engcd || "";
+}
 function computeNow(roster, opt){
   const d=periodEnd(roster.period);
   return roster.rows.map((r)=>{
-    const engcd=r.engcd||"";
+    const engcd=resolveEngcd(r);
     const info=INFO_BY_ENGCD[engcd]||{};
     const bday=String(info.BDAY||"").replace(/[^\d]/g,"");
     const age=yearsBetween(bday, d);
@@ -1088,7 +1095,7 @@ function computeNow(roster, opt){
     else if(age!==null && age<19) stage="s1";
     else stage="s2";
     return {no:r.no, name:r.name, cls:r.cls||"", engcd, age, stage, exp, has2:!!k2,
-      noBday:!bday, licDateUnknown: !!((k1&&k1.unknown)||(ho&&ho.unknown)), unmatched:!engcd};
+      savedEngcd:r.engcd||"", noBday:!bday, licDateUnknown: !!((k1&&k1.unknown)||(ho&&ho.unknown)), unmatched:!engcd};
   });
 }
 function bandOf(age, w){
@@ -1156,7 +1163,7 @@ function renderNow(){
   pyr+=`</div>`;
   const noAge=ppl.filter((p)=>p.age===null).length;
   h+=`<div class="card"><h2>年齢構成図（${roster.period}期末・${fmtYmdSlash(roster.baseDate)}時点の年齢）</h2>
-    <p class="desc">左が1級技術者、右がそれ以外の社員です。右側は1級に近い段階ほど中央寄り・濃い色です。棒にマウスを乗せると氏名が出ます。${noAge?`生年月日が未登録の${noAge}人は図に含めていません（下の「データの確認」参照）。`:""}</p>
+    <p class="desc">左が1級技術者、右がそれ以外の社員です。右側は1級に近い段階ほど中央寄り・濃い色です。棒にマウスを乗せると氏名が出ます。${noAge?`年齢が分からない${noAge}人（生年月日の未登録 ${ppl.filter((p)=>p.noBday&&!p.unmatched).length}人・社員データと紐付いていない ${ppl.filter((p)=>p.unmatched).length}人）は図に含めていません（下の「データの確認」参照）。`:""}</p>
     <div class="legend">${STAGES.map((x)=>`<span><i style="background:${x.color}"></i>${x.label}</span>`).join("")}</div>
     ${pyr}</div>`;
 
@@ -1169,7 +1176,10 @@ function renderNow(){
     <p class="desc" style="margin-top:8px">参考：2級土木施工管理技士を持っている人（1級を除く）… ${ppl.filter((p)=>p.has2 && p.stage!=="s5").length}人</p></div>`;
 
   // ---- データの確認 ----
-  const listOf=(a)=> a.length ? `<ul>${a.map((p)=>`<li>${esc(p.no)} ${esc(p.name)}（${esc(clsLabel(p.cls))}）</li>`).join("")}</ul>` : "";
+  const listOf=(a)=> a.length ? `<ul>${a.map((p)=>{
+      const e=p.engcd ? empByEngcd(p.engcd) : null;
+      const link=p.engcd ? `→ 紐付け先：技術者コード ${esc(p.engcd)}${e?"（"+esc(e.ID_NAME||"")+(e.STATUS==="retired"?"・退職":"")+"）":"（社員データに無し）"}` : "";
+      return `<li>${esc(p.no)} ${esc(p.name)}（${esc(clsLabel(p.cls))}） <span class="muted">${link}</span></li>`; }).join("")}</ul>` : "";
   const chk=[
     ["生年月日が未登録の人（年齢構成図に入らない）", ppl.filter((p)=>p.noBday && !p.unmatched)],
     ["社員データと紐付いていない人（年齢・資格が分からない）", ppl.filter((p)=>p.unmatched)],
