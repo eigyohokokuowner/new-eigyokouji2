@@ -136,6 +136,16 @@
   .pyr .num{color:var(--muted);font-variant-numeric:tabular-nums;font-size:11px;}
   .pyr .line{grid-column:1 / -1;border-top:2px dashed #b3261e;position:relative;height:0;margin:2px 0;}
   .pyr .line span{position:absolute;right:0;top:-9px;background:#fff;color:#b3261e;font-size:10.5px;font-weight:700;padding:0 4px;}
+  .lc{width:100%;max-width:900px;height:auto;display:block;}
+  .lc .grid line{stroke:#e6e8ee;stroke-width:1;}
+  .lc .axis text{fill:#5d6377;font-size:11px;}
+  .lc .hit{fill:transparent;cursor:default;}
+  .note-box{background:#f6f7fb;border:1px solid var(--line);border-radius:8px;padding:8px 12px;color:var(--muted);line-height:1.6;margin-top:8px;}
+  .flow{display:flex;align-items:stretch;gap:6px;flex-wrap:wrap;margin:6px 0 4px;}
+  .flow .f{border:1px solid var(--line);border-radius:8px;padding:6px 12px;min-width:92px;text-align:center;background:#fff;}
+  .flow .f .k{font-size:11px;color:var(--muted);}
+  .flow .f .v{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .flow .op{align-self:center;font-weight:800;color:var(--muted);}
   #vizTip{position:fixed;z-index:200;pointer-events:none;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);padding:8px 10px;font-size:12px;max-width:320px;display:none;line-height:1.55;}
   #vizTip b{font-size:12.5px;}
   #vizTip .nm{color:var(--muted);font-size:11.5px;}
@@ -956,13 +966,14 @@ const clsCounts=(rows)=>{ const c={}; rows.forEach((r)=>{ c[r.cls||""]=(c[r.cls|
 /* ---- 画面 ---- */
 function renderStruct(){
   const subs=[["now","現状"],["trend","推移・再雇用"],["sim","シミュレーション"],["target","対象者リスト"],["data","データ管理"]];
-  const ready=new Set(["now","data"]);
+  const ready=new Set(["now","trend","data"]);
   let h=`<div class="subnav">`+subs.map(([k,l])=>
     ready.has(k) ? `<button class="${S2.sub===k?"on":""}" data-sub="${k}">${l}</button>`
                  : `<button disabled title="準備中">${l}<span class="soon">準備中</span></button>`).join("")+`</div>`;
   if(S2.msg) h+=`<div class="card err-msg">${esc(S2.msg)}</div>`;
   if(!S2.loaded){ structEl.innerHTML=h+`<div class="loading">読み込み中…</div>`; return; }
   if(S2.sub==="now") h+=renderNow();
+  else if(S2.sub==="trend") h+=renderTrend();
   else h+=renderImportCard()+renderRosterListCard()+renderDiffCard();
   structEl.innerHTML=h;
 }
@@ -1192,9 +1203,220 @@ function renderNow(){
   return h;
 }
 
+/* =====================================================================
+   推移・再雇用
+   ・名簿の実績：登録済みの期末名簿に載っている人のうち、その期末時点で1級を持っていた人数
+   ・再現（参考）：今の社員データ（入社日・退職日・資格の取得日）から過去の期末の在籍者を推定した人数。
+     退職日が未登録の退職者や、取得日が未登録の資格は数えられないため、実際より少なめに出ることがある。
+   ===================================================================== */
+const has1At=(engcd,d)=> !!heldAt(HELD_BY_ENGCD[engcd]||[],"doboku1",d);
+const hoAt=(engcd,d)=> !!heldAt(HELD_BY_ENGCD[engcd]||[],"doboku1ho",d);
+// 名簿の実績（期末時点）
+function rosterStats(roster){
+  const d=periodEnd(roster.period);
+  const ppl=roster.rows.map((r)=>{ const engcd=resolveEngcd(r); const info=INFO_BY_ENGCD[engcd]||{};
+    return {key:engcd?"e:"+engcd:"n:"+normCode(r.no), no:r.no, name:r.name, cls:r.cls||"", engcd,
+      age:yearsBetween(String(info.BDAY||"").replace(/[^\d]/g,""), d), k1:!!engcd&&has1At(engcd,d), ho:!!engcd&&hoAt(engcd,d)}; });
+  const t=ppl.filter((p)=>p.k1), ta=t.filter((p)=>p.age!==null);
+  return {period:roster.period, d, ppl, n1:t.length, nHo:ppl.filter((p)=>!p.k1&&p.ho).length, total:ppl.length,
+    avg1: ta.length ? ta.reduce((x,p)=>x+p.age,0)/ta.length : null, n1_60:ta.filter((p)=>p.age>=60).length};
+}
+// 今の社員データからの再現（参考）
+function reconstruct(period){
+  const d=periodEnd(period);
+  let n1=0, nHo=0, total=0, unknownRetire=0, unknownHire=0, unknownSday=0;
+  EMPLOYEES.forEach((e)=>{
+    const engcd=String(e.ENGCD), info=INFO_BY_ENGCD[engcd]||{};
+    const nday=String(info.NDAY||"").replace(/[^\d]/g,"");
+    if(!/^\d{8}$/.test(nday)){ unknownHire++; return; }
+    if(nday>d) return;
+    if(e.STATUS==="retired"){
+      const rd=String(e.RETIRE_DATE||"").replace(/[^\d]/g,"");
+      if(!/^\d{8}$/.test(rd)){ unknownRetire++; return; }
+      if(rd<=d) return;
+    }
+    total++;
+    const lics=HELD_BY_ENGCD[engcd]||[];
+    const c1=qualCol("doboku1"), cho=qualCol("doboku1ho");
+    const k1=lics.some((l)=>c1.match(N(l.name)) && /^\d{8}$/.test(l.sday) && l.sday<=d);
+    if(!k1 && lics.some((l)=>c1.match(N(l.name)) && !l.sday)) unknownSday++;
+    if(k1) n1++;
+    else if(lics.some((l)=>cho.match(N(l.name)) && /^\d{8}$/.test(l.sday) && l.sday<=d)) nHo++;
+  });
+  return {period, n1, nHo, total, unknownRetire, unknownHire, unknownSday};
+}
+
+// 折れ線グラフ（1本の縦軸・2px線・8px以上のマーカー・薄い目盛線・ホバーで値）
+function lineChartSVG(cats, series, yLabel){
+  const W=860, H=260, L=44, R=16, T=14, B=34;
+  const vals=series.flatMap((s)=>s.values.filter((v)=>v!==null));
+  const maxV=Math.max(1,...vals);
+  const step=maxV<=10?2:maxV<=25?5:maxV<=60?10:maxV<=150?25:50;
+  const top=Math.ceil(maxV/step)*step;
+  const x=(i)=> L+(cats.length===1?(W-L-R)/2:(W-L-R)*i/(cats.length-1));
+  const y=(v)=> T+(H-T-B)*(1-v/top);
+  let g=`<svg class="lc" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(yLabel)}の推移">`;
+  g+=`<g class="grid">`; for(let v=0;v<=top;v+=step) g+=`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}"/>`; g+=`</g>`;
+  g+=`<g class="axis">`; for(let v=0;v<=top;v+=step) g+=`<text x="${L-6}" y="${y(v)+4}" text-anchor="end">${v}</text>`;
+  cats.forEach((c,i)=>{ g+=`<text x="${x(i)}" y="${H-12}" text-anchor="middle">${esc(c)}</text>`; }); g+=`</g>`;
+  series.forEach((s)=>{
+    let d="", pen=false;
+    s.values.forEach((v,i)=>{ if(v===null){ pen=false; return; } d+=(pen?"L":"M")+x(i)+" "+y(v)+" "; pen=true; });
+    if(d) g+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" ${s.dash?`stroke-dasharray="5 4"`:""} stroke-linejoin="round" stroke-linecap="round"/>`;
+    s.values.forEach((v,i)=>{ if(v===null) return;
+      g+= s.hollow ? `<circle cx="${x(i)}" cy="${y(v)}" r="4" fill="#fff" stroke="${s.color}" stroke-width="2"/>`
+                   : `<circle cx="${x(i)}" cy="${y(v)}" r="5" fill="${s.color}" stroke="#fff" stroke-width="2"/>`; });
+  });
+  // 当たり判定（期ごとの縦帯）
+  cats.forEach((c,i)=>{ const half=cats.length===1?(W-L-R)/2:(W-L-R)/(cats.length-1)/2;
+    g+=`<rect class="hit" x="${x(i)-half}" y="${T}" width="${half*2}" height="${H-T-B}" data-lc-i="${i}"/>`; });
+  return g+`</svg>`;
+}
+
+function renderTrend(){
+  if(!S2.rosters.length){
+    return `<div class="card"><h2>推移・再雇用</h2><p class="desc">期末名簿がまだ登録されていません。「データ管理」で在籍リストを取り込むと表示されます。</p>
+      <button class="btn primary" data-sub="data">データ管理へ</button></div>`;
+  }
+  const stats=S2.rosters.map(rosterStats);
+  const lastP=S2.rosters[S2.rosters.length-1].period, firstP=S2.rosters[0].period;
+  const fromP=Math.min(firstP, lastP-10);
+  const periods=[]; for(let p=fromP;p<=lastP;p++) periods.push(p);
+  const rec=periods.map(reconstruct);
+  const act=periods.map((p)=>{ const s=stats.find((x)=>x.period===p); return s||null; });
+
+  // ---- A. 期ごとの推移 ----
+  const cats=periods.map((p)=>p+"期末");
+  const series=[
+    {name:"名簿の実績", color:"#2a78d6", values:act.map((s)=>s?s.n1:null)},
+    {name:"今のデータから再現（参考）", color:"#8a8f9c", dash:true, hollow:true, values:rec.map((r)=>r.n1)},
+  ];
+  S2.trendTip={cats, series, rec, act};
+  const lastRec=rec[rec.length-1];
+  let h=`<div class="card"><h2>1級技術者数の推移</h2>
+    <p class="desc">各期末（9/30）時点で、在籍していて1級土木施工管理技士を持っていた人数です。点にマウスを乗せると数値が出ます。</p>
+    <div class="legend"><span><i style="background:#2a78d6"></i>名簿の実績（取り込んだ期末名簿から）</span>
+      <span><i style="background:#fff;border:2px dashed #8a8f9c;width:10px;height:10px"></i>今のデータから再現（参考）</span></div>
+    ${lineChartSVG(cats, series, "1級技術者数")}
+    <div class="note-box">「再現（参考）」は、今の社員データの入社日・退職日・資格の取得日から過去の在籍者を推定した値です。
+      次の人は数えられないため、実際より少なめに出ることがあります：退職日が未登録の退職者 ${lastRec.unknownRetire}人、入社日が未登録の人 ${lastRec.unknownHire}人、1級の取得日が未登録の人 ${lastRec.unknownSday}人。
+      名簿の実績がある期は、そちらが正しい値です。</div>
+    <table class="grid-tbl" style="margin-top:10px"><tr><th>期末</th>${periods.map((p)=>`<th>${p}</th>`).join("")}</tr>
+      <tr><td>1級技術者（名簿の実績）</td>${act.map((s)=>`<td class="n">${s?`<b>${s.n1}</b>`:"–"}</td>`).join("")}</tr>
+      <tr><td>　うち60歳以上</td>${act.map((s)=>`<td class="n">${s?s.n1_60:"–"}</td>`).join("")}</tr>
+      <tr><td>　平均年齢</td>${act.map((s)=>`<td class="n">${s&&s.avg1!==null?s.avg1.toFixed(1):"–"}</td>`).join("")}</tr>
+      <tr><td>1級技術者（再現・参考）</td>${rec.map((r)=>`<td class="n">${r.n1}</td>`).join("")}</tr>
+      <tr><td>技士補（1級なし・再現・参考）</td>${rec.map((r)=>`<td class="n">${r.nHo}</td>`).join("")}</tr>
+      <tr><td>在籍者（再現・参考）</td>${rec.map((r)=>`<td class="n">${r.total}</td>`).join("")}</tr></table></div>`;
+
+  // ---- B. 1級技術者の増減の内訳（連続して登録されている期のみ） ----
+  h+=`<div class="card"><h2>1級技術者の増減の内訳</h2>`;
+  let anyPair=false;
+  for(let i=1;i<stats.length;i++){
+    const a=stats[i-1], b=stats[i];
+    if(b.period!==a.period+1) continue;
+    anyPair=true;
+    const am=new Map(a.ppl.map((p)=>[p.key,p])), bm=new Map(b.ppl.map((p)=>[p.key,p]));
+    const left=a.ppl.filter((p)=>p.k1 && !bm.has(p.key));
+    const joined=b.ppl.filter((p)=>p.k1 && !am.has(p.key));
+    const gained=b.ppl.filter((p)=>p.k1 && am.has(p.key) && !am.get(p.key).k1);
+    const lost=b.ppl.filter((p)=>!p.k1 && am.has(p.key) && am.get(p.key).k1); // 通常は起きない（取得日の不整合など）
+    const nm=(arr)=> arr.length ? `<ul>${arr.map((p)=>`<li>${esc(p.no)} ${esc(p.name)}${p.age!==null?`（${p.age}歳）`:""}</li>`).join("")}</ul>` : "";
+    h+=`<h3 style="font-size:13px;margin:10px 0 4px">${a.period}期末 → ${b.period}期末</h3>
+      <div class="flow">
+        <div class="f"><div class="k">${a.period}期末</div><div class="v">${a.n1}</div></div><span class="op">＋</span>
+        <div class="f"><div class="k">期中に取得</div><div class="v">${gained.length}</div></div><span class="op">＋</span>
+        <div class="f"><div class="k">入社（保有者）</div><div class="v">${joined.length}</div></div><span class="op">－</span>
+        <div class="f"><div class="k">退職など</div><div class="v">${left.length}</div></div>
+        ${lost.length?`<span class="op">－</span><div class="f"><div class="k">その他</div><div class="v">${lost.length}</div></div>`:""}
+        <span class="op">＝</span><div class="f"><div class="k">${b.period}期末</div><div class="v">${b.n1}</div></div>
+      </div>
+      <details class="diff"><summary>期中に取得した人：${gained.length}人</summary>${nm(gained)}</details>
+      <details class="diff"><summary>入社した保有者：${joined.length}人</summary>${nm(joined)}</details>
+      <details class="diff"><summary>名簿から外れた保有者（退職など）：${left.length}人</summary>${nm(left)}</details>
+      ${lost.length?`<details class="diff"><summary>その他（前期は保有扱い・今期は非保有。取得日の登録を確認）：${lost.length}人</summary>${nm(lost)}</details>`:""}`;
+  }
+  if(!anyPair) h+=`<p class="muted">連続する2つの期の名簿が登録されると表示されます。</p>`;
+  h+=`</div>`;
+
+  h+=renderRetention(stats);
+  return h;
+}
+
+/* ---- C. 再雇用：何歳まで残っているか ---- */
+const RET_BANDS=[["55〜58歳",(a)=>a>=55&&a<=58],["59歳（定年の前年）",(a)=>a===59],["60〜64歳",(a)=>a>=60&&a<=64],["65〜69歳",(a)=>a>=65&&a<=69],["70歳以上",(a)=>a>=70]];
+function renderRetention(stats){
+  let h=`<div class="card"><h2>再雇用：何歳まで残っているか</h2>
+    <p class="desc">定年（60歳）以降にどれくらいの人が残っているかを、3つの方法で見ます。期末名簿が増えるほど①の数字が確かになります。</p>`;
+
+  // ① 名簿の期ごとの比較：前の期末にその年齢だった人が、翌期末も在籍していた割合（1年残存率）
+  const pairs=[]; for(let i=1;i<stats.length;i++) if(stats[i].period===stats[i-1].period+1) pairs.push([stats[i-1],stats[i]]);
+  const agg=(only1)=> RET_BANDS.map(([label,f])=>{
+    let n=0, stay=0;
+    pairs.forEach(([a,b])=>{ const bk=new Set(b.ppl.map((p)=>p.key));
+      a.ppl.forEach((p)=>{ if(p.age===null || !f(p.age) || (only1 && !p.k1)) return; n++; if(bk.has(p.key)) stay++; }); });
+    return {label, n, stay, rate: n ? stay/n : null};
+  });
+  const all=agg(false), t1=agg(true);
+  const cell=(x)=> x.n ? `${Math.round(x.rate*100)}%<span class="muted">（${x.stay}/${x.n}人）</span>` : "–";
+  h+=`<h3 style="font-size:13px;margin:10px 0 4px">① 1年後も在籍していた割合（期末名簿の比較・実績 ${pairs.length}期分）</h3>`;
+  if(!pairs.length) h+=`<p class="muted">連続する2つの期の名簿が登録されると表示されます。</p>`;
+  else{
+    h+=`<table class="grid-tbl"><tr><th>前の期末時点の年齢</th><th>全社員</th><th>うち1級技術者</th></tr>`+
+      all.map((x,i)=>`<tr><td>${x.label}</td><td class="n">${cell(x)}</td><td class="n">${cell(t1[i])}</td></tr>`).join("")+`</table>`;
+    // 推定：60歳の人が65歳・70歳まで残る割合（年齢層の1年残存率を毎年かけ合わせる）
+    const r6064=all[2].rate, r6569=all[3].rate;
+    const thin=all[2].n<10 || all[3].n<10;
+    if(r6064!==null){
+      const to65=Math.pow(r6064,5), to70= r6569!==null ? to65*Math.pow(r6569,5) : null;
+      h+=`<div class="note-box">推定（全社員）：60歳の人が <b>65歳まで残る割合 ≈ ${Math.round(to65*100)}%</b>${to70!==null?`、<b>70歳まで ≈ ${Math.round(to70*100)}%</b>`:""}。
+        60〜64歳・65〜69歳の1年残存率を、それぞれ5年分かけ合わせた値です。${thin?"<br>⚠ 対象人数が少ないため、ぶれが大きい参考値です。期末名簿が増えると安定します。":""}</div>`;
+    }
+  }
+
+  // ② 今の在籍者の60歳以上の年齢分布（最新の期末名簿）
+  const last=stats[stats.length-1];
+  const ages=last.ppl.filter((p)=>p.age!==null && p.age>=55);
+  const maxAge=ages.length ? Math.max(...ages.map((p)=>p.age)) : 0;
+  const rows=[]; for(let a=55;a<=Math.max(75,maxAge);a++){ const g=ages.filter((p)=>p.age===a); rows.push({a, n:g.length, n1:g.filter((p)=>p.k1).length}); }
+  const mx=Math.max(1,...rows.map((r)=>r.n));
+  h+=`<h3 style="font-size:13px;margin:16px 0 4px">② ${last.period}期末の在籍者（55歳以上）の年齢分布</h3>
+    <div class="legend"><span><i style="background:#104281"></i>1級技術者</span><span><i style="background:#d4d3cd"></i>それ以外</span></div>
+    <div class="pyr" style="grid-template-columns:52px 1fr;max-width:620px">`+
+    rows.map((r)=>`<div class="age">${r.a}歳</div><div class="side r"><div class="pbar" style="width:${(r.n/mx*100).toFixed(2)}%">${r.n1?`<span class="seg" style="flex:${r.n1};background:#104281"></span>`:""}${r.n-r.n1?`<span class="seg" style="flex:${r.n-r.n1};background:#d4d3cd"></span>`:""}</div><span class="num">${r.n||""}${r.n1?`（1級 ${r.n1}）`:""}</span></div>`
+      +(r.a===59?`<div class="line"><span>↓ 60歳（定年）以上</span></div>`:"")).join("")+`</div>`;
+
+  // ③ 退職者の退職時の年齢（社員データの退職日・生年月日から）
+  const retired=EMPLOYEES.filter((e)=>e.STATUS==="retired");
+  const withAge=retired.map((e)=>{ const info=INFO_BY_ENGCD[String(e.ENGCD)]||{};
+    const rd=String(e.RETIRE_DATE||"").replace(/[^\d]/g,""), bd=String(info.BDAY||"").replace(/[^\d]/g,"");
+    return {e, age:yearsBetween(bd,rd), k1: has1At(String(e.ENGCD), rd||"99991231")}; }).filter((x)=>x.age!==null);
+  const buckets=[["59歳以下",(a)=>a<60],["60歳",(a)=>a===60],["61〜64歳",(a)=>a>=61&&a<=64],["65歳",(a)=>a===65],["66〜69歳",(a)=>a>=66&&a<=69],["70歳以上",(a)=>a>=70]];
+  h+=`<h3 style="font-size:13px;margin:16px 0 4px">③ 退職したときの年齢（社員データの退職日から）</h3>`;
+  if(!withAge.length) h+=`<p class="muted">退職日と生年月日の両方が登録されている退職者がいないため、表示できません（退職者 ${retired.length}人）。工事実績システムの「技術者在籍・所属管理」で退職日を登録すると表示されます。</p>`;
+  else h+=`<table class="grid-tbl"><tr><th>退職時の年齢</th>${buckets.map((b)=>`<th>${b[0]}</th>`).join("")}<th>計</th></tr>
+      <tr><td>退職者</td>${buckets.map((b)=>`<td class="n">${withAge.filter((x)=>b[1](x.age)).length}</td>`).join("")}<td class="n">${withAge.length}</td></tr>
+      <tr><td>　うち1級技術者</td>${buckets.map((b)=>`<td class="n">${withAge.filter((x)=>x.k1&&b[1](x.age)).length}</td>`).join("")}<td class="n">${withAge.filter((x)=>x.k1).length}</td></tr></table>
+      <p class="desc" style="margin-top:6px">退職者 ${retired.length}人のうち、退職日と生年月日が分かる ${withAge.length}人の集計です。</p>`;
+  return h+`</div>`;
+}
+
+/* ---- 折れ線グラフのツールチップ ---- */
+structEl.addEventListener("mousemove",(e)=>{
+  const hit=e.target.closest("[data-lc-i]");
+  if(!hit || !S2.trendTip) return;
+  const i=parseInt(hit.dataset.lcI,10), t=S2.trendTip;
+  const a=t.act[i], r=t.rec[i];
+  vizTip.innerHTML=`<b>${esc(t.cats[i])}</b><br>名簿の実績：${a?a.n1+"人（うち60歳以上 "+a.n1_60+"人）":"名簿なし"}<br>再現（参考）：${r.n1}人／技士補 ${r.nHo}人`;
+  vizTip.style.display="block";
+  vizTip.style.left=Math.min(e.clientX+14, window.innerWidth-vizTip.offsetWidth-8)+"px";
+  vizTip.style.top=Math.min(e.clientY+14, window.innerHeight-vizTip.offsetHeight-8)+"px";
+});
+
 /* ---- 年齢構成図のツールチップ（区分・段階・人数・氏名） ---- */
 const vizTip=document.getElementById("vizTip");
 structEl.addEventListener("mousemove",(e)=>{
+  if(e.target.closest("[data-lc-i]")) return; // 折れ線グラフ側のツールチップに任せる
   const sg=e.target.closest("[data-tip-stage]");
   if(!sg || !S2.nowPeople){ vizTip.style.display="none"; return; }
   const b=parseInt(sg.dataset.tipBand,10), k=sg.dataset.tipStage, w=S2.nowBand;
