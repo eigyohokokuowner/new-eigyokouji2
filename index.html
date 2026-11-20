@@ -426,6 +426,22 @@
   .m-detail-checks label{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink);cursor:pointer;}
   .m-detail-checks input[type="checkbox"]{width:15px;height:15px;}
   .m-detail-actions{display:flex;gap:8px;margin-top:12px;}
+  .m-code-sub{display:block;font-size:9.5px;color:var(--muted2);font-family:var(--mono);line-height:1.2;white-space:nowrap;}
+  .m-empno{margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);max-width:980px;}
+  .m-empno-hd{font-size:12px;font-weight:700;color:var(--ink);display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:8px;}
+  .m-empno-note{font-size:11px;font-weight:400;color:var(--muted);}
+  .m-empno-table{border-collapse:collapse;font-size:12px;margin-bottom:8px;background:var(--panel);}
+  .m-empno-table th,.m-empno-table td{border:1px solid var(--line-soft);padding:4px 10px;text-align:left;}
+  .m-empno-table th{background:var(--panel-raised);font-size:11px;color:var(--muted);font-weight:600;}
+  .m-empno-table td.no{font-family:var(--mono);}
+  .m-empno-table tr.current td{background:var(--accent-soft);}
+  .m-empno-table .btn-ghost{padding:3px 6px;}
+  .m-empno-cur{margin-left:6px;font-size:10px;font-weight:700;color:var(--accent);}
+  .m-empno-none{font-size:12px;color:var(--muted2);margin-bottom:8px;}
+  .m-empno-add{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .m-empno-add input{font-size:12.5px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);}
+  .m-empno-add input[type="text"]{width:140px;font-family:var(--mono);}
+  .m-empno-add label{font-size:11px;color:var(--muted);font-weight:600;}
   .m-detail-mark{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--cyan);margin-left:2px;}
   .m-lic-tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
   .m-lic-tag{font-size:11.5px;background:var(--cyan-soft);color:var(--cyan);padding:4px 9px;border-radius:999px;
@@ -931,7 +947,8 @@ function parseCsvFile(file){
 // 再取り込み時に、CSVには含まれず画面上で手入力した項目を消さないための設定
 // fallback系＝CSV側が空/列なしのときだけ既存値を残す。always系＝CSVに値があっても常に既存値を残す（上書きしない）。
 const MANUAL_KEYS = {
-  employee:["OFFICE_TECH","RETIRE_DATE","HR_DATE","CONST_KBN","WORKPLACE","EMP_TYPE","OLD_NAME","NEW_NAME","NAME_CHANGE_TYPE","NAME_CHANGE","REG_CPDS","REG_CPD_NORIN","REG_CORINS"],
+  // EMP_NO / EMP_NO_HISTORY：社員番号の履歴（画面で入力する項目。社員データCSVの再取り込みで消さない）
+  employee:["OFFICE_TECH","RETIRE_DATE","HR_DATE","CONST_KBN","WORKPLACE","EMP_TYPE","OLD_NAME","NEW_NAME","NAME_CHANGE_TYPE","NAME_CHANGE","REG_CPDS","REG_CPD_NORIN","REG_CORINS","EMP_NO","EMP_NO_HISTORY"],
 };
 const ALWAYS_KEEP_KEYS = {
   constrslt:["SSDAY","KOJDAY","CORINS_URL","SCHEDULE_URL","SCHEDULE_NA","SCHED_CHECKED","RATING_PDF_URL","AWARD_PDF_URL"],
@@ -1629,6 +1646,113 @@ function FieldRow({label, children, wrapRow}){
 }
 
 /* ---------------- employee master (社員データ管理) ---------------- */
+/* ---- 社員番号の履歴（役員昇格などで社員番号が変わる社員への対応） ----
+   社員データは今後も「1人1件・ENGCD（技術者コード）が主キー」のまま。番号が変わっても2件目のデータは作らない。
+   その代わりに次の2項目を社員レコードに持たせる（無い社員は従来どおり ENGCD＝社員番号として扱う）。
+     EMP_NO         : 現在の社員番号（6桁ゼロ埋めの文字列。空なら ENGCD と同じ）
+     EMP_NO_HISTORY : 番号の履歴 [{from:"", no:"543323", to:"20230331"}, {from:"20230401", no:"100101", to:""}]
+                      日付は YYYYMMDD。from 空＝最初から、to 空＝現在まで。古い順に並べる。
+   工事実績・配置・資格などの紐付けは引き続き ENGCD で行い、番号の判定はすべて下のヘルパー関数を通す。
+   ※有資格一覧ビューアなど別ページからもこの2項目を読むため、項目名・形式は変えないこと。 */
+// 番号の比較用：先頭ゼロの有無を吸収する（"000060" と "60" は同じ番号）。数字以外を含む番号は前後空白のみ除去。
+function normEmpNo(v){
+  const s=String(v===undefined||v===null ? "" : v).trim();
+  return /^\d+$/.test(s) ? String(parseInt(s,10)) : s;
+}
+// 保存用：数字のみなら6桁ゼロ埋めにそろえる
+function padEmpNo(v){
+  const s=String(v===undefined||v===null ? "" : v).trim();
+  return /^\d+$/.test(s) ? s.padStart(6,"0") : s;
+}
+function empNoHistoryOf(emp){
+  return Array.isArray(emp && emp.EMP_NO_HISTORY) ? emp.EMP_NO_HISTORY.filter((h)=>h && h.no) : [];
+}
+// 現在の社員番号（EMP_NO、無ければ ENGCD）
+function currentEmpNo(emp){
+  if(!emp) return "";
+  return String(emp.EMP_NO||"").trim() || String(emp.ENGCD||"");
+}
+// その社員の全番号（ENGCD・EMP_NO・履歴の番号。重複なし・表記は元のまま）
+function allEmpNos(emp){
+  if(!emp) return [];
+  const out=[], seen=new Set();
+  [emp.ENGCD, emp.EMP_NO, ...empNoHistoryOf(emp).map((h)=>h.no)].forEach((v)=>{
+    const s=String(v===undefined||v===null ? "" : v).trim();
+    if(!s) return;
+    const n=normEmpNo(s);
+    if(seen.has(n)) return;
+    seen.add(n); out.push(s);
+  });
+  return out;
+}
+// 指定日(YYYYMMDD)時点の社員番号。履歴が無い・該当期間が無い場合は現在の番号を返す。
+function empNoAt(emp, ymd){
+  const hist=empNoHistoryOf(emp);
+  const d=String(ymd||"").replace(/[^\d]/g,"");
+  if(!hist.length || !/^\d{8}$/.test(d)) return currentEmpNo(emp);
+  const hit=hist.find((h)=> (!h.from || h.from<=d) && (!h.to || d<=h.to));
+  return hit ? hit.no : currentEmpNo(emp);
+}
+// その社員がこの番号を持っている（持っていた）か
+function empHasNo(emp, no){
+  const n=normEmpNo(no);
+  return !!n && allEmpNos(emp).some((x)=>normEmpNo(x)===n);
+}
+// 番号（現在・過去・技術者コードのいずれか）から社員を探す。ENGCD一致を最優先。
+function findEmployeeByEmpNo(employees, no){
+  const n=normEmpNo(no);
+  if(!n) return null;
+  const list=employees||[];
+  return list.find((e)=>normEmpNo(e.ENGCD)===n) || list.find((e)=>empHasNo(e,n)) || null;
+}
+// 番号の文字列でのキーワード検索用（部分一致）。現在・過去・技術者コードのどれかに含まれればヒット。
+function empNoIncludes(emp, q){
+  const t=String(q||"").trim();
+  return !!t && allEmpNos(emp).some((x)=>String(x).includes(t));
+}
+// YYYYMMDD の前日
+function prevDayYmd8(ymd){
+  const s=String(ymd||"");
+  if(!/^\d{8}$/.test(s)) return "";
+  const d=new Date(parseInt(s.slice(0,4),10), parseInt(s.slice(4,6),10)-1, parseInt(s.slice(6,8),10));
+  d.setDate(d.getDate()-1);
+  const pad=(x)=>String(x).padStart(2,"0");
+  return ""+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate());
+}
+// 番号の変更を追加した結果の {EMP_NO, EMP_NO_HISTORY} を返す。入力に問題があれば {error} を返す。
+// 初めての追加時は、ENGCD（または現在の番号）を最初の番号（from空）として履歴に入れる。
+function addEmpNoChange(emp, newNoRaw, fromYmd, allEmployees){
+  const newNo=String(newNoRaw||"").trim();
+  const from=String(fromYmd||"").replace(/[^\d]/g,"");
+  if(!/^\d+$/.test(newNo)) return {error:"新しい社員番号は数字で入力してください"};
+  if(!/^\d{8}$/.test(from)) return {error:"切り替え日を入力してください"};
+  if(empHasNo(emp, newNo)) return {error:"その番号はこの社員がすでに持っています"};
+  const other=(allEmployees||[]).find((e)=> e.ENGCD!==emp.ENGCD && empHasNo(e, newNo));
+  if(other) return {error:"その番号は他の社員（"+(other.ID_NAME||"")+"・技術者コード"+other.ENGCD+"）が使っています"};
+  let hist=empNoHistoryOf(emp).map((h)=>({from:h.from||"", no:h.no, to:h.to||""}));
+  if(!hist.length) hist=[{from:"", no:padEmpNo(currentEmpNo(emp)), to:""}];
+  const last=hist[hist.length-1];
+  if(last.from && from<=last.from) return {error:"切り替え日は、今の番号（"+last.no+"）の開始日（"+fmtDate(last.from)+"）より後の日付にしてください"};
+  hist[hist.length-1]={...last, to:prevDayYmd8(from)};
+  hist.push({from, no:padEmpNo(newNo), to:""});
+  return {EMP_NO:padEmpNo(newNo), EMP_NO_HISTORY:hist};
+}
+// 履歴の index 番目を削除した結果を返す。前後の期間をつなぎ直し、EMP_NO を最後の番号に戻す。
+// 履歴が1件だけ（＝最初の番号のみ）になったら、項目ごと空に戻す（従来どおりの扱い）。
+function removeEmpNoChange(emp, index){
+  let hist=empNoHistoryOf(emp).map((h)=>({from:h.from||"", no:h.no, to:h.to||""}));
+  if(index<0 || index>=hist.length) return {EMP_NO:emp.EMP_NO||"", EMP_NO_HISTORY:hist};
+  const removed=hist[index];
+  hist.splice(index,1);
+  if(hist.length){
+    if(index===0) hist[0]={...hist[0], from:""};                       // 先頭を消した → 次の番号を最初から
+    else if(index===hist.length) hist[hist.length-1]={...hist[hist.length-1], to:""}; // 末尾を消した → 1つ前を現在まで
+    else hist[index-1]={...hist[index-1], to:removed.to||prevDayYmd8(hist[index].from)};
+  }
+  const onlyEngcd = hist.length===0 || (hist.length===1 && normEmpNo(hist[0].no)===normEmpNo(emp.ENGCD));
+  if(onlyEngcd) return {EMP_NO:"", EMP_NO_HISTORY:[]};
+  return {EMP_NO:hist[hist.length-1].no, EMP_NO_HISTORY:hist};
+}
 /* ---------------- construction detail (工事詳細データ) ---------------- */
 /* 支店コード（EIGYCD）。既存のコードマスタには対応表が無いため、ヒアリング内容を直接定義 */
 const EIGYCD_MAP={"0":"中四国支店","1":"中部支店","2":"東京支店","3":"東北支店","5":"九州支店","6":"北陸支店","8":"関西支店","9":"北海道支店"};
@@ -2851,7 +2975,10 @@ function PersonnelCard({emp, info, heldLicenses, licenses, literalMap, onRemove,
   return (
     <div className="personnel-card">
       <div className="personnel-card-hd">
-        <span className="personnel-card-name">{emp.ID_NAME}<span className="code" style={{marginLeft:8}}>#{emp.ENGCD}</span></span>
+        <span className="personnel-card-name">{emp.ID_NAME}<span className="code" style={{marginLeft:8}}>#{currentEmpNo(emp)}</span>
+          {normEmpNo(currentEmpNo(emp))!==normEmpNo(emp.ENGCD) &&
+            <span className="code" style={{marginLeft:8, fontSize:11}} title={"番号の履歴："+allEmpNos(emp).join(" → ")}>（技術者コード {emp.ENGCD}）</span>}
+        </span>
         <span style={{display:"flex", gap:8}}>
           {canEdit && (
             editingInfo ? (
@@ -3065,7 +3192,7 @@ function PersonnelQualification({employees, enginfoRecords, licenses, engLicense
     if(!q) return [];
     return employees
       .filter((e)=>e.STATUS!=="retired")
-      .filter((e)=>(e.ID_NAME||"").includes(q) || (e.ENGCD||"").includes(q))
+      .filter((e)=>(e.ID_NAME||"").includes(q) || empNoIncludes(e,q))
       .slice(0,20);
   },[employees, query]);
 
@@ -3146,7 +3273,7 @@ function PersonnelQualification({employees, enginfoRecords, licenses, engLicense
               {suggestions.map((e)=>(
                 <div key={e.ENGCD} className="msel-opt-personnel" onClick={()=>addPerson(e.ENGCD)}>
                   <div>
-                    <span style={{fontFamily:"var(--mono)", fontSize:11, color:"var(--cyan)"}}>#{e.ENGCD}</span>
+                    <span style={{fontFamily:"var(--mono)", fontSize:11, color:"var(--cyan)"}}>#{currentEmpNo(e)}</span>
                     &nbsp;{e.ID_NAME}
                     {selectedList.includes(e.ENGCD) && <span style={{color:"var(--green)", fontSize:11, marginLeft:6}}>（追加済み）</span>}
                   </div>
@@ -3205,6 +3332,9 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
   // 詳細情報パネル（1人ずつ開く）。開いている人のコードと、編集中の下書き
   const [expandedDetail,setExpandedDetail]=useState(null);
   const [detailDraft,setDetailDraft]=useState({});
+  // 社員番号の変更（詳細情報パネル内）。入力中の新番号・切り替え日とエラー
+  const [empNoDraft,setEmpNoDraft]=useState({no:"", from:""});
+  const [empNoError,setEmpNoError]=useState("");
 
   // 詳細情報の項目定義（保存キーはemployeeレコードに直接持たせる）
   // 建設業区分・勤務地・雇用区分名はプルダウンで選ぶ（選択肢は固定）
@@ -3221,7 +3351,7 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
     {key:"REG_CORINS",    label:"コリンズ"},
   ];
   const DETAIL_KEYS=["HR_DATE", ...DETAIL_TEXT_FIELDS.map((f)=>f.key), "NAME_CHANGE", ...DETAIL_CHECKS.map((c)=>c.key)];
-  const hasDetail=(emp)=> DETAIL_KEYS.some((k)=> emp[k]) || emp.OLD_NAME || emp.NEW_NAME;
+  const hasDetail=(emp)=> DETAIL_KEYS.some((k)=> emp[k]) || emp.OLD_NAME || emp.NEW_NAME || empNoHistoryOf(emp).length>0;
   const ymd8ToInput=(v)=>{ const d=normDigits8(v); return d ? d.slice(0,4)+"-"+d.slice(4,6)+"-"+d.slice(6,8) : ""; };
   const openDetail=(emp)=>{
     if(expandedDetail===emp.ENGCD){ setExpandedDetail(null); return; }
@@ -3235,7 +3365,23 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
       else if(emp.NEW_NAME){ d.NAME_CHANGE_TYPE="新姓"; d.NAME_CHANGE=emp.NEW_NAME; }
     }
     setDetailDraft(d);
+    setEmpNoDraft({no:"", from:""});
+    setEmpNoError("");
     setExpandedDetail(emp.ENGCD);
+  };
+  // 社員番号の変更を追加する（その場で保存）
+  const addEmpNo=(emp)=>{
+    const res=addEmpNoChange(emp, empNoDraft.no, String(empNoDraft.from||"").replace(/-/g,""), employees);
+    if(res.error){ setEmpNoError(res.error); return; }
+    onSave(employees.map((e)=> e.ENGCD===emp.ENGCD ? {...e, EMP_NO:res.EMP_NO, EMP_NO_HISTORY:res.EMP_NO_HISTORY} : e));
+    setEmpNoDraft({no:"", from:""});
+    setEmpNoError("");
+  };
+  // 履歴の1行を削除する（パスワード確認あり・その場で保存）
+  const deleteEmpNo=(emp, index)=>{
+    if(!confirmDeletePassword()) return;
+    const res=removeEmpNoChange(emp, index);
+    onSave(employees.map((e)=> e.ENGCD===emp.ENGCD ? {...e, EMP_NO:res.EMP_NO, EMP_NO_HISTORY:res.EMP_NO_HISTORY} : e));
   };
   const saveDetail=(engcd)=>{
     const patch={};
@@ -3281,7 +3427,8 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
   const filtered=useMemo(()=>{
     const q=query.trim();
     let list=[...employees].sort((a,b)=>(a.ID_NAME||"").localeCompare(b.ID_NAME||"","ja"));
-    if(q) list=list.filter((e)=>(e.ID_NAME||"").includes(q) || (e.ENGCD||"").includes(q) || (e.NAME_CHANGE||"").includes(q) || (e.OLD_NAME||"").includes(q) || (e.NEW_NAME||"").includes(q));
+    // 社員番号は、技術者コード・現在の社員番号・過去の社員番号のどれでもヒットさせる
+    if(q) list=list.filter((e)=>(e.ID_NAME||"").includes(q) || empNoIncludes(e,q) || (e.NAME_CHANGE||"").includes(q) || (e.OLD_NAME||"").includes(q) || (e.NEW_NAME||"").includes(q));
     return list;
   },[employees,query]);
 
@@ -3324,6 +3471,8 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
     const code=newEmp.ENGCD.trim();
     if(!/^\d+$/.test(code)){ setFormError("技術者コードは数字で入力してください"); return; }
     if(employees.some((e)=>e.ENGCD===code)){ setFormError("そのコードは既に登録されています"); return; }
+    { const owner=findEmployeeByEmpNo(employees, code);
+      if(owner){ setFormError("その番号は"+(owner.ID_NAME||"")+"さん（技術者コード"+owner.ENGCD+"）の社員番号として使われています"); return; } }
     if(!newEmp.ID_NAME.trim()){ setFormError("氏名を入力してください"); return; }
     const rec={ENGCD:code, COMPCD:newEmp.COMPCD.trim(), ID_NAME:newEmp.ID_NAME.trim(), ID_SEI:"", ID_MEI:"", GENDER:newEmp.GENDER||"", STATUS:"active"};
     onSave([...employees, rec]);
@@ -3353,18 +3502,21 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
       let headerInfo=null;
       for(let i=0;i<Math.min(rowsGrid.length,5);i++){
         const row=(rowsGrid[i]||[]).map((c)=>String(c||"").trim());
-        const codeIdx=row.findIndex((c)=>c.includes("社員No")||c.includes("技術者コード")||c==="ID"||c==="コード");
+        const codeIdx=row.findIndex((c)=>c.includes("社員No")||c.includes("社員番号")||c.includes("技術者コード")||c==="ID"||c==="コード");
         if(codeIdx>=0){
           const deptIdx=row.findIndex((c)=>c.includes("部署")||c.includes("所属"));
           const posIdx=row.findIndex((c)=>c.includes("役職"));
-          headerInfo={headerRow:i, codeIdx, deptIdx, posIdx};
+          const nameIdx=row.findIndex((c)=>c.includes("氏名"));
+          headerInfo={headerRow:i, codeIdx, deptIdx, posIdx, nameIdx};
           break;
         }
       }
 
-      const normalize=(s)=> /^\d+$/.test(s) ? String(parseInt(s,10)) : s;
+      const normalize=normEmpNo;
       const deptPosMap={};
+      const nameByCode={}; // 氏名の列がある場合：コード→氏名（番号変更の候補探しに使う）
       let rawCodes=[];
+      const hasDeptCol=!!(headerInfo && headerInfo.deptIdx>=0), hasPosCol=!!(headerInfo && headerInfo.posIdx>=0);
 
       if(headerInfo){
         for(let r=headerInfo.headerRow+1; r<rowsGrid.length; r++){
@@ -3373,9 +3525,16 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
           if(!/^[0-9A-Za-z]+$/.test(codeRaw)) continue;
           rawCodes.push(codeRaw);
           if(/^\d+$/.test(codeRaw)){
-            const dept=headerInfo.deptIdx>=0 ? String(row[headerInfo.deptIdx]||"").replace(/\u3000/g," ").trim() : "";
-            const position=headerInfo.posIdx>=0 ? String(row[headerInfo.posIdx]||"").trim() : "";
-            deptPosMap[normalize(codeRaw)]={dept, position};
+            // 部署・役職の列があるときだけ記録する（列が無いのに空で上書きしてしまわないように）
+            if(hasDeptCol || hasPosCol){
+              const dept=hasDeptCol ? String(row[headerInfo.deptIdx]||"").replace(/\u3000/g," ").trim() : undefined;
+              const position=hasPosCol ? String(row[headerInfo.posIdx]||"").trim() : undefined;
+              deptPosMap[normalize(codeRaw)]={dept, position};
+            }
+            if(headerInfo.nameIdx>=0){
+              const nm=String(row[headerInfo.nameIdx]||"").trim();
+              if(nm) nameByCode[normalize(codeRaw)]=nm;
+            }
           }
         }
       } else {
@@ -3396,13 +3555,29 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
       const excluded=rawCodes.filter((s)=>!/^\d+$/.test(s));
       const activeNormSet=new Set(rawCodes.filter((s)=>/^\d+$/.test(s)).map(normalize));
 
-      const existingNorm=employees.map((e)=>({emp:e, norm:normalize(e.ENGCD||"")}));
-      const unmatched=[...activeNormSet].filter((n)=> !existingNorm.some((x)=>x.norm===n));
-      const matchedCount=existingNorm.filter((x)=>activeNormSet.has(x.norm)).length;
+      // 照合は、技術者コード・現在の社員番号・過去の社員番号のいずれでも行う
+      // （役員昇格などで番号が変わった人が、新しい番号のリストで「退職」扱いにならないように）
+      const ownerOf=new Map(); // 正規化した番号→社員
+      employees.forEach((e)=>{ allEmpNos(e).forEach((no)=>{ const n=normalize(no); if(!ownerOf.has(n)) ownerOf.set(n,e); }); });
+      const matchedEngcds=new Set();
+      [...activeNormSet].forEach((n)=>{ const e=ownerOf.get(n); if(e) matchedEngcds.add(e.ENGCD); });
+      const unmatched=[...activeNormSet].filter((n)=> !ownerOf.has(n));
+      const matchedCount=matchedEngcds.size;
+      // 番号が一致しなかったコードのうち、氏名が一致する在職中の社員がいるもの＝番号変更の候補（表示のみ・自動では反映しない）
+      const changeCandidates=[];
+      unmatched.forEach((n)=>{
+        const nm=nameByCode[n];
+        if(!nm) return;
+        const hits=employees.filter((e)=> e.STATUS!=="retired" && !matchedEngcds.has(e.ENGCD)
+          && (normName(e.ID_NAME)===normName(nm) || normNameVariant(e.ID_NAME)===normNameVariant(nm)));
+        hits.forEach((e)=>changeCandidates.push({code:n, name:nm, emp:e}));
+      });
       setImportPreview({
         activeNormSet,
+        matchedEngcds,
         deptPosMap,
-        hasDeptInfo: !!(headerInfo && (headerInfo.deptIdx>=0 || headerInfo.posIdx>=0)),
+        changeCandidates,
+        hasDeptInfo: hasDeptCol || hasPosCol,
         totalListed: activeNormSet.size,
         matchedCount,
         toRetireCount: employees.length-matchedCount,
@@ -3417,16 +3592,17 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
 
   const applyImport=()=>{
     if(!importPreview) return;
-    const normalize=(s)=> /^\d+$/.test(s) ? String(parseInt(s,10)) : s;
     const next=employees.map((e)=>{
-      const norm=normalize(e.ENGCD||"");
-      const isActive=importPreview.activeNormSet.has(norm);
-      const dp=importPreview.deptPosMap[norm];
+      const isActive=importPreview.matchedEngcds.has(e.ENGCD);
+      // 部署・役職は、その社員のいずれかの番号でリストに載っている行から取る（現在の番号を優先）
+      const nos=[currentEmpNo(e), ...allEmpNos(e)].map(normEmpNo);
+      const key=nos.find((n)=> importPreview.deptPosMap[n]);
+      const dp=key ? importPreview.deptPosMap[key] : null;
       return {
         ...e,
         STATUS: isActive ? "active" : "retired",
-        DEPT: dp ? dp.dept : e.DEPT,
-        POSITION: dp ? dp.position : e.POSITION,
+        DEPT: dp && dp.dept!==undefined ? dp.dept : e.DEPT,
+        POSITION: dp && dp.position!==undefined ? dp.position : e.POSITION,
       };
     });
     onSave(next);
@@ -3475,6 +3651,18 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
                 <b style={{color:"var(--red)"}}> 退職 {importPreview.toRetireCount}名</b> になります。
                 {importPreview.hasDeptInfo && <span> あわせて部署・役職も更新されます。</span>}
               </p>
+              {importPreview.changeCandidates.length>0 &&
+                <div className="err-box" style={{marginTop:8, flexDirection:"column"}}>
+                  <div><Ic.Warn/> <b>番号変更の候補</b>：番号は一致しませんが、氏名が一致する在職中の社員がいます（自動では反映しません）。
+                    <b>このまま適用すると、この社員は「退職」になります。</b>同じ人であれば、先に「詳細」の「社員番号の変更」で新しい番号を登録してから取り込み直してください。</div>
+                  <ul style={{margin:"6px 0 0", paddingLeft:20}}>
+                    {importPreview.changeCandidates.map((c,i)=>(
+                      <li key={i}>リストの番号 <b style={{fontFamily:"var(--mono)"}}>{c.code}</b>（{c.name}）
+                        → 登録済みの社員 {c.emp.ID_NAME}（社員番号 {currentEmpNo(c.emp)}／技術者コード {c.emp.ENGCD}）</li>
+                    ))}
+                  </ul>
+                </div>
+              }
               {importPreview.unmatched.length>0 &&
                 <div className="storage-warn" style={{marginTop:8}}>
                   <Ic.Warn/> リストには載っているが社員データに未登録のコードが{importPreview.unmatched.length}件あります（今回は反映されません。先に「新規社員を登録」で追加してください）：<br/>
@@ -3537,8 +3725,12 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
           return (
             <React.Fragment key={emp.ENGCD}>
             <div className={"master-row"+(retired?" retired":"")}>
-              <button type="button" className="m-code name-link" title="人事資格検索でこの社員を表示"
-                onClick={()=>onGoToPersonnel && onGoToPersonnel(emp.ENGCD)}>#{emp.ENGCD}</button>
+              <button type="button" className="m-code name-link" title={"人事資格検索でこの社員を表示"+(allEmpNos(emp).length>1 ? "\n番号："+allEmpNos(emp).join(" → ") : "")}
+                onClick={()=>onGoToPersonnel && onGoToPersonnel(emp.ENGCD)}>
+                #{currentEmpNo(emp)}
+                {normEmpNo(currentEmpNo(emp))!==normEmpNo(emp.ENGCD) &&
+                  <span className="m-code-sub" title="技術者コード（工事実績などの紐付けに使う番号）">技術者 {emp.ENGCD}</span>}
+              </button>
               {isEditing ? (
                 <React.Fragment>
                   <select className="m-input m-gender" value={editDraft.GENDER||""}
@@ -3641,6 +3833,37 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
                     </label>
                   ))}
                 </div>
+                <div className="m-empno">
+                  <div className="m-empno-hd">
+                    社員番号の変更
+                    <span className="m-empno-note">役員昇格などで番号が変わった場合に登録します（工事実績などの紐付けは技術者コード {emp.ENGCD} のまま）。追加・削除はその場で保存されます。</span>
+                  </div>
+                  {empNoHistoryOf(emp).length>0 ? (
+                    <table className="m-empno-table">
+                      <thead><tr><th>社員番号</th><th>使用期間</th><th></th></tr></thead>
+                      <tbody>
+                        {empNoHistoryOf(emp).map((h,i,arr)=>(
+                          <tr key={i} className={i===arr.length-1 ? "current" : ""}>
+                            <td className="no">{h.no}{i===arr.length-1 && <span className="m-empno-cur">現在</span>}</td>
+                            <td>{h.from ? fmtDate(h.from) : "（最初から）"} 〜 {h.to ? fmtDate(h.to) : "現在"}</td>
+                            <td><button className="btn-ghost" title="この番号を履歴から削除" onClick={()=>deleteEmpNo(emp,i)}><Ic.X size={11}/></button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className="m-empno-none">変更なし（社員番号＝技術者コード {emp.ENGCD}）</div>
+                  )}
+                  <div className="m-empno-add">
+                    <input type="text" placeholder="新しい社員番号" value={empNoDraft.no}
+                      onChange={(e)=>{ setEmpNoDraft({...empNoDraft, no:e.target.value}); setEmpNoError(""); }}/>
+                    <label>切り替え日</label>
+                    <input type="date" value={empNoDraft.from}
+                      onChange={(e)=>{ setEmpNoDraft({...empNoDraft, from:e.target.value}); setEmpNoError(""); }}/>
+                    <button className="btn-outline" onClick={()=>addEmpNo(emp)}><Ic.Plus/> 番号の変更を追加</button>
+                  </div>
+                  {empNoError && <div className="m-form-err" style={{marginTop:6}}>{empNoError}</div>}
+                </div>
                 <div className="m-detail-actions">
                   <button className="btn-primary" onClick={()=>saveDetail(emp.ENGCD)}>保存</button>
                   <button className="btn-ghost" onClick={()=>setExpandedDetail(null)}>閉じる</button>
@@ -3677,7 +3900,7 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
         const retiredList=filtered.filter((e)=>e.STATUS==="retired");
         const makeHead=(withRetireDate)=>(
           <div className="master-row master-row-head">
-            <span className="m-code">コード</span>
+            <span className="m-code">社員番号</span>
             <span className="m-gender">性別</span>
             <span className="m-name">氏名</span>
             <span className="m-comp">所属</span>
@@ -4503,8 +4726,13 @@ function LoginUsageModal({onClose, employees}){
   const startLink=(a)=>{ setEditingLinkUid(a.uid); setLinkDraft(a.engcd||""); setLinkError(""); };
   const cancelLink=()=>{ setEditingLinkUid(null); setLinkDraft(""); setLinkError(""); };
   const saveLink=async (uid)=>{
-    const code=linkDraft.trim();
-    if(code && !employeeByCode[code]){ setLinkError("その技術者コードは見つかりません"); return; }
+    let code=linkDraft.trim();
+    if(code && !employeeByCode[code]){
+      // 現在・過去の社員番号で入力された場合も、その社員の技術者コードで紐づける
+      const owner=findEmployeeByEmpNo(employees, code);
+      if(!owner){ setLinkError("その技術者コード・社員番号は見つかりません"); return; }
+      code=owner.ENGCD;
+    }
     setSavingLink(true);
     try{
       await waitForFirebase();
