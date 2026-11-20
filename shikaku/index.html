@@ -900,15 +900,20 @@ const CLS_ORDER=["イロハ","その他","事務",""];
 const clsLabel=(c)=> c || "（空欄）";
 
 const S2={sub:"now", rosters:[], loaded:false, imp:null, msg:"", busy:false,
+  cand:{overrides:{}, draft:null, filterCls:"その他", onlyCivil:true, q:"", info:""}, // 1級候補の個人指定
   now:{period:null, cls:{"イロハ":true,"その他":false,"事務":false,"":false}, band:5, exp:5}};
 const structEl=document.getElementById("struct");
 const ROSTER_PREFIX="periodRoster_"; // 保存先：Firestore meta/periodRoster_{期}
+const CAND_DOC="shikakuCandidates";     // 1級候補の個人指定：meta/shikakuCandidates {overrides:{技術者コード:"in"|"out"}}
 
 async function loadRosters(){
   try{
     const snap=await getDocs(collection(db,"meta"));
     const list=[];
-    snap.forEach((d)=>{ if(String(d.id).startsWith(ROSTER_PREFIX)){ const v=d.data(); if(v && Array.isArray(v.rows)) list.push(v); } });
+    snap.forEach((d)=>{
+      if(String(d.id).startsWith(ROSTER_PREFIX)){ const v=d.data(); if(v && Array.isArray(v.rows)) list.push(v); }
+      if(d.id===CAND_DOC){ const v=d.data()||{}; S2.cand.overrides=v.overrides||{}; S2.cand.info=v.updatedAt?`最終更新 ${new Date(v.updatedAt).toLocaleString("ja-JP")} ${v.updatedBy||""}`:""; }
+    });
     S2.rosters=list.sort((a,b)=>a.period-b.period);
   }catch(e){ console.error(e); S2.msg="登録済みの名簿を読み込めませんでした（"+(e.code||e.message)+"）"; }
   S2.loaded=true;
@@ -977,7 +982,7 @@ const clsCounts=(rows)=>{ const c={}; rows.forEach((r)=>{ c[r.cls||""]=(c[r.cls|
 /* ---- 画面 ---- */
 function renderStruct(){
   const subs=[["now","現状"],["trend","推移・再雇用"],["sim","シミュレーション"],["target","対象者リスト"],["data","データ管理"]];
-  const ready=new Set(["now","trend","sim","data"]);
+  const ready=new Set(["now","trend","sim","target","data"]);
   let h=`<div class="subnav">`+subs.map(([k,l])=>
     ready.has(k) ? `<button class="${S2.sub===k?"on":""}" data-sub="${k}">${l}</button>`
                  : `<button disabled title="準備中">${l}<span class="soon">準備中</span></button>`).join("")+`</div>`;
@@ -986,7 +991,8 @@ function renderStruct(){
   if(S2.sub==="now") h+=renderNow();
   else if(S2.sub==="trend") h+=renderTrend();
   else if(S2.sub==="sim") h+=renderSim();
-  else h+=renderImportCard()+renderRosterListCard()+renderDiffCard();
+  else if(S2.sub==="target") h+=renderTargets();
+  else h+=renderImportCard()+renderRosterListCard()+renderCandCard()+renderDiffCard();
   structEl.innerHTML=h;
 }
 
@@ -1110,14 +1116,15 @@ function computeNow(roster, opt){
     const age=yearsBetween(bday, d);
     const lics=HELD_BY_ENGCD[engcd]||[];
     const k1=heldAt(lics,"doboku1",d), ho=heldAt(lics,"doboku1ho",d), k2=heldAt(lics,"doboku2",d);
-    const target=!!opt.cls[r.cls||""];
+    const ov=engcd ? S2.cand.overrides[engcd] : "";
+    const target= ov==="in" ? true : ov==="out" ? false : !!opt.cls[r.cls||""];
     let stage, exp=null;
     if(k1) stage="s5";
     else if(!target) stage="out";
     else if(ho){ exp=ho.sday ? yearsBetween(ho.sday,d) : null; stage = exp!==null && exp>=opt.exp ? "s4" : "s3"; }
     else if(age!==null && age<19) stage="s1";
     else stage="s2";
-    return {no:r.no, name:r.name, cls:r.cls||"", engcd, age, stage, exp, has2:!!k2,
+    return {no:r.no, name:r.name, cls:r.cls||"", engcd, age, stage, exp, has2:!!k2, ov, hoSday: ho?ho.sday:"", k1Sday: k1?k1.sday:"",
       savedEngcd:r.engcd||"", noBday:!bday, licDateUnknown: !!((k1&&k1.unknown)||(ho&&ho.unknown)), unmatched:!engcd};
   });
 }
@@ -1514,7 +1521,7 @@ function renderSim(){
     <div class="verdict">必要数 <b>${need0}人</b> に対し、現在（${base}期末）の1級技術者は <b>${fmt(A[0].s5)}人</b>${gapNow>1e-9?`で、<b class="ng">すでに${fmt(gapNow)}人不足</b>しています`:""}。
     現状のままだと ${fsTxt(fsA)}（${P.years}年後は約${fmt(A[A.length-1].s5)}人）。</div>
     ${P.p1===0||P.p2===0?`<div class="note-box">⚠ ${P.p1===0?"一次検定":""}${P.p1===0&&P.p2===0?"・":""}${P.p2===0?"二次検定":""}の合格の割合が <b>0%</b> になっているため、新しく1級になる人が出ません（新卒を増やしても1級は増えない計算になります）。実績が少ないことが原因の場合は、下の「前提条件」で実態に近い値に直してください。</div>`:""}
-    ${S2.now.cls["その他"]?"":`<div class="note-box">「現状」画面で1級候補とする分類が「イロハ」だけになっています。「その他」に入っている技術系の若手は、出発時点の人数・採用の実績に含まれません。</div>`}
+    ${S2.now.cls["その他"]||Object.values(S2.cand.overrides).includes("in")?"":`<div class="note-box">1級候補が「イロハ」の分類だけになっています。「その他」に入っている技術系の若手を含めるには、「データ管理」の「1級候補の個人指定」で「含める」にしてください。</div>`}
     <table class="grid-tbl" style="margin-top:10px"><tr><th>シナリオ</th><th>不足が始まる期</th><th>5年後</th><th>10年後</th><th>${P.years}年後</th></tr>`+
     scen.map((x)=>{ const f=firstShort(x.res,need0); return `<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${x.color};margin-right:6px"></i>${x.k}：${esc(x.name)}</td>
       <td>${f<0?"不足なし":base+f+"期末"}</td>${[5,10,P.years].map((y)=>`<td class="n">${x.res[y]?fmt(x.res[y].s5):"–"}</td>`).join("")}</tr>`; }).join("")+`</table></div>`;
@@ -1734,6 +1741,138 @@ structEl.addEventListener("change",(e)=>{
   const t=e.target;
   if(t.dataset.now){ S2.now[t.dataset.now]=parseInt(t.value,10); renderStruct(); }
   else if(t.dataset.nowCls!==undefined){ S2.now.cls[t.dataset.nowCls]=t.checked; renderStruct(); }
+});
+
+/* =====================================================================
+   1級候補の個人指定（データ管理）
+   分類だけでは決めきれない人（「その他」の技術系の若手など）を、1人ずつ「含める／含めない」に指定する。
+   指定は技術者コードごとに Firestore meta/shikakuCandidates に保存し、現状・シミュレーション・対象者リストに反映する。
+   ===================================================================== */
+function candPeople(){
+  const roster=S2.rosters[S2.rosters.length-1]; if(!roster) return [];
+  const d=periodEnd(roster.period);
+  return roster.rows.map((r)=>{
+    const engcd=resolveEngcd(r); if(!engcd) return null;
+    const info=INFO_BY_ENGCD[engcd]||{}, lics=HELD_BY_ENGCD[engcd]||[];
+    const tags=[]; if(heldAt(lics,"doboku1",d)) tags.push("1級"); if(heldAt(lics,"doboku1ho",d)) tags.push("1級技士補");
+    if(heldAt(lics,"doboku2",d)) tags.push("2級"); if(lics.some((l)=>/土木施工管理技士補/.test(N(l.name)) && gradeOf(N(l.name))===2)) tags.push("2級技士補");
+    return {engcd, no:r.no, name:r.name, cls:r.cls||"", age:yearsBetween(String(info.BDAY||"").replace(/[^\d]/g,""), d), tags,
+      auto: !!S2.now.cls[r.cls||""]};
+  }).filter(Boolean);
+}
+function renderCandCard(){
+  const ov=S2.cand.draft || S2.cand.overrides;
+  const nIn=Object.values(ov).filter((v)=>v==="in").length, nOut=Object.values(ov).filter((v)=>v==="out").length;
+  let h=`<div class="card"><h2>1級候補の個人指定</h2>
+    <p class="desc">通常は分類で判定します（いまの設定：${CLS_ORDER.filter((c)=>S2.now.cls[c]).map(clsLabel).join("・")||"なし"}を候補にする。「現状」画面で変更できます）。
+    分類だけでは決めきれない人を、1人ずつ「含める／含めない」に指定できます。1級を持っている人は指定に関係なく1級技術者として数えます。<br>
+    いまの指定：含める <b>${nIn}人</b>・含めない <b>${nOut}人</b>${S2.cand.info?`<span class="muted">（${esc(S2.cand.info)}）</span>`:""}</p>`;
+  if(!canEdit) return h+`<p class="muted">指定の変更は編集権限のある人のみ行えます。</p></div>`;
+  if(!S2.rosters.length) return h+`<p class="muted">期末名簿を取り込むと指定できます。</p></div>`;
+  const c=S2.cand;
+  let ppl=candPeople();
+  const noLink=S2.rosters[S2.rosters.length-1].rows.length-ppl.length;
+  if(c.filterCls!=="all") ppl=ppl.filter((p)=>p.cls===c.filterCls || (c.filterCls==="指定済み" && ov[p.engcd]));
+  if(c.filterCls==="指定済み") ppl=candPeople().filter((p)=>ov[p.engcd]);
+  if(c.onlyCivil) ppl=ppl.filter((p)=>p.tags.length || ov[p.engcd]);
+  if(c.q) ppl=ppl.filter((p)=>(p.name+p.no).replace(/[\s　]/g,"").includes(c.q.replace(/[\s　]/g,"")));
+  ppl.sort((a,b)=>(a.age??999)-(b.age??999));
+  h+=`<div class="imp-row">
+      <select data-cand="filterCls">${[["その他","分類：その他"],["イロハ","分類：イロハ"],["事務","分類：事務"],["","分類：（空欄）"],["all","すべての分類"],["指定済み","指定済みの人だけ"]].map(([v,l])=>`<option value="${esc(v)}"${c.filterCls===v?" selected":""}>${l}</option>`).join("")}</select>
+      <label><input type="checkbox" data-cand-chk="onlyCivil"${c.onlyCivil?" checked":""}> 土木系の資格（1級・技士補・2級）がある人だけ</label>
+      <input type="search" data-cand="q" value="${esc(c.q)}" placeholder="氏名・社員番号" style="padding:5px 8px;border:1px solid var(--line);border-radius:6px">
+      <span class="muted">${ppl.length}人を表示（年齢の若い順）</span></div>
+    <table class="grid-tbl"><tr><th>社員番号</th><th>氏名</th><th>分類</th><th>年齢</th><th>土木系の資格</th><th>分類による判定</th><th>個人指定</th></tr>`+
+    ppl.map((p)=>{ const v=ov[p.engcd]||"";
+      return `<tr><td>${esc(p.no)}</td><td>${esc(p.name)}</td><td>${esc(clsLabel(p.cls))}</td><td class="n">${p.age??"–"}</td>
+        <td>${p.tags.map((t)=>`<span class="pill ${t==="1級"?"ok":"warn"}">${t}</span>`).join(" ")||'<span class="muted">–</span>'}</td>
+        <td>${p.tags.includes("1級")?"1級技術者":p.auto?"含める":"含めない"}</td>
+        <td><select data-cand-ov="${esc(p.engcd)}"><option value="">分類のとおり</option><option value="in"${v==="in"?" selected":""}>含める</option><option value="out"${v==="out"?" selected":""}>含めない</option></select></td></tr>`; }).join("")+
+    `</table>${noLink?`<p class="desc" style="margin-top:6px">社員データと紐付いていない ${noLink}人は指定できません。</p>`:""}
+    <div class="imp-row" style="margin-top:10px"><button class="btn primary" id="candSave"${c.draft?"":" disabled"}>指定を保存</button>
+      ${c.draft?`<button class="btn" id="candCancel">変更を取り消す</button><span class="pill warn">未保存の変更があります</span>`:""}</div></div>`;
+  return h;
+}
+structEl.addEventListener("change",(e)=>{
+  const t=e.target, c=S2.cand;
+  if(t.dataset.cand){ c[t.dataset.cand]=t.value; renderStruct(); }
+  else if(t.dataset.candChk){ c[t.dataset.candChk]=t.checked; renderStruct(); }
+  else if(t.dataset.candOv!==undefined){
+    c.draft=c.draft||{...c.overrides};
+    if(t.value) c.draft[t.dataset.candOv]=t.value; else delete c.draft[t.dataset.candOv];
+    renderStruct();
+  }
+});
+structEl.addEventListener("click", async (e)=>{
+  if(e.target.id==="candCancel"){ S2.cand.draft=null; renderStruct(); return; }
+  if(e.target.id!=="candSave" || !S2.cand.draft) return;
+  const rec={overrides:S2.cand.draft, updatedAt:Date.now(), updatedBy:(auth.currentUser&&auth.currentUser.email)||""};
+  try{
+    await setDoc(doc(db,"meta",CAND_DOC), rec);
+    S2.cand.overrides=rec.overrides; S2.cand.draft=null; S2.cand.info=`最終更新 ${new Date(rec.updatedAt).toLocaleString("ja-JP")} ${rec.updatedBy}`;
+    S2.sim=null; // シミュレーションの初期値（実績）を新しい指定で取り直す
+  }catch(err){ S2.msg="指定を保存できませんでした（"+(err.code||err.message)+"）"; }
+  renderStruct();
+});
+
+/* =====================================================================
+   対象者リスト（基準の期末時点）
+   ===================================================================== */
+function targetLists(){
+  const o=S2.now;
+  if(!S2.rosters.some((x)=>x.period===o.period)) o.period=S2.rosters[S2.rosters.length-1].period;
+  const roster=S2.rosters.find((x)=>x.period===o.period);
+  const ppl=computeNow(roster,o).map((p)=>{ const e=p.engcd?empByEngcd(p.engcd):null; return {...p, dept:e?[e.DEPT,e.POSITION].filter(Boolean).join(" "):""}; });
+  const E=o.exp, nextP=roster.period+1;
+  const byAge=(a,desc)=> a.sort((x,y)=> desc ? (y.age??-1)-(x.age??-1) : (x.age??999)-(y.age??999));
+  return {roster, nextP, lists:[
+    {k:"s4", title:`二次検定の受検対象（${nextP}期に受検できる人）`, why:`1級技士補を取ってから実務経験${E}年以上。最優先で合格させたい人です。`,
+      rows:byAge(ppl.filter((p)=>p.stage==="s4")), cols:["ho","exp"]},
+    {k:"s3next", title:`来期に二次受検できるようになる人`, why:`技士補の取得から${E-1}年。次の期末で実務経験${E}年に届きます。`,
+      rows:byAge(ppl.filter((p)=>p.stage==="s3" && p.exp===E-1)), cols:["ho","exp"]},
+    {k:"s3", title:`技士補・実務経験中の人`, why:`1級技士補を持ち、実務経験${E}年に届いていない人（来期に届く人を含む）。`,
+      rows:byAge(ppl.filter((p)=>p.stage==="s3")), cols:["ho","exp"]},
+    {k:"s2", title:`一次検定の受検対象（1級候補で19歳以上・技士補なし）`, why:`まだ1級技士補を持っていない人です。2級を持っている人には印を付けています。`,
+      rows:byAge(ppl.filter((p)=>p.stage==="s2")), cols:["has2"]},
+    {k:"stuck", title:`二次受検できるのに長く1級になっていない人`, why:`技士補の取得から${E+2}年以上たっても1級になっていない人。受検の状況を確認したい人です。`,
+      rows:byAge(ppl.filter((p)=>p.stage==="s4" && p.exp!==null && p.exp>=E+2)), cols:["ho","exp"]},
+    {k:"retire5", title:`5年以内に60歳（定年）になる1級技術者`, why:`期末時点で55〜59歳。再雇用で残ってもらえるか、後任の育成が必要かを確認したい人です。`,
+      rows:byAge(ppl.filter((p)=>p.stage==="s5" && p.age!==null && p.age>=55 && p.age<60),true), cols:["k1"]},
+    {k:"reemp", title:`60歳以上（再雇用など）の1級技術者`, why:`年齢の高い順。いつまで在籍できるかの見通しが、将来の人数に大きく影響します。`,
+      rows:byAge(ppl.filter((p)=>p.stage==="s5" && p.age!==null && p.age>=60),true), cols:["k1"]},
+  ]};
+}
+const TL_COLS={ho:["技士補の取得日",(p)=>fmtYmdSlash(p.hoSday)||"不明"], exp:["技士補からの年数",(p)=>p.exp===null?"不明":p.exp+"年"],
+  has2:["2級",(p)=>p.has2?"2級あり":""], k1:["1級の取得日",(p)=>fmtYmdSlash(p.k1Sday)||"不明"]};
+function renderTargets(){
+  if(!S2.rosters.length){
+    return `<div class="card"><h2>対象者リスト</h2><p class="desc">期末名簿がまだ登録されていません。</p><button class="btn primary" data-sub="data">データ管理へ</button></div>`;
+  }
+  const {roster, lists}=targetLists(), o=S2.now;
+  let h=`<div class="now-filters">
+    <div class="grp"><b>基準</b><select data-now="period">${S2.rosters.map((x)=>`<option value="${x.period}"${x.period===o.period?" selected":""}>${x.period}期末（${fmtYmdSlash(x.baseDate)}）</option>`).join("")}</select></div>
+    <div class="grp"><b>二次受検に必要な実務経験</b><select data-now="exp"><option value="5"${o.exp===5?" selected":""}>5年</option><option value="3"${o.exp===3?" selected":""}>3年（特定実務経験）</option></select></div>
+    <span class="muted">年齢・段階は ${roster.period}期末（${fmtYmdSlash(roster.baseDate)}）時点。1級候補は「現状」画面の分類と、データ管理の個人指定に従います。</span>
+    <span class="spacer"></span><button class="btn primary" id="tlXlsx">Excelで出力</button></div>`;
+  lists.forEach((L)=>{
+    h+=`<div class="card"><h2>${esc(L.title)}：${L.rows.length}人</h2><p class="desc">${esc(L.why)}</p>`+
+      (L.rows.length ? `<table class="grid-tbl"><tr><th>社員番号</th><th>氏名</th><th>年齢</th><th>分類</th><th>所属</th>${L.cols.map((c)=>`<th>${TL_COLS[c][0]}</th>`).join("")}</tr>`+
+        L.rows.map((p)=>`<tr><td>${esc(p.no)}</td><td>${esc(p.name)}${p.ov==="in"?' <span class="pill warn" title="個人指定で1級候補に含めた人">指定</span>':""}</td><td class="n">${p.age??"–"}</td><td>${esc(clsLabel(p.cls))}</td><td>${esc(p.dept)}</td>${L.cols.map((c)=>`<td>${esc(TL_COLS[c][1](p))}</td>`).join("")}</tr>`).join("")+`</table>`
+      : `<p class="muted">該当する人はいません。</p>`)+`</div>`;
+  });
+  return h;
+}
+structEl.addEventListener("click",(e)=>{
+  if(e.target.id!=="tlXlsx") return;
+  const {roster, lists}=targetLists();
+  const wb=XLSX.utils.book_new();
+  lists.forEach((L,i)=>{
+    const head=["社員番号","氏名","年齢","分類","所属",...L.cols.map((c)=>TL_COLS[c][0])];
+    const aoa=[[L.title],[L.why],[],head,...L.rows.map((p)=>[p.no,p.name,p.age??"",clsLabel(p.cls),p.dept,...L.cols.map((c)=>TL_COLS[c][1](p))])];
+    const ws=XLSX.utils.aoa_to_sheet(aoa); ws["!cols"]=[{wch:10},{wch:14},{wch:6},{wch:8},{wch:30},{wch:14},{wch:12}];
+    XLSX.utils.book_append_sheet(wb, ws, (i+1)+"_"+L.title.replace(/[\\\/\?\*\[\]:：（）()]/g,"").slice(0,26));
+  });
+  XLSX.writeFile(wb, `対象者リスト_${roster.period}期末.xlsx`);
 });
 
 /* ---- 操作 ---- */
