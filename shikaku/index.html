@@ -1284,6 +1284,7 @@ function rosterStats(roster){
   const d=periodEnd(roster.period);
   const ppl=roster.rows.map((r)=>{ const engcd=resolveEngcd(r); const info=INFO_BY_ENGCD[engcd]||{};
     return {key:engcd?"e:"+engcd:"n:"+normCode(r.no), no:r.no, name:r.name, cls:r.cls||"", engcd,
+      tenure:yearsBetween(String(info.NDAY||"").replace(/[^\d]/g,""), d),
       age:yearsBetween(String(info.BDAY||"").replace(/[^\d]/g,""), d), k1Held:!!engcd&&has1At(engcd,d), ho:!!engcd&&hoAt(engcd,d)}; });
   ppl.forEach((p)=>{ p.k1Real=p.k1Held && countsAsReal(p.engcd,p.cls); p.k1= realMode() ? p.k1Real : p.k1Held; });
   const t=ppl.filter((p)=>p.k1), ta=t.filter((p)=>p.age!==null);
@@ -1424,6 +1425,7 @@ function renderTrend(){
   if(!anyPair) h+=`<p class="muted">連続する2つの期の名簿が登録されると表示されます。</p>`;
   h+=`</div>`;
 
+  h+=renderTurnover(stats);
   h+=renderRetention(stats);
   return h;
 }
@@ -1463,7 +1465,12 @@ function needByPeriod(opt, periods){
 }
 
 // ---- 前提条件の初期値（実績があれば実績、少なければ仮の値） ----
-const RET_KEYS=[["u55","54歳以下",(a)=>a<55,96],["b5559","55〜59歳",(a)=>a>=55&&a<60,96],["b6064","60〜64歳",(a)=>a>=60&&a<65,90],["b6569","65〜69歳",(a)=>a>=65&&a<70,80],["b70","70歳以上",(a)=>a>=70,65]];
+// 在籍率の年齢区分（全世代）。[キー, 表示, 判定, 実績が少ないときの仮の値(%)]。シミュレーションと「年代別の在籍率・離職率」で共通。
+const RET_KEYS=[
+  ["a29","29歳以下",(a)=>a<30,92], ["a30","30〜39歳",(a)=>a>=30&&a<40,95], ["a40","40〜49歳",(a)=>a>=40&&a<50,97],
+  ["a50","50〜54歳",(a)=>a>=50&&a<55,97], ["a55","55〜59歳",(a)=>a>=55&&a<60,96], ["a60","60〜64歳",(a)=>a>=60&&a<65,90],
+  ["a65","65〜69歳",(a)=>a>=65&&a<70,80], ["a70","70歳以上",(a)=>a>=70,65]];
+const MID_KEYS=new Set(["a30","a40"]); // 中堅（30〜49歳）
 function simDefaults(){
   const opt={...S2.now, cls:S2.now.cls};
   const P={years:15, exp:S2.now.exp, ret:{}, src:{}, newbie:90, p1:15, p2:30,
@@ -1661,8 +1668,9 @@ function renderSimInputs(P, nb, base, auto, need0){
     <p class="desc">数値を変えると、すぐに計算し直します。<span class="src act">実績</span>は期末名簿の比較から、<span class="src tmp">仮</span>は実績が少ないための仮の値です。仮の値は、分かる範囲で実態に近い値に直してください。</p>
     <div class="sim-grid">
     <div class="sim-grp"><h4>在籍率（1年後も在籍している割合）</h4>`+
-      RET_KEYS.map(([k,label])=>`<div class="sim-in"><span class="l">${label}</span>${num("ret."+k,P.ret[k],1,0,100)}%${src(P.src["ret_"+k])}</div>`).join("")+
-      `<div class="sim-in"><span class="l">入社3年以内の人</span>${num("newbie",P.newbie,1,0,100)}%${src(P.src.newbie)}</div></div>
+      RET_KEYS.map(([k,label])=>`<div class="sim-in"><span class="l" style="white-space:nowrap">${label}${MID_KEYS.has(k)?'<span class="muted">・中堅</span>':""}</span>${num("ret."+k,P.ret[k],1,0,100)}%<span class="muted" style="white-space:nowrap">離職${Math.max(0,100-P.ret[k])}%</span>${src(P.src["ret_"+k])}</div>`).join("")+
+      `<div class="sim-in"><span class="l" style="white-space:nowrap">入社3年以内</span>${num("newbie",P.newbie,1,0,100)}%<span class="muted" style="white-space:nowrap">離職${Math.max(0,100-P.newbie)}%</span>${src(P.src.newbie)}</div>
+      <p class="desc" style="margin:4px 0 0">入社3年以内は年齢を問いません。年齢区分の値は、入社3年以内の人を除いて数えています。</p></div>
     <div class="sim-grp"><h4>資格</h4>
       <div class="sim-in"><span class="l">一次検定：受検できる人のうち、1年で技士補になる割合</span>${num("p1",P.p1,1,0,100)}%${src(P.src.p1)}</div>
       <div class="sim-in"><span class="l">二次検定：受検できる人のうち、1年で1級になる割合</span>${num("p2",P.p2,1,0,100)}%${src(P.src.p2)}</div>
@@ -1719,6 +1727,41 @@ structEl.addEventListener("mousemove",(e)=>{
 });
 
 /* ---- 推移・再雇用 ---- */
+/* ---- 年代別の在籍率・離職率（全世代） ---- */
+// 連続する期末名簿を比べ、前の期末にいた人が翌期末の名簿にもいたかどうかで数える。
+// 入社3年以内の人は別の行にまとめ、年齢区分の行からは除く（シミュレーションの前提条件と同じ数え方）。
+function renderTurnover(stats){
+  const pairs=[]; for(let i=1;i<stats.length;i++) if(stats[i].period===stats[i-1].period+1) pairs.push([stats[i-1],stats[i]]);
+  let h=`<div class="card"><h2>年代別の在籍率・離職率（全世代）</h2>
+    <p class="desc">前の期末にいた人のうち、翌期末の名簿にもいた割合が<b>在籍率</b>、いなかった割合が<b>離職率</b>です（実績 ${pairs.length}期分の合計）。
+    年齢は前の期末時点です。入社3年以内の人は年齢に関係なく1行にまとめ、年齢区分の行からは除いています。シミュレーションの前提条件の「実績」と同じ数え方です。</p>`;
+  if(!pairs.length) return h+`<p class="muted">連続する2つの期の名簿が登録されると表示されます。</p></div>`;
+  const rows=[["new","入社3年以内（年齢を問わず）",(p)=>p.tenure!==null&&p.tenure<3]].concat(
+    RET_KEYS.map(([k,label,f])=>[k,label,(p)=>!(p.tenure!==null&&p.tenure<3) && p.age!==null && f(p.age)]));
+  const calc=(f,only1)=>{ let n=0, stay=0, leftNames=[];
+    pairs.forEach(([a,b])=>{ const bk=new Set(b.ppl.map((p)=>p.key));
+      a.ppl.forEach((p)=>{ if(!f(p) || (only1 && !p.k1)) return; n++; if(bk.has(p.key)) stay++; else leftNames.push(`${p.name}（${a.period}→${b.period}期）`); }); });
+    return {n, stay, left:n-stay, rate:n?stay/n:null, leftNames}; };
+  const data=rows.map(([k,label,f])=>({k,label,all:calc(f,false),t1:calc(f,true)}));
+  const maxTurn=Math.max(0.05,...data.map((d)=>d.all.rate===null?0:1-d.all.rate));
+  const pct=(x)=> x.rate===null ? "–" : Math.round(x.rate*100)+"%";
+  const turn=(x)=> x.rate===null ? "–" : Math.round((1-x.rate)*100)+"%";
+  h+=`<table class="grid-tbl"><tr><th rowspan="2">前の期末時点</th><th colspan="4">全社員</th><th colspan="2">うち1級技術者（${modeLabel()}）</th></tr>
+    <tr><th>在籍率</th><th>離職率</th><th style="min-width:140px"></th><th>離職した人数</th><th>在籍率</th><th>離職率</th></tr>`+
+    data.map((d)=>{ const tr=d.all.rate===null?0:1-d.all.rate;
+      return `<tr${MID_KEYS.has(d.k)?' style="background:#fff9e8"':""}><td>${d.label}${MID_KEYS.has(d.k)?' <span class="pill warn">中堅</span>':""}</td>
+        <td class="n">${pct(d.all)}<span class="muted">（${d.all.stay}/${d.all.n}人）</span></td><td class="n"><b>${turn(d.all)}</b></td>
+        <td><div style="height:10px;background:#d03b3b;border-radius:0 4px 4px 0;width:${(tr/maxTurn*100).toFixed(1)}%" title="離職率 ${turn(d.all)}"></div></td>
+        <td class="n">${d.all.n?d.all.left+"人":"–"}</td>
+        <td class="n">${pct(d.t1)}${d.t1.n?`<span class="muted">（${d.t1.stay}/${d.t1.n}人）</span>`:""}</td><td class="n">${turn(d.t1)}</td></tr>`; }).join("")+`</table>`;
+  // 中堅のまとめ
+  const mid=data.filter((d)=>MID_KEYS.has(d.k)).reduce((s,d)=>({n:s.n+d.all.n, stay:s.stay+d.all.stay, names:s.names.concat(d.all.leftNames)}),{n:0,stay:0,names:[]});
+  if(mid.n) h+=`<div class="note-box">中堅（30〜49歳・入社3年以内を除く）の離職率は <b>${Math.round((1-mid.stay/mid.n)*100)}%</b>（${mid.n}人中 ${mid.n-mid.stay}人）です。
+    ${mid.names.length?`<details class="diff" style="margin-top:4px"><summary>離職した中堅の人</summary><ul>${mid.names.map((x)=>`<li>${esc(x)}</li>`).join("")}</ul></details>`:""}</div>`;
+  h+=`<p class="desc" style="margin-top:6px">※ 翌期末の名簿にいない人には、退職のほか、番号が変わって紐付けできていない人も含まれることがあります（データ管理の「期ごとの変化」で確認できます）。人数が少ない区分は、1人の増減で割合が大きく動きます。</p>`;
+  return h+`</div>`;
+}
+
 /* ---- C. 再雇用：何歳まで残っているか ---- */
 const RET_BANDS=[["55〜58歳",(a)=>a>=55&&a<=58],["59歳（定年の前年）",(a)=>a===59],["60〜64歳",(a)=>a>=60&&a<=64],["65〜69歳",(a)=>a>=65&&a<=69],["70歳以上",(a)=>a>=70]];
 function renderRetention(stats){
