@@ -902,7 +902,7 @@ const clsLabel=(c)=> c || "（空欄）";
 const S2={sub:"now", rosters:[], loaded:false, imp:null, msg:"", busy:false,
   cand:{overrides:{}, draft:null, filterCls:"その他", onlyCivil:true, q:"", info:""}, // 1級候補の個人指定
   niji:{periods:{}, draft:null, onlyHo:true, onlySel:false, q:"", paste:"", pasteMsg:""},             // 二次受検資格者の登録（受検する期ごと）
-  now:{period:null, cls:{"イロハ":true,"その他":false,"事務":false,"":false}, band:5, exp:5}};
+  now:{period:null, cls:{"イロハ":true,"その他":true,"事務":false,"":false}, band:5, exp:5}}; // 1級候補とする分類の初期値：イロハ＋その他
 const structEl=document.getElementById("struct");
 const ROSTER_PREFIX="periodRoster_"; // 保存先：Firestore meta/periodRoster_{期}
 const NIJI_DOC="shikakuNijiElig";       // 二次受検資格者の登録：meta/shikakuNijiElig {periods:{"70":{engcds:[技術者コード…], updatedAt, updatedBy}}}
