@@ -901,9 +901,11 @@ const clsLabel=(c)=> c || "（空欄）";
 
 const S2={sub:"now", rosters:[], loaded:false, imp:null, msg:"", busy:false,
   cand:{overrides:{}, draft:null, filterCls:"その他", onlyCivil:true, q:"", info:""}, // 1級候補の個人指定
+  niji:{periods:{}, draft:null, onlyHo:true, onlySel:false, q:"", paste:"", pasteMsg:""},             // 二次受検資格者の登録（受検する期ごと）
   now:{period:null, cls:{"イロハ":true,"その他":false,"事務":false,"":false}, band:5, exp:5}};
 const structEl=document.getElementById("struct");
 const ROSTER_PREFIX="periodRoster_"; // 保存先：Firestore meta/periodRoster_{期}
+const NIJI_DOC="shikakuNijiElig";       // 二次受検資格者の登録：meta/shikakuNijiElig {periods:{"70":{engcds:[技術者コード…], updatedAt, updatedBy}}}
 const CAND_DOC="shikakuCandidates";     // 1級候補の個人指定：meta/shikakuCandidates {overrides:{技術者コード:"in"|"out"}}
 
 async function loadRosters(){
@@ -912,6 +914,7 @@ async function loadRosters(){
     const list=[];
     snap.forEach((d)=>{
       if(String(d.id).startsWith(ROSTER_PREFIX)){ const v=d.data(); if(v && Array.isArray(v.rows)) list.push(v); }
+      if(d.id===NIJI_DOC){ const v=d.data()||{}; S2.niji.periods=v.periods||{}; }
       if(d.id===CAND_DOC){ const v=d.data()||{}; S2.cand.overrides=v.overrides||{}; S2.cand.info=v.updatedAt?`最終更新 ${new Date(v.updatedAt).toLocaleString("ja-JP")} ${v.updatedBy||""}`:""; }
     });
     S2.rosters=list.sort((a,b)=>a.period-b.period);
@@ -993,7 +996,10 @@ function renderStruct(){
   else if(S2.sub==="sim") h+=renderSim();
   else if(S2.sub==="target") h+=renderTargets();
   else h+=renderImportCard()+renderRosterListCard()+renderCandCard()+renderDiffCard();
+  // 再描画しても、一覧の中のスクロール位置が戻らないようにする
+  const keep={}; structEl.querySelectorAll("[data-keep-scroll][id]").forEach((el)=>{ keep[el.id]=el.scrollTop; });
   structEl.innerHTML=h;
+  Object.entries(keep).forEach(([id,top])=>{ const el=document.getElementById(id); if(el) el.scrollTop=top; });
 }
 
 function renderImportCard(){
@@ -1077,7 +1083,7 @@ function renderDiffCard(){
    ===================================================================== */
 const STAGES=[ // 色は1色の濃淡（受検前＝薄い → 1級＝濃い）。dataviz の ordinal 検証済み
   {k:"s5", label:"1級技術者",              color:"#104281"},
-  {k:"s4", label:"二次受検可能（技士補・経験年数到達）", color:"#1c5cab"},
+  {k:"s4", label:"二次受検資格あり", color:"#1c5cab"},
   {k:"s3", label:"技士補・実務経験中",      color:"#2a78d6"},
   {k:"s2", label:"一次受検可能（19歳以上）", color:"#5598e7"},
   {k:"s1", label:"受検前（19歳未満）",       color:"#86b6ef"},
@@ -1107,6 +1113,11 @@ function resolveEngcd(r){
   const m=matchRosterRow(r);
   return m.engcd || r.engcd || "";
 }
+// 受検する期の二次受検資格者（登録済み）の技術者コードの集合。未登録なら null。
+function nijiReg(period){
+  const x=S2.niji.periods[String(period)];
+  return x && Array.isArray(x.engcds) ? new Set(x.engcds.map(String)) : null;
+}
 function computeNow(roster, opt){
   const d=periodEnd(roster.period);
   return roster.rows.map((r)=>{
@@ -1118,13 +1129,20 @@ function computeNow(roster, opt){
     const k1=heldAt(lics,"doboku1",d), ho=heldAt(lics,"doboku1ho",d), k2=heldAt(lics,"doboku2",d);
     const ov=engcd ? S2.cand.overrides[engcd] : "";
     const target= ov==="in" ? true : ov==="out" ? false : !!opt.cls[r.cls||""];
-    let stage, exp=null;
+    // 二次受検資格：別のシステムで算出して登録した「来期（基準の期末＋1）の受検資格者」を使う。
+    // 登録が無い期だけ、技士補の取得からの年数（目安）で判定する。
+    const reg=nijiReg(roster.period+1);
+    const isReg= reg && engcd ? reg.has(engcd) : false;
+    const exp= ho && ho.sday ? yearsBetween(ho.sday,d) : null;
+    let stage;
     if(k1) stage="s5";
-    else if(!target) stage="out";
-    else if(ho){ exp=ho.sday ? yearsBetween(ho.sday,d) : null; stage = exp!==null && exp>=opt.exp ? "s4" : "s3"; }
+    else if(!target && !isReg) stage="out";
+    else if(reg) stage= isReg ? "s4" : ho ? "s3" : (age!==null && age<19 ? "s1" : "s2");
+    else if(ho) stage= exp!==null && exp>=opt.exp ? "s4" : "s3";
     else if(age!==null && age<19) stage="s1";
     else stage="s2";
-    return {no:r.no, name:r.name, cls:r.cls||"", engcd, age, stage, exp, has2:!!k2, ov, hoSday: ho?ho.sday:"", k1Sday: k1?k1.sday:"",
+    return {no:r.no, name:r.name, cls:r.cls||"", engcd, age, stage, exp, has2:!!k2, ov, hasHo:!!ho, nijiReg: reg ? isReg : null,
+      nijiPrev: (()=>{ const pr=nijiReg(roster.period); return pr && engcd ? pr.has(engcd) : false; })(), hoSday: ho?ho.sday:"", k1Sday: k1?k1.sday:"",
       savedEngcd:r.engcd||"", noBday:!bday, licDateUnknown: !!((k1&&k1.unknown)||(ho&&ho.unknown)), unmatched:!engcd};
   });
 }
@@ -1158,7 +1176,8 @@ function renderNow(){
     <div class="grp"><b>基準</b><select data-now="period">${S2.rosters.map((x)=>`<option value="${x.period}"${x.period===o.period?" selected":""}>${x.period}期末（${fmtYmdSlash(x.baseDate)}）</option>`).join("")}</select></div>
     <div class="grp"><b>1級候補とする分類</b>${CLS_ORDER.map((c)=>`<label><input type="checkbox" data-now-cls="${esc(c)}"${o.cls[c]?" checked":""}> ${clsLabel(c)}</label>`).join("")}</div>
     <div class="grp"><b>年齢区分</b><select data-now="band"><option value="5"${o.band===5?" selected":""}>5歳ごと</option><option value="1"${o.band===1?" selected":""}>1歳ごと</option></select></div>
-    <div class="grp"><b>二次受検に必要な実務経験</b><select data-now="exp"><option value="5"${o.exp===5?" selected":""}>5年</option><option value="3"${o.exp===3?" selected":""}>3年（特定実務経験）</option></select></div>
+    ${nijiReg(o.period+1) ? `<div class="grp"><b>二次受検資格</b><span class="pill ok">${o.period+1}期の登録を使用</span></div>`
+      : `<div class="grp"><b>二次受検資格（未登録のため目安）</b><select data-now="exp"><option value="5"${o.exp===5?" selected":""}>技士補から5年</option><option value="3"${o.exp===3?" selected":""}>技士補から3年</option></select></div>`}
   </div>`;
 
   // ---- 数字のタイル ----
@@ -1167,7 +1186,7 @@ function renderNow(){
     <div class="tile"><div class="k">1級技術者</div><div class="v">${tech.length}<small>人</small></div><div class="s">平均 ${avg(techKnown)}歳／全社員 ${ppl.length}人中</div></div>
     <div class="tile"><div class="k">うち60歳以上（再雇用など）</div><div class="v">${t60}<small>人</small></div><div class="s">1級技術者の ${pct(t60,techKnown.length)}%</div></div>
     <div class="tile"><div class="k">5年以内に60歳になる1級</div><div class="v">${t5560}<small>人</small></div><div class="s">${roster.period}期末時点で55〜59歳</div></div>
-    <div class="tile"><div class="k">次の候補（技士補）</div><div class="v">${cnt("s4")+cnt("s3")}<small>人</small></div><div class="s">うち二次受検可能 ${cnt("s4")}人</div></div>
+    <div class="tile"><div class="k">次の候補（技士補）</div><div class="v">${cnt("s4")+cnt("s3")}<small>人</small></div><div class="s">うち二次受検資格あり ${cnt("s4")}人${nijiReg(o.period+1)?"（登録）":"（目安）"}</div></div>
     <div class="tile"><div class="k">一次受検可能・受検前</div><div class="v">${cnt("s2")+cnt("s1")}<small>人</small></div><div class="s">対象の分類で、1級・技士補を持たない人</div></div>
   </div>`;
 
@@ -1600,7 +1619,7 @@ function renderSimInputs(P, nb, base, auto, need0){
     <div class="sim-grp"><h4>資格</h4>
       <div class="sim-in"><span class="l">一次検定：受検できる人のうち、1年で技士補になる割合</span>${num("p1",P.p1,1,0,100)}%${src(P.src.p1)}</div>
       <div class="sim-in"><span class="l">二次検定：受検できる人のうち、1年で1級になる割合</span>${num("p2",P.p2,1,0,100)}%${src(P.src.p2)}</div>
-      <div class="sim-in"><span class="l">二次受検に必要な実務経験</span><select data-sim="exp"><option value="5"${P.exp===5?" selected":""}>5年</option><option value="3"${P.exp===3?" selected":""}>3年</option></select></div>
+      <div class="sim-in"><span class="l">技士補から二次受検資格までの年数（将来分の目安。出発時点は登録を使用）</span><select data-sim="exp"><option value="5"${P.exp===5?" selected":""}>5年</option><option value="3"${P.exp===3?" selected":""}>3年</option></select></div>
       <div class="sim-in"><span class="l">予測する期間</span>${num("years",P.years,1,5,25)}年</div></div>
     <div class="sim-grp"><h4>毎年の採用（今の計画）${src(P.src.hire)}</h4>
       <div class="sim-in"><span class="l">新卒・高卒（18歳）</span>${num("hireHigh",P.hireHigh)}人</div>
@@ -1823,26 +1842,35 @@ function targetLists(){
   if(!S2.rosters.some((x)=>x.period===o.period)) o.period=S2.rosters[S2.rosters.length-1].period;
   const roster=S2.rosters.find((x)=>x.period===o.period);
   const ppl=computeNow(roster,o).map((p)=>{ const e=p.engcd?empByEngcd(p.engcd):null; return {...p, dept:e?[e.DEPT,e.POSITION].filter(Boolean).join(" "):""}; });
-  const E=o.exp, nextP=roster.period+1;
+  const nextP=roster.period+1, reg=nijiReg(nextP), E=o.exp;
   const byAge=(a,desc)=> a.sort((x,y)=> desc ? (y.age??-1)-(x.age??-1) : (x.age??999)-(y.age??999));
-  return {roster, nextP, lists:[
-    {k:"s4", title:`二次検定の受検対象（${nextP}期に受検できる人）`, why:`1級技士補を取ってから実務経験${E}年以上。最優先で合格させたい人です。`,
-      rows:byAge(ppl.filter((p)=>p.stage==="s4")), cols:["ho","exp"]},
-    {k:"s3next", title:`来期に二次受検できるようになる人`, why:`技士補の取得から${E-1}年。次の期末で実務経験${E}年に届きます。`,
-      rows:byAge(ppl.filter((p)=>p.stage==="s3" && p.exp===E-1)), cols:["ho","exp"]},
-    {k:"s3", title:`技士補・実務経験中の人`, why:`1級技士補を持ち、実務経験${E}年に届いていない人（来期に届く人を含む）。`,
-      rows:byAge(ppl.filter((p)=>p.stage==="s3")), cols:["ho","exp"]},
-    {k:"s2", title:`一次検定の受検対象（1級候補で19歳以上・技士補なし）`, why:`まだ1級技士補を持っていない人です。2級を持っている人には印を付けています。`,
-      rows:byAge(ppl.filter((p)=>p.stage==="s2")), cols:["has2"]},
-    {k:"stuck", title:`二次受検できるのに長く1級になっていない人`, why:`技士補の取得から${E+2}年以上たっても1級になっていない人。受検の状況を確認したい人です。`,
-      rows:byAge(ppl.filter((p)=>p.stage==="s4" && p.exp!==null && p.exp>=E+2)), cols:["ho","exp"]},
-    {k:"retire5", title:`5年以内に60歳（定年）になる1級技術者`, why:`期末時点で55〜59歳。再雇用で残ってもらえるか、後任の育成が必要かを確認したい人です。`,
-      rows:byAge(ppl.filter((p)=>p.stage==="s5" && p.age!==null && p.age>=55 && p.age<60),true), cols:["k1"]},
-    {k:"reemp", title:`60歳以上（再雇用など）の1級技術者`, why:`年齢の高い順。いつまで在籍できるかの見通しが、将来の人数に大きく影響します。`,
-      rows:byAge(ppl.filter((p)=>p.stage==="s5" && p.age!==null && p.age>=60),true), cols:["k1"]},
-  ]};
+  const lists=[];
+  if(reg){
+    const regd=ppl.filter((p)=>p.engcd && reg.has(p.engcd));
+    lists.push({k:"s4", title:`二次検定の受検資格者（${nextP}期・登録済み）`, why:`別のシステムで受検資格を算出し、登録した人です。最優先で合格させたい人です。`,
+      rows:byAge(regd), cols:["ho","prev","note"]});
+    lists.push({k:"s3", title:`1級技士補を持っているが、${nextP}期の受検資格者に登録されていない人`, why:`まだ実務経験が足りないなどの理由で、来期は二次検定を受けられない技士補の人です。`,
+      rows:byAge(ppl.filter((p)=>p.stage==="s3")), cols:["ho","exp"]});
+  } else {
+    lists.push({k:"s4", title:`二次検定の受検資格者（${nextP}期）：未登録`, why:`${nextP}期の受検資格者がまだ登録されていません。上の「二次受検資格者の登録」で登録してください。下は参考として、技士補の取得から${E}年以上の人を出しています（目安）。`,
+      rows:byAge(ppl.filter((p)=>p.stage==="s4")), cols:["ho","exp"], est:true});
+    lists.push({k:"s3", title:`技士補・上記以外の人（目安）`, why:`1級技士補を持ち、技士補の取得から${E}年に届いていない人です（目安）。`,
+      rows:byAge(ppl.filter((p)=>p.stage==="s3")), cols:["ho","exp"], est:true});
+  }
+  lists.push({k:"s2", title:`一次検定の受検対象（1級候補で19歳以上・技士補なし）`, why:`まだ1級技士補を持っていない人です。2級を持っている人には印を付けています。`,
+    rows:byAge(ppl.filter((p)=>p.stage==="s2")), cols:["has2"]});
+  const prevReg=nijiReg(roster.period);
+  lists.push({k:"stuck", title:`前の期（${roster.period}期）にも受検資格があったのに、まだ1級になっていない人`, why: prevReg ? `${roster.period}期の受検資格者に登録されていて、${roster.period}期末時点で1級を持っていない人です。受検・合格の状況を確認したい人です。` : `${roster.period}期の受検資格者が登録されていないため、表示できません。`,
+    rows: prevReg ? byAge(ppl.filter((p)=>p.engcd && prevReg.has(p.engcd) && p.stage!=="s5")) : [], cols:["ho","now"]});
+  lists.push({k:"retire5", title:`5年以内に60歳（定年）になる1級技術者`, why:`期末時点で55〜59歳。再雇用で残ってもらえるか、後任の育成が必要かを確認したい人です。`,
+    rows:byAge(ppl.filter((p)=>p.stage==="s5" && p.age!==null && p.age>=55 && p.age<60),true), cols:["k1"]});
+  lists.push({k:"reemp", title:`60歳以上（再雇用など）の1級技術者`, why:`年齢の高い順。いつまで在籍できるかの見通しが、将来の人数に大きく影響します。`,
+    rows:byAge(ppl.filter((p)=>p.stage==="s5" && p.age!==null && p.age>=60),true), cols:["k1"]});
+  return {roster, nextP, reg, ppl, lists};
 }
-const TL_COLS={ho:["技士補の取得日",(p)=>fmtYmdSlash(p.hoSday)||"不明"], exp:["技士補からの年数",(p)=>p.exp===null?"不明":p.exp+"年"],
+const TL_COLS={ho:["技士補の取得日",(p)=>p.hasHo?(fmtYmdSlash(p.hoSday)||"不明"):"技士補なし"], exp:["技士補からの年数",(p)=>p.exp===null?"不明":p.exp+"年"],
+  prev:["前の期も資格あり",(p)=>p.nijiPrev?"○":""], note:["備考",(p)=>p.stage==="s5"?"すでに1級を保有":!p.hasHo?"技士補なし（経過措置などで登録）":""],
+  now:["現在の段階",(p)=>(STAGE_BY_KEY[p.stage]||{}).label||""],
   has2:["2級",(p)=>p.has2?"2級あり":""], k1:["1級の取得日",(p)=>fmtYmdSlash(p.k1Sday)||"不明"]};
 function renderTargets(){
   if(!S2.rosters.length){
@@ -1851,17 +1879,92 @@ function renderTargets(){
   const {roster, lists}=targetLists(), o=S2.now;
   let h=`<div class="now-filters">
     <div class="grp"><b>基準</b><select data-now="period">${S2.rosters.map((x)=>`<option value="${x.period}"${x.period===o.period?" selected":""}>${x.period}期末（${fmtYmdSlash(x.baseDate)}）</option>`).join("")}</select></div>
-    <div class="grp"><b>二次受検に必要な実務経験</b><select data-now="exp"><option value="5"${o.exp===5?" selected":""}>5年</option><option value="3"${o.exp===3?" selected":""}>3年（特定実務経験）</option></select></div>
-    <span class="muted">年齢・段階は ${roster.period}期末（${fmtYmdSlash(roster.baseDate)}）時点。1級候補は「現状」画面の分類と、データ管理の個人指定に従います。</span>
+    <span class="muted">年齢・段階は ${roster.period}期末（${fmtYmdSlash(roster.baseDate)}）時点。二次受検資格は ${roster.period+1}期の登録に従います。1級候補は「現状」画面の分類と、データ管理の個人指定に従います。</span>
     <span class="spacer"></span><button class="btn primary" id="tlXlsx">Excelで出力</button></div>`;
+  h+=renderNijiCard(roster);
   lists.forEach((L)=>{
-    h+=`<div class="card"><h2>${esc(L.title)}：${L.rows.length}人</h2><p class="desc">${esc(L.why)}</p>`+
+    h+=`<div class="card"><h2>${esc(L.title)}：${L.rows.length}人${L.est?' <span class="pill warn">目安</span>':""}</h2><p class="desc">${esc(L.why)}</p>`+
       (L.rows.length ? `<table class="grid-tbl"><tr><th>社員番号</th><th>氏名</th><th>年齢</th><th>分類</th><th>所属</th>${L.cols.map((c)=>`<th>${TL_COLS[c][0]}</th>`).join("")}</tr>`+
         L.rows.map((p)=>`<tr><td>${esc(p.no)}</td><td>${esc(p.name)}${p.ov==="in"?' <span class="pill warn" title="個人指定で1級候補に含めた人">指定</span>':""}</td><td class="n">${p.age??"–"}</td><td>${esc(clsLabel(p.cls))}</td><td>${esc(p.dept)}</td>${L.cols.map((c)=>`<td>${esc(TL_COLS[c][1](p))}</td>`).join("")}</tr>`).join("")+`</table>`
       : `<p class="muted">該当する人はいません。</p>`)+`</div>`;
   });
   return h;
 }
+/* ---- 二次受検資格者の登録（別のシステムで算出した人を選ぶ） ---- */
+function renderNijiCard(roster){
+  const P=roster.period+1, saved=S2.niji.periods[String(P)], n=S2.niji;
+  let h=`<div class="card"><h2>二次受検資格者の登録（${P}期に受検できる人）</h2>
+    <p class="desc">二次検定の受検資格（実務経験の年数・特定実務経験・監理技術者補佐・経過措置など）は別のシステムで算出し、その結果をここで登録します。
+    登録した人が「二次受検資格あり」として、現状・シミュレーション・この画面の一覧に使われます。<br>
+    ${saved ? `いまの登録：<b>${saved.engcds.length}人</b><span class="muted">（最終更新 ${new Date(saved.updatedAt).toLocaleString("ja-JP")} ${esc(saved.updatedBy||"")}）</span>` : `<span class="pill warn">${P}期はまだ登録されていません</span>`}</p>`;
+  if(!canEdit) return h+`<p class="muted">登録は編集権限のある人のみ行えます。</p></div>`;
+  const draftOn = n.draft && n.draft.period===P;
+  if(!draftOn) return h+`<button class="btn primary" id="nijiEdit">${saved?"登録を変更する":"登録する"}</button></div>`;
+  const sel=n.draft.set;
+  // 候補：1級を持っていない、1級候補（分類・個人指定）または選択済みの人
+  let ppl=computeNow(roster,S2.now).filter((p)=>p.engcd && p.stage!=="s5" && (p.stage!=="out" || sel.has(p.engcd)));
+  if(n.onlyHo) ppl=ppl.filter((p)=>p.hasHo || sel.has(p.engcd));
+  if(n.q) ppl=ppl.filter((p)=>(p.name+p.no).replace(/[\s　]/g,"").includes(n.q.replace(/[\s　]/g,"")));
+  if(n.onlySel) ppl=ppl.filter((p)=>sel.has(p.engcd));
+  ppl.sort((a,b)=> ((b.exp??-1)-(a.exp??-1)) || String(a.no).localeCompare(String(b.no),"ja",{numeric:true})); // 並びはチェックしても動かない
+  h+=`<div class="note-box" style="margin:0 0 10px">
+      <b>別のシステムの結果を貼り付けて選択</b>：社員番号を改行・カンマ・空白で区切って貼り付けてください（現在・過去の社員番号、技術者コードのどれでも可）。<br>
+      <textarea id="nijiPaste" rows="3" style="width:100%;max-width:640px;margin-top:6px;font-family:var(--mono,monospace)">${esc(n.paste)}</textarea><br>
+      <button class="btn" id="nijiPasteReplace">この番号の人だけを選択（置き換え）</button>
+      <button class="btn" id="nijiPasteAdd">今の選択に追加</button>
+      ${n.pasteMsg?`<div style="margin-top:6px">${n.pasteMsg}</div>`:""}</div>
+    <div class="imp-row"><b>選択中：${sel.size}人</b>
+      <label><input type="checkbox" data-niji-chk="onlyHo"${n.onlyHo?" checked":""}> 1級技士補を持っている人だけ表示</label>
+      <label><input type="checkbox" data-niji-chk="onlySel"${n.onlySel?" checked":""}> 選択中の人だけ表示</label>
+      <input type="search" data-niji="q" value="${esc(n.q)}" placeholder="氏名・社員番号" style="padding:5px 8px;border:1px solid var(--line);border-radius:6px">
+      <button class="btn" id="nijiClear">選択をすべて外す</button></div>
+    <div id="nijiList" data-keep-scroll style="max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:8px">
+    <table class="grid-tbl" style="width:100%"><tr><th></th><th>社員番号</th><th>氏名</th><th>年齢</th><th>分類</th><th>技士補の取得日</th><th>技士補からの年数（参考）</th><th>前の期も資格あり</th></tr>`+
+    ppl.map((p)=>`<tr><td class="c"><input type="checkbox" data-niji-pick="${esc(p.engcd)}"${sel.has(p.engcd)?" checked":""}></td><td>${esc(p.no)}</td><td>${esc(p.name)}</td><td class="n">${p.age??"–"}</td><td>${esc(clsLabel(p.cls))}</td>
+      <td>${p.hasHo?(fmtYmdSlash(p.hoSday)||"不明"):'<span class="muted">技士補なし</span>'}</td><td class="n">${p.exp===null?"–":p.exp+"年"}</td><td class="c">${p.nijiPrev?"○":""}</td></tr>`).join("")+
+    `</table></div>
+    <p class="desc" style="margin-top:6px">表示は技士補からの年数が長い順です（チェックしても並びは変わりません）。技士補を持っていない人（2級合格者のルートや経過措置の人など）を登録する場合は「1級技士補を持っている人だけ表示」を外してください。</p>
+    <div class="imp-row"><button class="btn primary" id="nijiSave">${P}期の受検資格者として保存（${sel.size}人）</button><button class="btn" id="nijiCancel">取り消す</button></div></div>`;
+  return h;
+}
+// 貼り付けた番号 → 技術者コード
+function nijiPasteResolve(text, roster){
+  const nos=String(text||"").split(/[\s,、，]+/).map((x)=>x.trim()).filter(Boolean);
+  const found=new Set(), miss=[];
+  nos.forEach((no)=>{
+    const r=roster.rows.find((x)=>normCode(x.no)===normCode(no));
+    const engcd= r ? resolveEngcd(r) : ((EMPLOYEES.find((e)=>empHasNo(e,no))||{}).ENGCD||"");
+    if(engcd) found.add(String(engcd)); else miss.push(no);
+  });
+  return {found, miss, total:nos.length};
+}
+structEl.addEventListener("click", async (e)=>{
+  const n=S2.niji, id=e.target.id; if(!id || !id.startsWith("niji")) return;
+  const roster=S2.rosters.find((x)=>x.period===S2.now.period) || S2.rosters[S2.rosters.length-1];
+  const P=roster.period+1;
+  if(id==="nijiEdit"){ const sv=S2.niji.periods[String(P)]; n.draft={period:P, set:new Set(sv?sv.engcds.map(String):[])}; n.pasteMsg=""; renderStruct(); return; }
+  if(id==="nijiCancel"){ n.draft=null; n.pasteMsg=""; renderStruct(); return; }
+  if(id==="nijiClear"){ n.draft.set=new Set(); renderStruct(); return; }
+  if(id==="nijiPasteReplace" || id==="nijiPasteAdd"){
+    n.paste=document.getElementById("nijiPaste").value;
+    const r=nijiPasteResolve(n.paste, roster);
+    if(id==="nijiPasteReplace") n.draft.set=new Set(r.found); else r.found.forEach((x)=>n.draft.set.add(x));
+    n.pasteMsg=`${r.total}件のうち <b>${r.found.size}人</b> を選択しました。`+(r.miss.length?` <span class="err-msg">見つからなかった番号：${r.miss.map(esc).join("、")}</span>`:"");
+    renderStruct(); return;
+  }
+  if(id==="nijiSave"){
+    const periods={...S2.niji.periods, [String(P)]:{engcds:[...n.draft.set], updatedAt:Date.now(), updatedBy:(auth.currentUser&&auth.currentUser.email)||""}};
+    try{ await setDoc(doc(db,"meta",NIJI_DOC), {periods}); S2.niji.periods=periods; n.draft=null; n.paste=""; n.pasteMsg=""; S2.sim=null; }
+    catch(err){ S2.msg="二次受検資格者を保存できませんでした（"+(err.code||err.message)+"）"; }
+    renderStruct();
+  }
+});
+structEl.addEventListener("change",(e)=>{
+  const t=e.target, n=S2.niji;
+  if(t.dataset.nijiPick!==undefined && n.draft){ if(t.checked) n.draft.set.add(t.dataset.nijiPick); else n.draft.set.delete(t.dataset.nijiPick); renderStruct(); }
+  else if(t.dataset.nijiChk){ n[t.dataset.nijiChk]=t.checked; renderStruct(); }
+  else if(t.dataset.niji){ n[t.dataset.niji]=t.value; renderStruct(); }
+});
 structEl.addEventListener("click",(e)=>{
   if(e.target.id!=="tlXlsx") return;
   const {roster, lists}=targetLists();
