@@ -555,6 +555,12 @@ function buildRows(data){
       if(col.info){ const v=col.info(info); if(v) vals.push(v); }
       row[col.key]=combine(vals, col.pick);
     });
+    // 土木施工管理技士の上位資格を優先して表示する（下位の○は消す）
+    //  ・1級土木があれば、1級技士補・2級土木・2級技士補は表示しない
+    //  ・2級土木があれば、2級技士補は表示しない
+    //  ・1級技士補と2級土木、1級技士補と2級技士補は両方表示する
+    if(row.doboku1){ row.doboku1ho=""; row.doboku2=""; row.doboku2ho=""; }
+    else if(row.doboku2){ row.doboku2ho=""; }
     if(!row.retired) names.forEach((raw)=>{ if(!hit.has(raw)) unmatched[raw]=(unmatched[raw]||0)+1; });
     return row;
   });
