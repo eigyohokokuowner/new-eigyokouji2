@@ -1199,7 +1199,22 @@ function renderNow(){
   const maxL=Math.max(1,...keys.map((b)=>(bands.get(b)||[]).filter((p)=>p.stage==="s5").length));
   const maxR=Math.max(1,...keys.map((b)=>(bands.get(b)||[]).filter((p)=>p.stage!=="s5").length));
   const scale=Math.max(maxL,maxR);
-  let pyr=`<div class="pyr"><div class="hd l">1級技術者</div><div class="hd" style="text-align:center">年齢</div><div class="hd r">それ以外（段階別）</div>`;
+  const view=o.view||"split";
+  let pyr;
+  if(view==="total"){
+    // 全体（合算）：1つの棒に全段階を積み上げる。1級を年齢の軸側に置き、外側ほど1級から遠い段階。
+    const order=["s5","s4","s3","s2","s1","out"];
+    const maxT=Math.max(1,...keys.map((b)=>(bands.get(b)||[]).length));
+    pyr=`<div class="pyr" style="grid-template-columns:64px 1fr"><div class="hd" style="text-align:center">年齢</div><div class="hd r">全社員（段階別）</div>`;
+    keys.forEach((b)=>{
+      const list=bands.get(b)||[], n1=list.filter((p)=>p.stage==="s5").length;
+      pyr+=`<div class="age">${bandLabel(b,w)}</div>
+        <div class="side r"><div class="pbar" style="width:${(list.length/maxT*100).toFixed(2)}%">${order.map((k)=>{ const n=list.filter((p)=>p.stage===k).length; return n?`<span class="seg" style="flex:${n};background:${STAGE_BY_KEY[k].color}" data-tip-band="${b}" data-tip-stage="${k}"></span>`:""; }).join("")}</div><span class="num">${list.length||""}${n1?`（1級 ${n1}）`:""}</span></div>`;
+      if(b===60) pyr+=`<div class="line"><span>↑ 60歳（定年）以上</span></div>`;
+    });
+    pyr+=`</div>`;
+  } else {
+  pyr=`<div class="pyr"><div class="hd l">1級技術者</div><div class="hd" style="text-align:center">年齢</div><div class="hd r">それ以外（段階別）</div>`;
   keys.forEach((b)=>{
     const list=bands.get(b)||[];
     const nL=list.filter((p)=>p.stage==="s5").length;
@@ -1210,9 +1225,11 @@ function renderNow(){
     if((w===5 && b===60) || (w===1 && b===60)) pyr+=`<div class="line"><span>↑ 60歳（定年）以上</span></div>`;
   });
   pyr+=`</div>`;
+  }
   const noAge=ppl.filter((p)=>p.age===null).length;
-  h+=`<div class="card"><h2>年齢構成図（${roster.period}期末・${fmtYmdSlash(roster.baseDate)}時点の年齢）</h2>
-    <p class="desc">左が1級技術者、右がそれ以外の社員です。右側は1級に近い段階ほど中央寄り・濃い色です。棒にマウスを乗せると氏名が出ます。${noAge?`年齢が分からない${noAge}人（生年月日の未登録 ${ppl.filter((p)=>p.noBday&&!p.unmatched).length}人・社員データと紐付いていない ${ppl.filter((p)=>p.unmatched).length}人）は図に含めていません（下の「データの確認」参照）。`:""}</p>
+  h+=`<div class="card"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px"><h2 style="margin:0">年齢構成図（${roster.period}期末・${fmtYmdSlash(roster.baseDate)}時点の年齢）</h2>
+      <div class="tabsw" role="group" aria-label="年齢構成図の表示"><button data-pyr-view="split" class="${view==="split"?"on":""}">1級｜それ以外</button><button data-pyr-view="total" class="${view==="total"?"on":""}">全体（合算）</button></div></div>
+    <p class="desc">${view==="total" ? `全社員を年齢層ごとに1本の棒で表示しています（${ppl.filter((p)=>p.age!==null).length}人）。棒の左端（年齢の軸側）から1級技術者・1級に近い段階の順に並べ、右端の数字は合計と、うち1級の人数です。` : `左が1級技術者、右がそれ以外の社員です。右側は1級に近い段階ほど中央寄り・濃い色です。`}棒にマウスを乗せると氏名が出ます。${noAge?`年齢が分からない${noAge}人（生年月日の未登録 ${ppl.filter((p)=>p.noBday&&!p.unmatched).length}人・社員データと紐付いていない ${ppl.filter((p)=>p.unmatched).length}人）は図に含めていません（下の「データの確認」参照）。`:""}</p>
     <div class="legend">${STAGES.map((x)=>`<span><i style="background:${x.color}"></i>${x.label}</span>`).join("")}</div>
     ${pyr}</div>`;
 
@@ -1740,6 +1757,12 @@ structEl.addEventListener("mousemove",(e)=>{
   vizTip.style.display="block";
   vizTip.style.left=Math.min(e.clientX+14, window.innerWidth-vizTip.offsetWidth-8)+"px";
   vizTip.style.top=Math.min(e.clientY+14, window.innerHeight-vizTip.offsetHeight-8)+"px";
+});
+
+/* ---- 年齢構成図の表示切り替え（1級｜それ以外 ／ 全体） ---- */
+structEl.addEventListener("click",(e)=>{
+  const b=e.target.closest("[data-pyr-view]"); if(!b) return;
+  S2.now.view=b.dataset.pyrView; renderStruct();
 });
 
 /* ---- 年齢構成図のツールチップ（区分・段階・人数・氏名） ---- */
