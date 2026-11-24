@@ -1790,6 +1790,14 @@ structEl.addEventListener("change",(e)=>{
    分類だけでは決めきれない人（「その他」の技術系の若手など）を、1人ずつ「含める／含めない」に指定する。
    指定は技術者コードごとに Firestore meta/shikakuCandidates に保存し、現状・シミュレーション・対象者リストに反映する。
    ===================================================================== */
+// 所属の表示：部署＋役職（どちらも空なら「新規社員を登録」の所属欄 COMPCD）
+function empDeptText(e){
+  if(!e) return "";
+  const t=[e.DEPT,e.POSITION].map((x)=>String(x||"").trim()).filter(Boolean).join(" ");
+  if(t) return t;
+  const c=String(e.COMPCD||"").trim();
+  return /^\d+$/.test(c) ? "" : c;
+}
 function candPeople(){
   const roster=S2.rosters[S2.rosters.length-1]; if(!roster) return [];
   const d=periodEnd(roster.period);
@@ -1798,7 +1806,7 @@ function candPeople(){
     const info=INFO_BY_ENGCD[engcd]||{}, lics=HELD_BY_ENGCD[engcd]||[];
     const tags=[]; if(heldAt(lics,"doboku1",d)) tags.push("1級"); if(heldAt(lics,"doboku1ho",d)) tags.push("1級技士補");
     if(heldAt(lics,"doboku2",d)) tags.push("2級"); if(lics.some((l)=>/土木施工管理技士補/.test(N(l.name)) && gradeOf(N(l.name))===2)) tags.push("2級技士補");
-    return {engcd, no:r.no, name:r.name, cls:r.cls||"", age:yearsBetween(String(info.BDAY||"").replace(/[^\d]/g,""), d), tags,
+    return {engcd, no:r.no, name:r.name, cls:r.cls||"", dept:empDeptText(empByEngcd(engcd)), age:yearsBetween(String(info.BDAY||"").replace(/[^\d]/g,""), d), tags,
       auto: !!S2.now.cls[r.cls||""]};
   }).filter(Boolean);
 }
@@ -1817,16 +1825,16 @@ function renderCandCard(){
   if(c.filterCls!=="all") ppl=ppl.filter((p)=>p.cls===c.filterCls || (c.filterCls==="指定済み" && ov[p.engcd]));
   if(c.filterCls==="指定済み") ppl=candPeople().filter((p)=>ov[p.engcd]);
   if(c.onlyCivil) ppl=ppl.filter((p)=>p.tags.length || ov[p.engcd]);
-  if(c.q) ppl=ppl.filter((p)=>(p.name+p.no).replace(/[\s　]/g,"").includes(c.q.replace(/[\s　]/g,"")));
+  if(c.q) ppl=ppl.filter((p)=>(p.name+p.no+p.dept).replace(/[\s　]/g,"").includes(c.q.replace(/[\s　]/g,"")));
   ppl.sort((a,b)=>(a.age??999)-(b.age??999));
   h+=`<div class="imp-row">
       <select data-cand="filterCls">${[["その他","分類：その他"],["イロハ","分類：イロハ"],["事務","分類：事務"],["","分類：（空欄）"],["all","すべての分類"],["指定済み","指定済みの人だけ"]].map(([v,l])=>`<option value="${esc(v)}"${c.filterCls===v?" selected":""}>${l}</option>`).join("")}</select>
       <label><input type="checkbox" data-cand-chk="onlyCivil"${c.onlyCivil?" checked":""}> 土木系の資格（1級・技士補・2級）がある人だけ</label>
-      <input type="search" data-cand="q" value="${esc(c.q)}" placeholder="氏名・社員番号" style="padding:5px 8px;border:1px solid var(--line);border-radius:6px">
+      <input type="search" data-cand="q" value="${esc(c.q)}" placeholder="氏名・社員番号・所属" style="padding:5px 8px;border:1px solid var(--line);border-radius:6px">
       <span class="muted">${ppl.length}人を表示（年齢の若い順）</span></div>
-    <table class="grid-tbl"><tr><th>社員番号</th><th>氏名</th><th>分類</th><th>年齢</th><th>土木系の資格</th><th>分類による判定</th><th>個人指定</th></tr>`+
+    <table class="grid-tbl"><tr><th>社員番号</th><th>氏名</th><th>所属</th><th>分類</th><th>年齢</th><th>土木系の資格</th><th>分類による判定</th><th>個人指定</th></tr>`+
     ppl.map((p)=>{ const v=ov[p.engcd]||"";
-      return `<tr><td>${esc(p.no)}</td><td>${esc(p.name)}</td><td>${esc(clsLabel(p.cls))}</td><td class="n">${p.age??"–"}</td>
+      return `<tr><td>${esc(p.no)}</td><td>${esc(p.name)}</td><td>${esc(p.dept)||'<span class="muted">–</span>'}</td><td>${esc(clsLabel(p.cls))}</td><td class="n">${p.age??"–"}</td>
         <td>${p.tags.map((t)=>`<span class="pill ${t==="1級"?"ok":"warn"}">${t}</span>`).join(" ")||'<span class="muted">–</span>'}</td>
         <td>${p.tags.includes("1級")?"1級技術者":p.auto?"含める":"含めない"}</td>
         <td><select data-cand-ov="${esc(p.engcd)}"><option value="">分類のとおり</option><option value="in"${v==="in"?" selected":""}>含める</option><option value="out"${v==="out"?" selected":""}>含めない</option></select></td></tr>`; }).join("")+
