@@ -1081,13 +1081,13 @@ function renderDiffCard(){
    ・技術者＝1級土木施工管理技士。取得日が不明な資格は「その時点で保有」とみなす。
    ・1級を持っていない人は、対象の分類（初期値：イロハ）の人だけ段階に分け、それ以外は「対象外」。
    ===================================================================== */
-const STAGES=[ // 色は1色の濃淡（受検前＝薄い → 1級＝濃い）。dataviz の ordinal 検証済み
-  {k:"s5", label:"1級技術者",              color:"#104281"},
-  {k:"s4", label:"二次受検資格あり", color:"#1c5cab"},
-  {k:"s3", label:"技士補・実務経験中",      color:"#2a78d6"},
-  {k:"s2", label:"一次受検可能（19歳以上）", color:"#5598e7"},
-  {k:"s1", label:"受検前（19歳未満）",       color:"#86b6ef"},
-  {k:"out",label:"対象外の分類",            color:"#d4d3cd"},
+const STAGES=[ // 段階ごとに色相を変えて、ひと目で区別できるようにする（dataviz の検証済み：隣どうしの色覚差OK）
+  {k:"s5", label:"1級技術者",              color:"#2a78d6"}, // 青
+  {k:"s4", label:"二次受検資格あり",        color:"#eb6834"}, // オレンジ
+  {k:"s3", label:"技士補・実務経験中",      color:"#1baf7a"}, // 緑
+  {k:"s2", label:"一次受検可能（19歳以上）", color:"#eda100"}, // 黄
+  {k:"s1", label:"受検前（19歳未満）",       color:"#e87ba4"}, // ピンク
+  {k:"out",label:"対象外の分類",            color:"#d4d3cd"}, // 灰
 ];
 const STAGE_BY_KEY=Object.fromEntries(STAGES.map((x)=>[x.k,x]));
 const qualCol=(key)=> QUAL_COLUMNS.find((c)=>c.key===key);
@@ -1229,7 +1229,7 @@ function renderNow(){
   const noAge=ppl.filter((p)=>p.age===null).length;
   h+=`<div class="card"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px"><h2 style="margin:0">年齢構成図（${roster.period}期末・${fmtYmdSlash(roster.baseDate)}時点の年齢）</h2>
       <div class="tabsw" role="group" aria-label="年齢構成図の表示"><button data-pyr-view="split" class="${view==="split"?"on":""}">1級｜それ以外</button><button data-pyr-view="total" class="${view==="total"?"on":""}">全体（合算）</button></div></div>
-    <p class="desc">${view==="total" ? `全社員を年齢層ごとに1本の棒で表示しています（${ppl.filter((p)=>p.age!==null).length}人）。棒の左端（年齢の軸側）から1級技術者・1級に近い段階の順に並べ、右端の数字は合計と、うち1級の人数です。` : `左が1級技術者、右がそれ以外の社員です。右側は1級に近い段階ほど中央寄り・濃い色です。`}棒にマウスを乗せると氏名が出ます。${noAge?`年齢が分からない${noAge}人（生年月日の未登録 ${ppl.filter((p)=>p.noBday&&!p.unmatched).length}人・社員データと紐付いていない ${ppl.filter((p)=>p.unmatched).length}人）は図に含めていません（下の「データの確認」参照）。`:""}</p>
+    <p class="desc">${view==="total" ? `全社員を年齢層ごとに1本の棒で表示しています（${ppl.filter((p)=>p.age!==null).length}人）。棒の左端（年齢の軸側）から1級技術者・1級に近い段階の順に並べ、右端の数字は合計と、うち1級の人数です。` : `左が1級技術者、右がそれ以外の社員です。右側は1級に近い段階ほど中央（年齢の軸）寄りに並べています。`}棒にマウスを乗せると氏名が出ます。${noAge?`年齢が分からない${noAge}人（生年月日の未登録 ${ppl.filter((p)=>p.noBday&&!p.unmatched).length}人・社員データと紐付いていない ${ppl.filter((p)=>p.unmatched).length}人）は図に含めていません（下の「データの確認」参照）。`:""}</p>
     <div class="legend">${STAGES.map((x)=>`<span><i style="background:${x.color}"></i>${x.label}</span>`).join("")}</div>
     ${pyr}</div>`;
 
@@ -1727,9 +1727,9 @@ function renderRetention(stats){
   const rows=[]; for(let a=55;a<=Math.max(75,maxAge);a++){ const g=ages.filter((p)=>p.age===a); rows.push({a, n:g.length, n1:g.filter((p)=>p.k1).length}); }
   const mx=Math.max(1,...rows.map((r)=>r.n));
   h+=`<h3 style="font-size:13px;margin:16px 0 4px">② ${last.period}期末の在籍者（55歳以上）の年齢分布</h3>
-    <div class="legend"><span><i style="background:#104281"></i>1級技術者</span><span><i style="background:#d4d3cd"></i>それ以外</span></div>
+    <div class="legend"><span><i style="background:${STAGE_BY_KEY.s5.color}"></i>1級技術者</span><span><i style="background:#d4d3cd"></i>それ以外</span></div>
     <div class="pyr" style="grid-template-columns:52px 1fr;max-width:620px">`+
-    rows.map((r)=>`<div class="age">${r.a}歳</div><div class="side r"><div class="pbar" style="width:${(r.n/mx*100).toFixed(2)}%">${r.n1?`<span class="seg" style="flex:${r.n1};background:#104281"></span>`:""}${r.n-r.n1?`<span class="seg" style="flex:${r.n-r.n1};background:#d4d3cd"></span>`:""}</div><span class="num">${r.n||""}${r.n1?`（1級 ${r.n1}）`:""}</span></div>`
+    rows.map((r)=>`<div class="age">${r.a}歳</div><div class="side r"><div class="pbar" style="width:${(r.n/mx*100).toFixed(2)}%">${r.n1?`<span class="seg" style="flex:${r.n1};background:${STAGE_BY_KEY.s5.color}"></span>`:""}${r.n-r.n1?`<span class="seg" style="flex:${r.n-r.n1};background:#d4d3cd"></span>`:""}</div><span class="num">${r.n||""}${r.n1?`（1級 ${r.n1}）`:""}</span></div>`
       +(r.a===59?`<div class="line"><span>↓ 60歳（定年）以上</span></div>`:"")).join("")+`</div>`;
 
   // ③ 退職者の退職時の年齢（社員データの退職日・生年月日から）
