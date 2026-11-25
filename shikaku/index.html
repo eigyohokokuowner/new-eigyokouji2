@@ -961,20 +961,63 @@ async function parseRosterFile(file){
 }
 
 /* ---- 社員データとの照合：①番号（技術者コード・現在/過去の社員番号）→ ②氏名 ---- */
+// 番号で一致した社員の氏名が、名簿の氏名と同じ人か（旧姓・新姓で姓だけ違う場合も同じ人とみなす）
+function sameNameAs(e, row){
+  const a=normPersonName(row.name), b=normPersonName(e.ID_NAME);
+  if(!a || a===b) return true;
+  const parts=(n)=> String(n||"").normalize("NFKC").trim().split(/[\s\u3000]+/).map(normPersonName);
+  const [rs,rg]=parts(row.name), [es,eg]=parts(e.ID_NAME);
+  const others=[e.NAME_CHANGE,e.OLD_NAME,e.NEW_NAME].map(normPersonName).filter(Boolean);
+  return !!rg && rg===eg && (others.includes(rs) || rs===es);
+}
+// 照合用の索引（番号→社員、氏名→社員）と、行ごとの照合結果のキャッシュ。社員データを読み直すと作り直す。
+let EMP_IDX=null, EMP_IDX_SRC=null;
+function empIdx(){
+  if(EMP_IDX && EMP_IDX_SRC===EMPLOYEES) return EMP_IDX;
+  const byNo=new Map(), byName=new Map(), push=(m,k,e)=>{ if(!k) return; const a=m.get(k); if(a) a.push(e); else m.set(k,[e]); };
+  EMPLOYEES.forEach((e)=>{ allEmpNos(e).forEach((n)=>push(byNo,normCode(n),e)); push(byName,normPersonName(e.ID_NAME),e); });
+  EMP_IDX={byNo, byName, cache:new WeakMap()}; EMP_IDX_SRC=EMPLOYEES;
+  return EMP_IDX;
+}
 function matchRosterRow(row){
-  const byNo=EMPLOYEES.filter((e)=>empHasNo(e,row.no));
-  if(byNo.length===1) return {engcd:String(byNo[0].ENGCD), how:"番号"};
+  const idx=empIdx(), hit=idx.cache.get(row);
+  if(hit) return hit;
+  const res=matchRosterRowCalc(row, idx);
+  idx.cache.set(row,res);
+  return res;
+}
+function matchRosterRowCalc(row, idx){
+  // skipNo：「別の人」と確認した行（昔の番号が別の人に使い回されている）は、番号では照合せず氏名だけで照合する
+  const byNo=row.skipNo ? [] : (idx.byNo.get(normCode(row.no))||[]);
+  // 番号が一致しても氏名が違う場合は「番号・氏名違い」（昔の番号が別の人に使い回されていないか要確認）
+  const byNoResult=(e)=>({engcd:String(e.ENGCD), how: sameNameAs(e,row) ? "番号" : "番号・氏名違い"});
+  if(byNo.length===1) return byNoResult(byNo[0]);
   if(byNo.length>1){
     const exact=byNo.find((e)=>normCode(e.ENGCD)===normCode(row.no));
-    if(exact) return {engcd:String(exact.ENGCD), how:"番号"};
+    if(exact) return byNoResult(exact);
   }
   const key=normPersonName(row.name);
-  const byName=key ? EMPLOYEES.filter((e)=>normPersonName(e.ID_NAME)===key) : [];
+  const byName=key ? (idx.byName.get(key)||[]) : [];
   if(byName.length===1) return {engcd:String(byName[0].ENGCD), how:"氏名"};
   if(byName.length>1) return {engcd:"", how:"同姓同名"};
   return {engcd:"", how:"なし"};
 }
 const empByEngcd=(c)=> EMPLOYEES.find((e)=>String(e.ENGCD)===String(c));
+/* ---- 分類なしの期（在籍リストに分類の列が無い期）：分類は後の期から補う ----
+   同じ人が後の期（分類がある期）にいれば、一番近い後の期の分類を使う。後の期にいない人は「不明」＝1級候補に含める扱い。 */
+let CLSFILL_CACHE=null; // 1回の画面表示の間だけ使う索引（renderStruct の先頭で作り直す）
+function clsFillIndex(){
+  if(CLSFILL_CACHE) return CLSFILL_CACHE;
+  CLSFILL_CACHE=S2.rosters.filter((x)=>!x.noCls).map((x)=>{ const m=new Map(); x.rows.forEach((r)=>{ const e=resolveEngcd(r); if(e) m.set(e, r.cls||""); }); return {period:x.period, m}; });
+  return CLSFILL_CACHE;
+}
+// 戻り値 {cls, fill}：fill＝""（その期の分類）／"later"（後の期から補った）／"unknown"（補えない＝cls は null）
+function effCls(r, roster, engcd){
+  if(!roster.noCls) return {cls:r.cls||"", fill:""};
+  if(engcd) for(const x of clsFillIndex()) if(x.period>roster.period && x.m.has(engcd)) return {cls:x.m.get(engcd), fill:"later"};
+  return {cls:null, fill:"unknown"};
+}
+const clsShow=(p)=> p.clsFill==="unknown" ? "不明（分類なしの期）" : p.clsFill==="later" ? clsLabel(p.cls)+"＊" : clsLabel(p.cls);
 const empLabel=(e)=> e ? `${e.ID_NAME||""}（社員番号 ${currentEmpNo(e)}${normCode(currentEmpNo(e))!==normCode(e.ENGCD)?"／技術者 "+e.ENGCD:""}${e.STATUS==="retired"?"・退職":""}）` : "";
 
 /* ---- 期どうしの比較（同じ人＝紐付けた技術者コード、無ければ社員番号で判定） ---- */
@@ -995,6 +1038,7 @@ const clsCounts=(rows)=>{ const c={}; rows.forEach((r)=>{ c[r.cls||""]=(c[r.cls|
 
 /* ---- 画面 ---- */
 function renderStruct(){
+  CLSFILL_CACHE=null;
   const subs=[["now","現状"],["trend","推移・再雇用"],["sim","シミュレーション"],["target","対象者リスト"],["data","データ管理"]];
   const ready=new Set(["now","trend","sim","target","data"]);
   let h=`<div class="subnav">`+subs.map(([k,l])=>
@@ -1010,7 +1054,7 @@ function renderStruct(){
   else if(S2.sub==="trend") h+=renderTrend();
   else if(S2.sub==="sim") h+=renderSim();
   else if(S2.sub==="target") h+=renderTargets();
-  else h+=renderImportCard()+renderRosterListCard()+renderCandCard()+renderDiffCard();
+  else h+=renderImportCard()+renderRosterListCard()+renderUnmatchedCard()+renderCandCard()+renderDiffCard();
   // 再描画しても、一覧の中のスクロール位置が戻らないようにする
   const keep={}; structEl.querySelectorAll("[data-keep-scroll][id]").forEach((el)=>{ keep[el.id]=el.scrollTop; });
   structEl.innerHTML=h;
@@ -1032,21 +1076,22 @@ function renderImportCard(){
       <div class="imp-row">対象の期：<input type="number" id="impPeriod" value="${imp.period}" min="1" max="200"> 期末
         <span class="muted">＝ 基準日 ${fmtYmdSlash(periodEnd(imp.period))}</span>
         ${exists?`<span class="pill warn">この期は登録済み（保存すると置き換えます）</span>`:""}</div>
-      <table class="grid-tbl" style="margin:8px 0"><tr><th>人数</th>${CLS_ORDER.map((c)=>`<th>${clsLabel(c)}</th>`).join("")}</tr>
-        <tr><td class="n">${rows.length}</td>${CLS_ORDER.map((c)=>`<td class="n">${cc[c]||0}</td>`).join("")}</tr></table>
-      ${imp.hasCls?"":`<p class="err-msg">「分類」の列が見つかりません（分類は空欄として保存されます）。</p>`}
+      <table class="grid-tbl" style="margin:8px 0"><tr><th>人数</th>${imp.hasCls?CLS_ORDER.map((c)=>`<th>${clsLabel(c)}</th>`).join(""):"<th>分類</th>"}</tr>
+        <tr><td class="n">${rows.length}</td>${imp.hasCls?CLS_ORDER.map((c)=>`<td class="n">${cc[c]||0}</td>`).join(""):"<td>なし</td>"}</tr></table>
+      ${imp.hasCls?"":`<div class="note-box">「分類」の列が無いため、<b>分類なしの期</b>として取り込みます。分類は、同じ人がいる後の期（分類がある期）から補います。後の期にいない人は、個人指定が無ければ1級候補に含めます。在籍率・離職率、再雇用、資格保有の数の推移には、そのまま使います。</div>`}
       <div class="imp-row">社員データとの照合：
         <span class="pill ok">番号で一致 ${nNo}</span>
         <span class="pill warn">氏名で一致 ${nName}</span>
+        ${rows.filter((r)=>r.how==="番号・氏名違い").length?`<span class="pill warn">番号は一致・氏名が違う ${rows.filter((r)=>r.how==="番号・氏名違い").length}</span>`:""}
         ${nManual?`<span class="pill ok">手動で指定 ${nManual}</span>`:""}
         <span class="pill ng">未照合 ${nNone}</span></div>`;
     const todo=rows.map((r,i)=>({r,i})).filter(({r})=>r.how!=="番号");
     if(todo.length){
       const opts=[...EMPLOYEES].sort((a,b)=>String(a.ID_NAME||"").localeCompare(String(b.ID_NAME||""),"ja"));
-      h+=`<p class="desc" style="margin-top:8px">番号で一致しなかった人です。「氏名で一致」は番号が違うので、同じ人か確認してください（役員昇格などで番号が変わった人は、工事実績システムで番号の履歴を登録すると、次回から番号で一致します）。社員データにいない人（期中の退職者など）は「紐付けない」のままで構いません。</p>
+      h+=`<p class="desc" style="margin-top:8px">番号で一致しなかった人と、番号は一致したが氏名が違う人です。「氏名で一致」「番号・氏名違い」は、同じ人か確認してください（別の人なら「紐付けない」を選んでください）（役員昇格などで番号が変わった人は、工事実績システムで番号の履歴を登録すると、次回から番号で一致します）。社員データにいない人（期中の退職者など）は「紐付けない」のままで構いません。</p>
         <table class="grid-tbl"><tr><th>社員番号</th><th>氏名</th><th>分類</th><th>照合</th><th>紐付ける社員</th></tr>`+
         todo.map(({r,i})=>`<tr><td>${esc(r.no)}</td><td>${esc(r.name)}</td><td>${esc(clsLabel(r.cls))}</td>
-          <td><span class="pill ${r.how==="氏名"?"warn":r.how==="手動"?"ok":"ng"}">${r.how==="なし"?"該当なし":r.how}</span></td>
+          <td><span class="pill ${r.how==="氏名"||r.how==="番号・氏名違い"?"warn":r.how==="手動"?"ok":"ng"}">${r.how==="なし"?"該当なし":r.how}</span></td>
           <td><select data-imp-row="${i}"><option value="">（紐付けない）</option>${opts.map((e)=>`<option value="${esc(e.ENGCD)}"${String(e.ENGCD)===String(r.engcd)?" selected":""}>${esc(empLabel(e))}</option>`).join("")}</select></td></tr>`).join("")+
         `</table>`;
     }
@@ -1059,10 +1104,12 @@ function renderImportCard(){
 function renderRosterListCard(){
   let h=`<div class="card"><h2>登録済みの期末名簿</h2>`;
   if(!S2.rosters.length) return h+`<p class="muted">まだ登録されていません。</p></div>`;
-  h+=`<table class="grid-tbl"><tr><th>期</th><th>基準日</th><th>人数</th>${CLS_ORDER.map((c)=>`<th>${clsLabel(c)}</th>`).join("")}<th>未照合</th><th>取り込み</th>${canEdit?"<th></th>":""}</tr>`+
-    S2.rosters.map((x)=>{ const cc=clsCounts(x.rows); const nn=x.rows.filter((r)=>!r.engcd).length; const d=x.importedAt?new Date(x.importedAt):null;
-      return `<tr><td class="c"><b>${x.period}期末</b></td><td>${fmtYmdSlash(x.baseDate)}</td><td class="n">${x.rows.length}</td>${CLS_ORDER.map((c)=>`<td class="n">${cc[c]||0}</td>`).join("")}
-        <td class="n">${nn?`<span class="pill ng">${nn}</span>`:0}</td>
+  h+=`<table class="grid-tbl"><tr><th>期</th><th>基準日</th><th>人数</th>${CLS_ORDER.map((c)=>`<th>${clsLabel(c)}</th>`).join("")}<th>未照合</th><th>要確認</th><th>取り込み</th>${canEdit?"<th></th>":""}</tr>`+
+    S2.rosters.map((x)=>{ const cc=clsCounts(x.rows); const d=x.importedAt?new Date(x.importedAt):null;
+      // 未照合・要確認は、いまの社員データで照合し直した結果（工事実績システムに退職者を登録すると減る）
+      const nn=x.rows.filter((r)=>!resolveEngcd(r)).length, nc=x.rows.filter((r)=>r.how!=="手動" && matchRosterRow(r).how==="番号・氏名違い").length;
+      return `<tr><td class="c"><b>${x.period}期末</b></td><td>${fmtYmdSlash(x.baseDate)}</td><td class="n">${x.rows.length}</td>${x.noCls?`<td colspan="${CLS_ORDER.length}" class="muted">分類なし（後の期から補完）</td>`:CLS_ORDER.map((c)=>`<td class="n">${cc[c]||0}</td>`).join("")}
+        <td class="n">${nn?`<span class="pill ng">${nn}</span>`:0}</td><td class="n">${nc?`<span class="pill warn">${nc}</span>`:0}</td>
         <td class="muted">${d?d.toLocaleDateString("ja-JP")+" ":""}${esc(x.importedBy||"")}<br>${esc(x.fileName||"")}</td>
         ${canEdit?`<td><button class="btn" data-del-period="${x.period}">削除</button></td>`:""}</tr>`; }).join("")+`</table></div>`;
   return h;
@@ -1075,16 +1122,17 @@ function renderDiffCard(){
     const prev=S2.rosters[i-1], cur=S2.rosters[i];
     const d=diffRosters(prev,cur);
     const pc=clsCounts(prev.rows), cc=clsCounts(cur.rows);
-    const line=(r)=>`${esc(r.no)} ${esc(r.name)}（${esc(clsLabel(r.cls))}）`;
+    const anyNoCls=prev.noCls||cur.noCls;
+    const line=(r)=>`${esc(r.no)} ${esc(r.name)}${anyNoCls&&!r.cls?"":`（${esc(clsLabel(r.cls))}）`}`;
     h+=`<h3 style="font-size:13px;margin:14px 0 6px">${prev.period}期末 → ${cur.period}期末</h3>
       <table class="grid-tbl"><tr><th></th><th>人数</th>${CLS_ORDER.map((c)=>`<th>${clsLabel(c)}</th>`).join("")}</tr>
-      <tr><td>${prev.period}期末</td><td class="n">${prev.rows.length}</td>${CLS_ORDER.map((c)=>`<td class="n">${pc[c]||0}</td>`).join("")}</tr>
-      <tr><td>${cur.period}期末</td><td class="n">${cur.rows.length}</td>${CLS_ORDER.map((c)=>`<td class="n">${cc[c]||0}</td>`).join("")}</tr>
-      <tr><td>増減</td>${[cur.rows.length-prev.rows.length, ...CLS_ORDER.map((c)=>(cc[c]||0)-(pc[c]||0))].map((v)=>`<td class="n">${v>0?"+":""}${v}</td>`).join("")}</tr></table>`;
+      <tr><td>${prev.period}期末</td><td class="n">${prev.rows.length}</td>${prev.noCls?`<td colspan="${CLS_ORDER.length}" class="muted">分類なし</td>`:CLS_ORDER.map((c)=>`<td class="n">${pc[c]||0}</td>`).join("")}</tr>
+      <tr><td>${cur.period}期末</td><td class="n">${cur.rows.length}</td>${cur.noCls?`<td colspan="${CLS_ORDER.length}" class="muted">分類なし</td>`:CLS_ORDER.map((c)=>`<td class="n">${cc[c]||0}</td>`).join("")}</tr>
+      <tr><td>増減</td><td class="n">${cur.rows.length-prev.rows.length>0?"+":""}${cur.rows.length-prev.rows.length}</td>${anyNoCls?`<td colspan="${CLS_ORDER.length}" class="muted">–</td>`:CLS_ORDER.map((c)=>(cc[c]||0)-(pc[c]||0)).map((v)=>`<td class="n">${v>0?"+":""}${v}</td>`).join("")}</tr></table>`;
     const sec=(title,items,fmt)=> `<details class="diff"><summary>${title}：${items.length}人</summary>${items.length?`<ul>${items.map(fmt).join("")}</ul>`:""}</details>`;
     h+=sec("名簿から外れた人（退職など）", d.left, (r)=>`<li>${line(r)}</li>`)
       +sec("新しく載った人（入社など）", d.joined, (r)=>`<li>${line(r)}</li>`)
-      +sec("分類が変わった人", d.clsChanged, ({p,r})=>`<li>${esc(r.no)} ${esc(r.name)}：${esc(clsLabel(p.cls))} → ${esc(clsLabel(r.cls))}</li>`)
+      +(anyNoCls ? "" : sec("分類が変わった人", d.clsChanged, ({p,r})=>`<li>${esc(r.no)} ${esc(r.name)}：${esc(clsLabel(p.cls))} → ${esc(clsLabel(r.cls))}</li>`))
       +sec("社員番号が変わった人", d.noChanged, ({p,r})=>`<li>${esc(r.name)}：${esc(p.no)} → ${esc(r.no)}</li>`);
   }
   return h+`</div>`;
@@ -1147,7 +1195,7 @@ function ovOf(engcd, period){ return engcd ? (ovMap(period)[engcd]||"") : ""; }
 // 実働として数えるか：1級候補の判定と同じルール（その期の個人指定が優先、「分類のとおり」なら分類のチェック）
 function countsAsReal(engcd, cls, period){
   const ov=ovOf(engcd, period);
-  return ov==="in" ? true : ov==="out" ? false : !!S2.now.cls[cls||""];
+  return ov==="in" ? true : ov==="out" ? false : (cls===null ? true : !!S2.now.cls[cls||""]);
 }
 const realMode=()=> S2.countMode==="real";
 const modeLabel=()=> realMode() ? "実働の数" : "資格保有の数";
@@ -1171,7 +1219,8 @@ function computeNow(roster, opt){
     const lics=HELD_BY_ENGCD[engcd]||[];
     const k1=heldAt(lics,"doboku1",d), ho=heldAt(lics,"doboku1ho",d), k2=heldAt(lics,"doboku2",d);
     const ov=ovOf(engcd, roster.period);
-    const target= ov==="in" ? true : ov==="out" ? false : !!opt.cls[r.cls||""];
+    const ec=effCls(r, roster, engcd); // 分類なしの期は後の期から補う（補えなければ候補に含める）
+    const target= ov==="in" ? true : ov==="out" ? false : (ec.cls===null ? true : !!opt.cls[ec.cls]);
     // 二次受検資格：別のシステムで算出して登録した「来期（基準の期末＋1）の受検資格者」を使う。
     // 登録が無い期だけ、技士補の取得からの年数（目安）で判定する。
     const reg=nijiReg(roster.period+1);
@@ -1184,7 +1233,7 @@ function computeNow(roster, opt){
     else if(ho) stage= exp!==null && exp>=opt.exp ? "s4" : "s3";
     else if(tooYoung) stage="s1";
     else stage="s2";
-    return {no:r.no, name:r.name, cls:r.cls||"", engcd, age, stage, exp, has2:!!k2, ov, hasHo:!!ho, nijiReg: reg ? isReg : null,
+    return {no:r.no, name:r.name, cls:ec.cls||"", clsFill:ec.fill, engcd, age, stage, exp, has2:!!k2, ov, hasHo:!!ho, nijiReg: reg ? isReg : null,
       k1Held:!!k1, k1Real:!!k1 && target,
       nijiPrev: (()=>{ const pr=nijiReg(roster.period); return pr && engcd ? pr.has(engcd) : false; })(), hoSday: ho?ho.sday:"", k1Sday: k1?k1.sday:"",
       savedEngcd:r.engcd||"", noBday:!bday, licDateUnknown: !!((k1&&k1.unknown)||(ho&&ho.unknown)), unmatched:!engcd};
@@ -1207,6 +1256,7 @@ function renderNow(){
   if(!S2.rosters.some((x)=>x.period===o.period)) o.period=S2.rosters[S2.rosters.length-1].period;
   const roster=S2.rosters.find((x)=>x.period===o.period);
   const ppl=computeNow(roster,o);
+  const noClsNote= roster.noCls ? `<div class="note-box" style="margin-bottom:12px">${roster.period}期末は<b>分類なしの期</b>です。分類は後の期から補っています（補えた人 ${ppl.filter((p)=>p.clsFill==="later").length}人・補えず1級候補に含めた人 ${ppl.filter((p)=>p.clsFill==="unknown").length}人）。</div>` : "";
   const known=ppl.filter((p)=>p.age!==null);
   const tech=ppl.filter((p)=>p.stage==="s5");
   const techKnown=tech.filter((p)=>p.age!==null);
@@ -1224,6 +1274,7 @@ function renderNow(){
       : `<div class="grp"><b>二次受検資格（未登録のため目安）</b><select data-now="exp"><option value="5"${o.exp===5?" selected":""}>技士補から5年</option><option value="3"${o.exp===3?" selected":""}>技士補から3年</option></select></div>`}
   </div>`;
 
+  h+=noClsNote;
   // ---- 数字のタイル ----
   const t60=nAge(tech,(a)=>a>=60), t5560=nAge(tech,(a)=>a>=55&&a<60);
   h+=`<div class="tiles">
@@ -1313,8 +1364,8 @@ const hoAt=(engcd,d)=> !!heldAt(HELD_BY_ENGCD[engcd]||[],"doboku1ho",d);
 // 名簿の実績（期末時点）
 function rosterStats(roster){
   const d=periodEnd(roster.period);
-  const ppl=roster.rows.map((r)=>{ const engcd=resolveEngcd(r); const info=INFO_BY_ENGCD[engcd]||{};
-    return {key:engcd?"e:"+engcd:"n:"+normCode(r.no), no:r.no, name:r.name, cls:r.cls||"", engcd,
+  const ppl=roster.rows.map((r)=>{ const engcd=resolveEngcd(r); const info=INFO_BY_ENGCD[engcd]||{}; const ec=effCls(r, roster, engcd);
+    return {key:engcd?"e:"+engcd:"n:"+normCode(r.no), no:r.no, name:r.name, cls:ec.cls, clsFill:ec.fill, engcd,
       tenure:yearsBetween(String(info.NDAY||"").replace(/[^\d]/g,""), d),
       age:yearsBetween(String(info.BDAY||"").replace(/[^\d]/g,""), d), k1Held:!!engcd&&has1At(engcd,d), ho:!!engcd&&hoAt(engcd,d)}; });
   ppl.forEach((p)=>{ p.k1Real=p.k1Held && countsAsReal(p.engcd,p.cls,roster.period); p.k1= realMode() ? p.k1Real : p.k1Held; });
@@ -1527,7 +1578,11 @@ function simDefaults(){
   RET_KEYS.forEach(([k,,,def])=>{ P.ret[k]=def; P.src["ret_"+k]="仮"; });
   P.src.newbie=P.src.p1=P.src.p2="仮"; P.src.hire="仮";
   const R=S2.rosters;
-  const pairs=[]; for(let i=1;i<R.length;i++) if(R[i].period===R[i-1].period+1) pairs.push([R[i-1],R[i]]);
+  // 合格の割合・採用人数は1級候補（分類）を使うので、両方の期に分類がある組だけで計算する。在籍率は分類を使わないので全期を使う。
+  const pairs=[]; for(let i=1;i<R.length;i++) if(R[i].period===R[i-1].period+1 && !R[i].noCls && !R[i-1].noCls) pairs.push([R[i-1],R[i]]);
+  { const ra=retentionActuals();
+    RET_KEYS.forEach(([k])=>{ const [t,st]=ra.ret[k]; if(t>=8){ P.ret[k]=Math.round(st/t*100); P.src["ret_"+k]=`実績 ${st}/${t}人`; } });
+    if(ra.newbie[0]>=5){ P.newbie=Math.round(ra.newbie[1]/ra.newbie[0]*100); P.src.newbie=`実績 ${ra.newbie[1]}/${ra.newbie[0]}人`; } }
   if(!pairs.length) return P;
   // 段階・年齢つきで期末ごとの人を作る
   const at=(roster)=>{ const d=periodEnd(roster.period);
@@ -1548,13 +1603,10 @@ function simDefaults(){
       if(q.stage==="s5") acc.hire.mid1++; else if(q.age!==null && q.age<=19) acc.hire.high++; else if(q.age!==null && q.age<=25) acc.hire.univ++; else acc.hire.mid++; });
   });
   const n=pairs.length;
-  const ra=retentionActuals(); acc.ret=ra.ret; acc.newbie=ra.newbie;
-  RET_KEYS.forEach(([k])=>{ const [t,st]=acc.ret[k]; if(t>=8){ P.ret[k]=Math.round(st/t*100); P.src["ret_"+k]=`実績 ${st}/${t}人`; } });
-  if(acc.newbie[0]>=5){ P.newbie=Math.round(acc.newbie[1]/acc.newbie[0]*100); P.src.newbie=`実績 ${acc.newbie[1]}/${acc.newbie[0]}人`; }
   if(acc.p1[0]>=10){ P.p1=Math.round(acc.p1[1]/acc.p1[0]*100); P.src.p1=`実績 ${acc.p1[1]}/${acc.p1[0]}人`; }
   if(acc.p2[0]>=5){ P.p2=Math.round(acc.p2[1]/acc.p2[0]*100); P.src.p2=`実績 ${acc.p2[1]}/${acc.p2[0]}人`; }
   P.hireHigh=Math.round(acc.hire.high/n); P.hireUniv=Math.round(acc.hire.univ/n); P.midNone=Math.round(acc.hire.mid/n); P.mid1=Math.round(acc.hire.mid1/n);
-  P.src.hire=`実績（直近${n}期の平均。1級候補の分類で新しく載った人）`;
+  P.src.hire=`実績（分類がある直近${n}期の平均。1級候補の分類で新しく載った人）`;
   return P;
 }
 
@@ -1955,8 +2007,9 @@ function candPeople(period){
     const info=INFO_BY_ENGCD[engcd]||{}, lics=HELD_BY_ENGCD[engcd]||[];
     const tags=[]; if(heldAt(lics,"doboku1",d)) tags.push("1級"); if(heldAt(lics,"doboku1ho",d)) tags.push("1級技士補");
     if(heldAt(lics,"doboku2",d)) tags.push("2級"); if(lics.some((l)=>/土木施工管理技士補/.test(N(l.name)) && gradeOf(N(l.name))===2)) tags.push("2級技士補");
-    return {engcd, no:r.no, name:r.name, cls:r.cls||"", dept:empDeptText(empByEngcd(engcd)), age:yearsBetween(String(info.BDAY||"").replace(/[^\d]/g,""), d), tags,
-      auto: !!S2.now.cls[r.cls||""], period:roster.period};
+    const ec=effCls(r, roster, engcd);
+    return {engcd, no:r.no, name:r.name, cls:ec.cls||"", clsFill:ec.fill, dept:empDeptText(empByEngcd(engcd)), age:yearsBetween(String(info.BDAY||"").replace(/[^\d]/g,""), d), tags,
+      auto: ec.cls===null ? true : !!S2.now.cls[ec.cls], period:roster.period};
   }).filter(Boolean);
 }
 function renderCandCard(){
@@ -1999,7 +2052,7 @@ function renderCandCard(){
       <span class="muted">${ppl.length}人を表示（年齢の若い順）</span></div>
     <table class="grid-tbl"><tr><th>社員番号</th><th>氏名</th><th>所属</th><th>分類</th><th>年齢</th><th>土木系の資格</th><th>分類による判定</th><th>個人指定（${P}期末）</th>${prevOv?`<th>${prevP}期末の指定</th>`:""}</tr>`+
     ppl.map((p)=>{ const v=ov[p.engcd]||"", pv=prevOv?(prevOv[p.engcd]||""):"";
-      return `<tr><td>${esc(p.no)}</td><td>${esc(p.name)}</td><td>${esc(p.dept)||'<span class="muted">–</span>'}</td><td>${esc(clsLabel(p.cls))}</td><td class="n">${p.age??"–"}</td>
+      return `<tr><td>${esc(p.no)}</td><td>${esc(p.name)}</td><td>${esc(p.dept)||'<span class="muted">–</span>'}</td><td>${esc(clsShow(p))}</td><td class="n">${p.age??"–"}</td>
         <td>${p.tags.map((t)=>`<span class="pill ${t==="1級"?"ok":"warn"}">${t}</span>`).join(" ")||'<span class="muted">–</span>'}</td>
         <td>${p.tags.includes("1級")?`1級技術者（実働に${(v==="in"||(v!=="out"&&p.auto))?"数える":"<b>数えない</b>"}）`:p.auto?"含める":"含めない"}</td>
         <td><select data-cand-ov="${esc(p.engcd)}"><option value="">分類のとおり</option><option value="in"${v==="in"?" selected":""}>含める</option><option value="out"${v==="out"?" selected":""}>含めない</option></select></td>
@@ -2088,7 +2141,7 @@ function renderTargets(){
   lists.forEach((L)=>{
     h+=`<div class="card"><h2>${esc(L.title)}：${L.rows.length}人${L.est?' <span class="pill warn">目安</span>':""}</h2><p class="desc">${esc(L.why)}</p>`+
       (L.rows.length ? `<table class="grid-tbl"><tr><th>社員番号</th><th>氏名</th><th>年齢</th><th>分類</th><th>所属</th>${L.cols.map((c)=>`<th>${TL_COLS[c][0]}</th>`).join("")}</tr>`+
-        L.rows.map((p)=>`<tr><td>${esc(p.no)}</td><td>${esc(p.name)}${p.ov==="in"?' <span class="pill warn" title="個人指定で1級候補に含めた人">指定</span>':""}</td><td class="n">${p.age??"–"}</td><td>${esc(clsLabel(p.cls))}</td><td>${esc(p.dept)}</td>${L.cols.map((c)=>`<td>${esc(TL_COLS[c][1](p))}</td>`).join("")}</tr>`).join("")+`</table>`
+        L.rows.map((p)=>`<tr><td>${esc(p.no)}</td><td>${esc(p.name)}${p.ov==="in"?' <span class="pill warn" title="個人指定で1級候補に含めた人">指定</span>':""}</td><td class="n">${p.age??"–"}</td><td>${esc(clsShow(p))}</td><td>${esc(p.dept)}</td>${L.cols.map((c)=>`<td>${esc(TL_COLS[c][1](p))}</td>`).join("")}</tr>`).join("")+`</table>`
       : `<p class="muted">該当する人はいません。</p>`)+`</div>`;
   });
   return h;
@@ -2181,6 +2234,65 @@ structEl.addEventListener("click",(e)=>{
   XLSX.writeFile(wb, `対象者リスト_${roster.period}期末.xlsx`);
 });
 
+/* ---- 工事実績システムに未登録の人（未照合）と、番号は一致・氏名が違う人（要確認） ---- */
+function unmatchedSummary(){
+  const un=new Map(), chk=[];
+  S2.rosters.forEach((x)=>{
+    x.rows.forEach((r,i)=>{
+      if(r.how==="手動") return; // 自分で決めた紐付け（「紐付けない」を含む）は対象外
+      const m=matchRosterRow(r);
+      if(!m.engcd){
+        const k=normCode(r.no)+(r.skipNo?"|"+normPersonName(r.name):""); const u=un.get(k)||{no:r.no, name:r.name, periods:[], cls:"", skipNo:!!r.skipNo};
+        u.periods.push(x.period); if(!x.noCls) u.cls=r.cls||""; un.set(k,u);
+      } else if(m.how==="番号・氏名違い"){
+        chk.push({period:x.period, idx:i, no:r.no, name:r.name, engcd:m.engcd, emp:empByEngcd(m.engcd)});
+      }
+    });
+  });
+  const list=[...un.values()].sort((a,b)=>String(a.no).localeCompare(String(b.no),"ja",{numeric:true}));
+  list.forEach((u)=>u.periods.sort((a,b)=>a-b));
+  return {list, chk};
+}
+const periodRange=(ps)=> ps.length===1 ? `${ps[0]}期末` : `${ps[0]}〜${ps[ps.length-1]}期末（${ps.length}期）`;
+function renderUnmatchedCard(){
+  if(!S2.rosters.length) return "";
+  const {list, chk}=unmatchedSummary();
+  let h=`<div class="card"><h2>工事実績システムに未登録の人：${list.length}人</h2>
+    <p class="desc">期末名簿に載っているのに、工事実績システムの社員データと紐付かない人です（昔の退職者など）。年齢が分からないため、在籍率・離職率の計算から外れています。
+    工事実績システムで<b>退職者として登録</b>してください（技術者コードは下の社員番号と同じ番号で、生年月日は必ず、入社日・退職日も分かれば入力）。登録すると、名簿を取り込み直さなくても自動で紐付きます。</p>`;
+  if(list.length){
+    h+=`<div class="imp-row"><button class="btn" id="unmatchedXlsx">この一覧をExcelで出力</button></div>
+      <div id="unmatchedList" data-keep-scroll style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:8px">
+      <table class="grid-tbl" style="width:100%"><tr><th>社員番号</th><th>氏名</th><th>名簿に載っている期</th><th>最後の分類</th><th>備考</th></tr>`+
+      list.map((u)=>`<tr><td>${esc(u.no)}</td><td>${esc(u.name)}</td><td>${esc(periodRange(u.periods))}</td><td>${esc(u.cls?clsLabel(u.cls):"–")}</td><td>${u.skipNo?'<span class="pill warn">番号が他の社員と重複</span> 別の技術者コードで登録してください（氏名で紐付きます）':""}</td></tr>`).join("")+`</table></div>`;
+  } else h+=`<p class="muted">すべての人が工事実績システムの社員データと紐付いています。</p>`;
+  if(chk.length){
+    h+=`<h3 style="font-size:13px;margin:16px 0 4px">番号は一致するが氏名が違う人（要確認）：${chk.length}件</h3>
+      <p class="desc">昔の社員番号が別の人に使い回されていると、別人と紐付いてしまいます。同じ人なら「同じ人」、別の人なら「別の人」を押してください（その期の名簿に記録します）。「別の人」にした人は、番号では照合せず、氏名で照合します。工事実績システムに登録すると自動で紐付きます。</p>
+      <table class="grid-tbl"><tr><th>期</th><th>名簿の社員番号</th><th>名簿の氏名</th><th>番号が一致した社員</th>${canEdit?"<th></th>":""}</tr>`+
+      chk.map((c)=>`<tr><td>${c.period}期末</td><td>${esc(c.no)}</td><td>${esc(c.name)}</td><td>${esc(empLabel(c.emp))}</td>
+        ${canEdit?`<td><button class="btn" data-fix-link="${c.period}|${c.idx}|${esc(c.engcd)}">同じ人</button> <button class="btn" data-fix-link="${c.period}|${c.idx}|">別の人</button></td>`:""}</tr>`).join("")+`</table>`;
+  }
+  return h+`</div>`;
+}
+structEl.addEventListener("click", async (e)=>{
+  if(e.target.id==="unmatchedXlsx"){
+    const {list}=unmatchedSummary();
+    const aoa=[["工事実績システムに未登録の人（期末名簿と紐付かない人）"],[],["社員番号","氏名","名簿に載っている期","最後の分類","備考"],...list.map((u)=>[u.no,u.name,periodRange(u.periods),u.cls?clsLabel(u.cls):"",u.skipNo?"番号が他の社員と重複：別の技術者コードで登録":""])];
+    const ws=XLSX.utils.aoa_to_sheet(aoa); ws["!cols"]=[{wch:10},{wch:16},{wch:22},{wch:10}];
+    const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "未登録の人"); XLSX.writeFile(wb, "工事実績システム未登録の人.xlsx");
+    return;
+  }
+  const b=e.target.closest("[data-fix-link]"); if(!b) return;
+  const [ps, is, engcd]=b.dataset.fixLink.split("|"); const period=parseInt(ps,10), idx=parseInt(is,10);
+  const roster=S2.rosters.find((x)=>x.period===period); if(!roster) return;
+  // 同じ人 → その社員に固定（手動）。別の人 → 番号での照合をやめ、氏名で照合し直す（工事実績システムに登録されれば自動で紐付く）
+  const rows=roster.rows.map((r,i)=> i!==idx ? r : engcd ? {...r, engcd, how:"手動", skipNo:false} : {...r, engcd:"", how:"なし", skipNo:true});
+  try{ await setDoc(doc(db,"meta",ROSTER_PREFIX+period), {...roster, rows}); roster.rows=rows; S2.sim=null; }
+  catch(err){ S2.msg="記録できませんでした（"+(err.code||err.message)+"）"; }
+  renderStruct();
+});
+
 /* ---- 操作 ---- */
 structEl.addEventListener("click", async (e)=>{
   const sb=e.target.closest("[data-sub]"); if(sb){ S2.sub=sb.dataset.sub; renderStruct(); return; }
@@ -2208,7 +2320,7 @@ structEl.addEventListener("change", async (e)=>{
   if(e.target.id==="impPeriod" && S2.imp){ const v=parseInt(e.target.value,10); if(v>0){ S2.imp.period=v; renderStruct(); } return; }
   if(e.target.dataset.impRow!==undefined && S2.imp){
     const r=S2.imp.rows[parseInt(e.target.dataset.impRow,10)];
-    r.engcd=e.target.value; r.how=e.target.value ? "手動" : "なし";
+    r.engcd=e.target.value; r.how="手動"; // 自分で選んだ紐付け（「紐付けない」も含む）は、後で自動照合し直さない
     renderStruct();
   }
 });
@@ -2217,7 +2329,7 @@ async function saveRoster(){
   if(S2.rosters.some((x)=>x.period===imp.period) && !confirm(imp.period+"期末の名簿はすでに登録されています。置き換えますか？")) return;
   S2.busy=true; renderStruct();
   const rec={
-    period:imp.period, baseDate:periodEnd(imp.period), fileName:imp.fileName, sheetName:imp.sheetName,
+    period:imp.period, baseDate:periodEnd(imp.period), fileName:imp.fileName, sheetName:imp.sheetName, noCls:!imp.hasCls,
     importedAt:Date.now(), importedBy:(auth.currentUser&&auth.currentUser.email)||"",
     rows:imp.rows.map((r)=>({no:r.no, name:r.name, cls:r.cls, engcd:r.engcd||"", how:r.how})),
   };
