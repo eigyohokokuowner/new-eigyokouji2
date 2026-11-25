@@ -140,6 +140,7 @@
   .lc .grid line{stroke:#e6e8ee;stroke-width:1;}
   .lc .axis text{fill:#5d6377;font-size:11px;}
   .lc .hit{fill:transparent;cursor:default;}
+  .sig-bad{color:#c0392b;font-weight:700;} .sig-bad2{color:#c0392b;} .sig-good{color:#1a7f4e;font-weight:700;} .sig-good2{color:#1a7f4e;}
   .note-box{background:#f6f7fb;border:1px solid var(--line);border-radius:8px;padding:8px 12px;color:var(--muted);line-height:1.6;margin-top:8px;}
   .flow{display:flex;align-items:stretch;gap:6px;flex-wrap:wrap;margin:6px 0 4px;}
   .flow .f{border:1px solid var(--line);border-radius:8px;padding:6px 12px;min-width:92px;text-align:center;background:#fff;}
@@ -1413,9 +1414,11 @@ function reconstruct(period, clsMap){
 }
 
 // 折れ線グラフ（1本の縦軸・2px線・8px以上のマーカー・薄い目盛線・ホバーで値）
-function lineChartSVG(cats, series, yLabel){
+// opt.tip：ツールチップの種類（S2.lcTips[tip](i) で中身を作る）、opt.refs：参考線 [{v,label}]、opt.unit：目盛の単位
+function lineChartSVG(cats, series, yLabel, opt={}){
   const W=860, H=260, L=44, R=16, T=14, B=34;
-  const vals=series.flatMap((s)=>s.values.filter((v)=>v!==null));
+  const refs=opt.refs||[], unit=opt.unit||"";
+  const vals=series.flatMap((s)=>s.values.filter((v)=>v!==null)).concat(refs.map((r)=>r.v));
   const maxV=Math.max(1,...vals);
   const step=maxV<=10?2:maxV<=25?5:maxV<=60?10:maxV<=150?25:50;
   const top=Math.ceil(maxV/step)*step;
@@ -1423,8 +1426,11 @@ function lineChartSVG(cats, series, yLabel){
   const y=(v)=> T+(H-T-B)*(1-v/top);
   let g=`<svg class="lc" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(yLabel)}の推移">`;
   g+=`<g class="grid">`; for(let v=0;v<=top;v+=step) g+=`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}"/>`; g+=`</g>`;
-  g+=`<g class="axis">`; for(let v=0;v<=top;v+=step) g+=`<text x="${L-6}" y="${y(v)+4}" text-anchor="end">${v}</text>`;
+  g+=`<g class="axis">`; for(let v=0;v<=top;v+=step) g+=`<text x="${L-6}" y="${y(v)+4}" text-anchor="end">${v}${unit}</text>`;
   cats.forEach((c,i)=>{ g+=`<text x="${x(i)}" y="${H-12}" text-anchor="middle">${esc(c)}</text>`; }); g+=`</g>`;
+  // 参考線（灰色の点線＋右寄せのラベル）
+  refs.forEach((r)=>{ g+=`<line x1="${L}" x2="${W-R}" y1="${y(r.v)}" y2="${y(r.v)}" stroke="#8a8f9c" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="${W-R-4}" y="${y(r.v)-5}" text-anchor="end" style="fill:#5d6377;font-size:11px">${esc(r.label)}</text>`; });
   series.forEach((s)=>{
     let d="", pen=false;
     s.values.forEach((v,i)=>{ if(v===null){ pen=false; return; } d+=(pen?"L":"M")+x(i)+" "+y(v)+" "; pen=true; });
@@ -1435,7 +1441,7 @@ function lineChartSVG(cats, series, yLabel){
   });
   // 当たり判定（期ごとの縦帯）
   cats.forEach((c,i)=>{ const half=cats.length===1?(W-L-R)/2:(W-L-R)/(cats.length-1)/2;
-    g+=`<rect class="hit" x="${x(i)-half}" y="${T}" width="${half*2}" height="${H-T-B}" data-lc-i="${i}"/>`; });
+    g+=`<rect class="hit" x="${x(i)-half}" y="${T}" width="${half*2}" height="${H-T-B}" data-lc-i="${i}"${opt.tip?` data-lc-k="${opt.tip}"`:""}/>`; });
   return g+`</svg>`;
 }
 
@@ -1509,6 +1515,7 @@ function renderTrend(){
   h+=`</div>`;
 
   h+=renderTurnover(stats);
+  h+=renderSignals(stats);
   h+=renderRetention(stats);
   return h;
 }
@@ -1910,6 +1917,186 @@ function renderTurnover(stats){
 
 structEl.addEventListener("change",(e)=>{ if(e.target.dataset.retWin!==undefined){ S2.retWin=parseInt(e.target.value,10); renderStruct(); } });
 
+/* =====================================================================
+   離職は改善している？悪化している？（判断の指標）
+   ① 前半と後半の比較 ② 3年移動平均の推移 ③ 入社年度別の3年定着率 ④ 全国（建設業）との比較
+   ===================================================================== */
+// 全国の参考値（厚生労働省の公表値。年1回更新されるので、新しい値が出たらここを書き換える）
+const BENCH={
+  annual:{label:"令和7年（2025年）", src:"厚生労働省「雇用動向調査」", con:8.7, conGen:7.9, all:13.7, allGen:11.4},
+  grad:{label:"令和5年3月卒・就職後3年以内", src:"厚生労働省「新規学卒就職者の離職状況」", conHigh:40.9, conUniv:26.8, allHigh:36.9, allUniv:31.2, szHigh:36.4, szUniv:31.7},
+};
+const addYears=(ymd,k)=> String(+ymd.slice(0,4)+k)+ymd.slice(4);
+const todayYmd=()=>{ const d=new Date(); return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`; };
+const midYmd=(a,b)=>{ const t=(s)=>Date.UTC(+s.slice(0,4),+s.slice(4,6)-1,+s.slice(6)); const d=new Date((t(a)+t(b))/2);
+  return `${d.getUTCFullYear()}${String(d.getUTCMonth()+1).padStart(2,"0")}${String(d.getUTCDate()).padStart(2,"0")}`; };
+// 2つの割合の差が偶然でも起きる程度か（2つの割合の検定・z値）
+function diffJudge(l1,n1,l2,n2){
+  if(!n1 || !n2) return {txt:"–", cls:""};
+  if(l1+l2<5) return {txt:"辞めた人が少なく判断できない", cls:"muted"};
+  const p=(l1+l2)/(n1+n2), se=Math.sqrt(p*(1-p)*(1/n1+1/n2));
+  const z= se ? (l2/n2-l1/n1)/se : 0, up=z>0;
+  if(Math.abs(z)>=1.96) return {txt: up?"▲ 悪化（はっきりした差）":"▼ 改善（はっきりした差）", cls: up?"sig-bad":"sig-good", z};
+  if(Math.abs(z)>=1.28) return {txt: up?"△ 悪化の傾向（まだ断定できない）":"▽ 改善の傾向（まだ断定できない）", cls: up?"sig-bad2":"sig-good2", z};
+  return {txt:"― 誤差の範囲", cls:"muted", z};
+}
+// 入社年度別（入社した期ごと）の定着：1年・2年・3年以内に辞めた人
+function cohortData(){
+  const R=S2.rosters; if(!R.length) return {rows:[], firstP:null};
+  const firstP=R[0].period, lastP=R[R.length-1].period, today=todayYmd();
+  const ends=R.map((r)=>({period:r.period, end:periodEnd(r.period), keys:new Set(r.rows.map(resolveEngcd).filter(Boolean))}));
+  const empBy=new Map(EMPLOYEES.map((e)=>[String(e.ENGCD), e]));
+  // 辞めた日（分からなければ名簿から範囲を推定）。在籍中なら date=null と「いつまで在籍が確認できたか」
+  const leaveOf=(engcd, nday)=>{
+    const e=empBy.get(engcd)||{}, rd=d8(e.RETIRE_DATE);
+    if(e.STATUS==="retired" && rd) return {date:rd, how:"退職日"};
+    const seen=ends.filter((x)=>x.end>=nday);
+    const pres=seen.filter((x)=>x.keys.has(engcd));
+    const lastPres=pres.length ? pres[pres.length-1] : null;
+    if(lastPres){
+      const after=seen.find((x)=>x.end>lastPres.end && !x.keys.has(engcd));
+      if(after) return {lo:lastPres.end, hi:after.end, how:"名簿から推定"};
+      return {date:null, known: e.STATUS!=="retired" ? today : lastPres.end};
+    }
+    if(e.STATUS!=="retired") return {date:null, known:today};
+    return {unknown:true};
+  };
+  // k年以内に辞めたか：true / false / null（まだk年たっていない・不明）
+  const leftWithin=(lv, nday, k)=>{
+    const L=addYears(nday,k);
+    if(lv.unknown) return {v:null};
+    if(lv.date) return {v: lv.date<L};
+    if(lv.lo) { if(lv.hi<L) return {v:true}; if(lv.lo>=L) return {v:false}; return {v: midYmd(lv.lo,lv.hi)<L, est:true}; }
+    return lv.known>=L ? {v:false} : {v:null};
+  };
+  const rows=[];
+  for(let p=firstP; p<=lastP+1; p++){
+    const s=periodStart(p), en=periodEnd(p), mem=new Map();
+    const add=(engcd)=>{ if(!engcd || mem.has(engcd)) return; const info=INFO_BY_ENGCD[engcd]||{}; const nd=d8(info.NDAY);
+      if(!nd || nd<s || nd>en) return; const e=empBy.get(engcd)||{};
+      const age=yearsBetween(d8(info.BDAY), nd), mon=+nd.slice(4,6);
+      const type= age===null ? "不明" : (age<=24 && mon>=3 && mon<=5) ? (age<=19?"高卒":"大卒等") : "中途";
+      mem.set(engcd,{engcd, name:e.ID_NAME||"", nday:nd, age, type}); };
+    const rr=R.find((r)=>r.period===p); if(rr) rr.rows.forEach((r)=>add(resolveEngcd(r)));
+    EMPLOYEES.forEach((e)=>add(String(e.ENGCD)));
+    if(!mem.size) continue;
+    const ppl=[...mem.values()].map((m)=>{ const lv=leaveOf(m.engcd, m.nday);
+      return {...m, lv, w:[1,2,3].map((k)=>leftWithin(lv, m.nday, k))}; });
+    rows.push({period:p, ppl});
+  }
+  return {rows, firstP};
+}
+function renderSignals(stats){
+  const allPairs=[]; for(let i=1;i<stats.length;i++) if(stats[i].period===stats[i-1].period+1) allPairs.push([stats[i-1],stats[i]]);
+  let h=`<div class="card"><h2>離職は改善している？悪化している？</h2>
+    <p class="desc">上の表と同じ数え方（前の期末にいた人が、翌期末の名簿にいなかったら離職）で、変化を4つの方法で確かめます。①②は上の「集計する期間」の設定に合わせて動きます。</p>`;
+  if(allPairs.length<2) return h+`<p class="muted">連続する期の名簿が3期分以上登録されると表示されます。</p></div>`;
+  const groups=[...RET_KEYS].reverse().map(([k,label,f])=>({k,label,f:(p)=>!(p.tenure!==null&&p.tenure<3) && p.age!==null && f(p.age)}))
+    .concat([{k:"new",label:"入社3年以内",f:(p)=>p.tenure!==null&&p.tenure<3}, {k:"all",label:"全社員（合計）",f:()=>true}]);
+  const sumPairs=(f,prs)=>{ let n=0,l=0; prs.forEach(([a,b])=>{ const bk=new Set(b.ppl.map((p)=>p.key)); a.ppl.forEach((p)=>{ if(!f(p)) return; n++; if(!bk.has(p.key)) l++; }); }); return {n,l,r:n?l/n:null}; };
+  const pc=(x,d=1)=> x===null||x===undefined ? "–" : (x*100).toFixed(d)+"%";
+
+  // ---- ① 前半と後半の比較 ----
+  let W= S2.retWin>0 ? S2.retWin : Math.floor(allPairs.length/2), halfNote="";
+  if(allPairs.length-W<2){ W=Math.floor(allPairs.length/2); halfNote=`※ 「集計する期間」より前の名簿が足りないため、登録済みの名簿（${allPairs.length}期分）を前後半分に分けて比べています。`; }
+  const late=allPairs.slice(-W), early=allPairs.slice(-2*W, -W);
+  const rng=(prs)=> prs.length ? `${prs[0][1].period}〜${prs[prs.length-1][1].period}期` : "";
+  h+=`<h3 style="font-size:13px;margin:12px 0 4px">① 前半と後半の比較（${rng(early)} → ${rng(late)}）</h3>`;
+  if(!early.length) h+=`<p class="muted">比べる前の期間の名簿が足りません。「集計する期間」を短くすると比べられます。</p>`;
+  else{
+    if(halfNote) h+=`<p class="desc">${halfNote}</p>`;
+    else if(early.length<late.length) h+=`<p class="desc">※ 前の期間は名簿が ${early.length}期分しかないため、${early.length}期分で比べています。</p>`;
+    h+=`<table class="grid-tbl"><tr><th>前の期末時点</th><th>前半 ${rng(early)}</th><th>後半 ${rng(late)}</th><th>差</th><th>判定</th></tr>`+
+      groups.map((g)=>{ const a=sumPairs(g.f,early), b=sumPairs(g.f,late), j=diffJudge(a.l,a.n,b.l,b.n);
+        const dd= a.r!==null&&b.r!==null ? ((b.r-a.r)*100) : null;
+        return `<tr${g.k==="all"?' style="font-weight:700;border-top:2px solid #c9ceda"':MID_KEYS.has(g.k)?' style="background:#fff9e8"':""}><td>${esc(g.label)}</td>
+          <td class="n">${pc(a.r)}<span class="muted">（${a.l}/${a.n}人）</span></td><td class="n">${pc(b.r)}<span class="muted">（${b.l}/${b.n}人）</span></td>
+          <td class="n">${dd===null?"–":(dd>0?"+":"")+dd.toFixed(1)+"pt"}</td><td class="${j.cls}">${j.txt}</td></tr>`; }).join("")+`</table>
+      <p class="desc" style="margin-top:6px">離職率は、期間内の人数を合計してから割った値です（人数で重み付け）。「はっきりした差」は、偶然ではほとんど起きない大きさの差（統計的に95%の確かさ）、「傾向」はそれより弱い差です。人数が少ない区分は、差が大きく見えても「誤差の範囲」になりやすいです。</p>`;
+  }
+
+  // ---- ② 3年移動平均の推移（グループ別） ----
+  const MA=[
+    {name:"入社3年以内", color:"#2a78d6", f:(p)=>p.tenure!==null&&p.tenure<3},
+    {name:"49歳以下（入社3年以内を除く）", color:"#eb6834", f:(p)=>!(p.tenure!==null&&p.tenure<3) && p.age!==null && p.age<50},
+    {name:"50〜59歳", color:"#1baf7a", f:(p)=>!(p.tenure!==null&&p.tenure<3) && p.age!==null && p.age>=50 && p.age<60},
+    {name:"60歳以上", color:"#eda100", f:(p)=>!(p.tenure!==null&&p.tenure<3) && p.age!==null && p.age>=60},
+    {name:"全社員（合計）", color:"#3d4252", f:()=>true},
+  ];
+  const cats=allPairs.map(([,b])=>b.period+"期");
+  const maRows=MA.map((g)=>({...g, pts:allPairs.map(([,b])=>{ const prs=allPairs.filter(([,x])=>x.period>=b.period-2 && x.period<=b.period);
+    if(prs.length<2) return null; const s=sumPairs(g.f,prs); return s.n ? {...s, k:prs.length} : null; })}));
+  const series=maRows.map((g)=>({name:g.name, color:g.color, values:g.pts.map((x)=>x?+(x.r*100).toFixed(1):null)}));
+  S2.lcTips=S2.lcTips||{};
+  S2.lcTips.ma=(i)=>`<b>${esc(cats[i])}（${allPairs[i][1].period-2}〜${allPairs[i][1].period}期の平均）</b>`+
+    maRows.map((g)=>`<br><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${g.color};margin-right:4px"></span>${esc(g.name)}：${g.pts[i]?pc(g.pts[i].r)+`（${g.pts[i].l}/${g.pts[i].n}人）`:"–"}`).join("")+
+    `<br><span class="muted">点線：建設業の全国平均（一般労働者）${BENCH.annual.conGen}%</span>`;
+  h+=`<h3 style="font-size:13px;margin:16px 0 4px">② 3年移動平均の推移</h3>
+    <p class="desc">各期の値は、その期を含む直近3期分（3期そろわない最初の期は2期分）の人数を合計して出した離職率です。1年ごとのぶれがならされるので、上向きか下向きかが見やすくなります。点にマウスを乗せると内訳が出ます。</p>
+    <div class="legend">${MA.map((g)=>`<span><i style="background:${g.color}"></i>${esc(g.name)}</span>`).join("")}
+      <span><i style="background:#fff;border-top:2px dashed #8a8f9c;height:0;width:14px;border-radius:0"></i>建設業の全国平均（一般労働者・${BENCH.annual.label}）</span></div>
+    ${lineChartSVG(cats, series, "離職率（3年移動平均）", {tip:"ma", unit:"%", refs:[{v:BENCH.annual.conGen, label:`建設業 全国 ${BENCH.annual.conGen}%`}]})}
+    <details class="diff"><summary>表で見る</summary><table class="grid-tbl"><tr><th>区分</th>${cats.map((c)=>`<th class="c">${c}</th>`).join("")}</tr>`+
+      maRows.map((g)=>`<tr><td style="white-space:nowrap">${esc(g.name)}</td>${g.pts.map((x)=>`<td class="n">${x?pc(x.r):"–"}</td>`).join("")}</tr>`).join("")+`</table></details>`;
+
+  // ---- ③ 入社年度別の3年定着率 ----
+  const co=cohortData();
+  h+=`<h3 style="font-size:13px;margin:16px 0 4px">③ 入社年度別の定着（入社した期ごと）</h3>
+    <p class="desc">入社した期ごとに、入社日から1年・2年・3年たつまでに辞めた人の割合です。全国の「新卒の3年以内離職率」と同じ物差しです。
+    新卒相当＝3〜5月に24歳以下で入社した人（19歳以下は高卒相当、20〜24歳は大卒等相当）、それ以外は中途として分けています。</p>`;
+  if(!co.rows.length) h+=`<p class="muted">入社日が登録されている人がいません。</p>`;
+  else{
+    let estN=0, unkN=0;
+    const rate=(ppl,k)=>{ const d=ppl.map((p)=>p.w[k-1]); const und=d.filter((x)=>x.v===null).length, left=d.filter((x)=>x.v===true).length;
+      d.forEach((x)=>{ if(x.est) estN++; }); return {n:ppl.length, left, und, r: ppl.length&&!und ? left/ppl.length : null}; };
+    const cell3=(x)=>{ if(!x.n) return `<td class="c muted">–</td>`;
+      if(x.r===null) return `<td class="c muted" title="まだ期間がたっていない人 ${x.und}人">途中<br><span style="font-size:11px">今のところ${x.left}人</span></td>`;
+      const a=Math.min(1,x.r/0.5), small=x.n<5;
+      return `<td class="c" style="background:rgba(235,104,52,${(0.08+0.92*a).toFixed(2)});color:${a>0.6?"#fff":"#1f2330"};${small?"font-style:italic;opacity:.8;":""}" title="${x.left}/${x.n}人が離職${small?"（対象5人未満）":""}">${Math.round(x.r*100)}%<br><span style="font-size:11px">${x.left}/${x.n}人</span></td>`; };
+    co.rows.forEach((r)=>r.ppl.forEach((p)=>{ if(p.lv.unknown) unkN++; }));
+    h+=`<table class="grid-tbl"><tr><th rowspan="2">入社した期</th><th rowspan="2">入社人数</th><th colspan="3">内訳</th><th colspan="3">辞めた割合（全員）</th><th colspan="2">3年以内（新卒相当）</th><th rowspan="2">3年以内（中途）</th></tr>
+      <tr><th>高卒相当</th><th>大卒等相当</th><th>中途・不明</th><th>1年以内</th><th>2年以内</th><th>3年以内</th><th>高卒相当</th><th>大卒等相当</th></tr>`+
+      co.rows.map((r)=>{ const by=(t)=>r.ppl.filter((p)=>p.type===t);
+        const left3=r.ppl.filter((p)=>p.w[2].v===true);
+        return `<tr><td>${r.period}期</td><td class="n">${r.ppl.length}</td>
+          <td class="n">${by("高卒").length}</td><td class="n">${by("大卒等").length}</td><td class="n">${by("中途").length+by("不明").length}</td>
+          ${[1,2,3].map((k)=>cell3(rate(r.ppl,k))).join("")}${cell3(rate(by("高卒"),3))}${cell3(rate(by("大卒等"),3))}${cell3(rate(by("中途"),3))}</tr>`+
+          (left3.length?`<tr><td></td><td colspan="10" style="padding:0 6px 4px"><details class="diff" style="margin:0"><summary>3年以内に辞めた人：${left3.length}人</summary><ul>${left3.map((p)=>`<li>${esc(p.name)}（${p.type}・入社${p.nday.slice(0,4)}/${+p.nday.slice(4,6)}${p.lv.date?`・退職${p.lv.date.slice(0,4)}/${+p.lv.date.slice(4,6)}`:"・名簿から推定"}）</li>`).join("")}</ul></details></td></tr>`:"");
+      }).join("")+`</table>`;
+    // まとめ：3年たった期（確定）のうち直近5期分
+    const done=co.rows.filter((r)=>r.ppl.every((p)=>p.w[2].v!==null || p.lv.unknown)).slice(-5);
+    if(done.length){
+      const pool=(t)=>{ const ppl=done.flatMap((r)=>r.ppl.filter((p)=>(!t||p.type===t) && p.w[2].v!==null)); const l=ppl.filter((p)=>p.w[2].v).length; return {n:ppl.length,l,r:ppl.length?l/ppl.length:null}; };
+      const hs=pool("高卒"), us=pool("大卒等"), ms=pool("中途"), al=pool(null);
+      const cmp=(x,ref)=> x.r===null ? "" : x.r*100<=ref ? `<span class="sig-good">全国より低い</span>` : `<span class="sig-bad">全国より高い</span>`;
+      h+=`<div class="note-box"><b>3年たった入社期（${done[0].period}〜${done[done.length-1].period}期入社）の合計</b>：3年以内に辞めた割合
+        <table class="grid-tbl" style="margin-top:6px"><tr><th></th><th>自社</th><th>建設業・全国</th><th>全産業・全国</th><th>全産業・100〜499人</th><th></th></tr>
+        <tr><td>高卒相当</td><td class="n"><b>${pc(hs.r)}</b><span class="muted">（${hs.l}/${hs.n}人）</span></td><td class="n">${BENCH.grad.conHigh}%</td><td class="n">${BENCH.grad.allHigh}%</td><td class="n">${BENCH.grad.szHigh}%</td><td>${cmp(hs,BENCH.grad.conHigh)}${hs.n&&hs.n<10?' <span class="muted">（人数が少なく参考値）</span>':""}</td></tr>
+        <tr><td>大卒等相当</td><td class="n"><b>${pc(us.r)}</b><span class="muted">（${us.l}/${us.n}人）</span></td><td class="n">${BENCH.grad.conUniv}%</td><td class="n">${BENCH.grad.allUniv}%</td><td class="n">${BENCH.grad.szUniv}%</td><td>${cmp(us,BENCH.grad.conUniv)}${us.n&&us.n<10?' <span class="muted">（人数が少なく参考値）</span>':""}</td></tr>
+        <tr><td>中途</td><td class="n"><b>${pc(ms.r)}</b><span class="muted">（${ms.l}/${ms.n}人）</span></td><td class="muted" colspan="3">全国の公表値なし</td><td></td></tr>
+        <tr><td>全員</td><td class="n"><b>${pc(al.r)}</b><span class="muted">（${al.l}/${al.n}人）</span></td><td colspan="4"></td></tr></table>
+        <span class="muted">全国は${BENCH.grad.label}（${BENCH.grad.src}）。全国の値は新卒だけの数字なので、比べるのは新卒相当の行です。</span></div>`;
+    } else h+=`<p class="muted">入社から3年たった入社期がまだありません。名簿が増えると合計が出ます。</p>`;
+    h+=`<p class="desc" style="margin-top:6px">※ 辞めた日は、工事実績システムの退職日を使います。退職日が未登録の人は、名簿から「いつの期末までいたか」で推定しています（推定 ${estN}件）。
+      入社した期に名簿がなく、退職日も未登録で辞めた人は数えられません（${co.firstP}期より前の入社は表示していません）。${unkN?`退職済みで在籍期間が分からない人 ${unkN}人は除いています。`:""}</p>`;
+  }
+
+  // ---- ④ 全国（建設業）との比較 ----
+  const win= S2.retWin>0 ? allPairs.slice(-S2.retWin) : allPairs;
+  const cAll=sumPairs(()=>true, win), cU60=sumPairs((p)=>p.age!==null&&p.age<60, win);
+  h+=`<h3 style="font-size:13px;margin:16px 0 4px">④ 全国との比較（1年間の離職率）</h3>
+    <table class="grid-tbl"><tr><th></th><th>離職率（1年間）</th><th>備考</th></tr>
+      <tr><td><b>自社・全社員</b>（${rng(win)}の平均）</td><td class="n"><b>${pc(cAll.r)}</b><span class="muted">（${cAll.l}/${cAll.n}人）</span></td><td class="muted">定年・再雇用の契約満了を含む</td></tr>
+      <tr><td>自社・60歳未満</td><td class="n">${pc(cU60.r)}<span class="muted">（${cU60.l}/${cU60.n}人）</span></td><td class="muted">定年まわりを除いた目安</td></tr>
+      <tr><td>建設業・全国（一般労働者）</td><td class="n">${BENCH.annual.conGen}%</td><td class="muted">一番近い比べ相手（パートを除く）</td></tr>
+      <tr><td>建設業・全国（パート含む計）</td><td class="n">${BENCH.annual.con}%</td><td></td></tr>
+      <tr><td>全産業・全国（一般労働者）</td><td class="n">${BENCH.annual.allGen}%</td><td></td></tr>
+      <tr><td>全産業・全国（パート含む計）</td><td class="n">${BENCH.annual.all}%</td><td></td></tr></table>
+    <p class="desc" style="margin-top:6px">全国は${BENCH.annual.label}の値（${BENCH.annual.src}）。全国の値は年の途中で入って辞めた人も数えますが、自社の値は期末名簿どうしの比較なので、1年以内に入って辞めた人は数えられず、やや低めに出ます。
+      建設業の年齢別・規模別の離職率は公表されていないため、年齢別の比較はできません。</p>`;
+  return h+`</div>`;
+}
+
 /* ---- C. 再雇用：何歳まで残っているか ---- */
 const RET_BANDS=[["55〜58歳",(a)=>a>=55&&a<=58],["59歳（定年の前年）",(a)=>a===59],["60〜64歳",(a)=>a>=60&&a<=64],["65〜69歳",(a)=>a>=65&&a<=69],["70歳以上",(a)=>a>=70]];
 function renderRetention(stats){
@@ -1973,10 +2160,14 @@ function renderRetention(stats){
 /* ---- 折れ線グラフのツールチップ ---- */
 structEl.addEventListener("mousemove",(e)=>{
   const hit=e.target.closest("[data-lc-i]");
-  if(!hit || !S2.trendTip) return;
-  const i=parseInt(hit.dataset.lcI,10), t=S2.trendTip;
-  const a=t.act[i], r=t.rec[i];
-  vizTip.innerHTML=`<b>${esc(t.cats[i])}</b><br>名簿の実績：${a?a.n1+"人（うち60歳以上 "+a.n1_60+"人）":"名簿なし"}<br>再現（参考）：${r.n1}人／技士補 ${r.nHo}人`;
+  if(!hit) return;
+  const i=parseInt(hit.dataset.lcI,10), k=hit.dataset.lcK;
+  if(k){ const f=(S2.lcTips||{})[k]; if(!f) return; vizTip.innerHTML=f(i); }
+  else{
+    if(!S2.trendTip) return;
+    const t=S2.trendTip, a=t.act[i], r=t.rec[i];
+    vizTip.innerHTML=`<b>${esc(t.cats[i])}</b><br>名簿の実績：${a?a.n1+"人（うち60歳以上 "+a.n1_60+"人）":"名簿なし"}<br>再現（参考）：${r.n1}人／技士補 ${r.nHo}人`;
+  }
   vizTip.style.display="block";
   vizTip.style.left=Math.min(e.clientX+14, window.innerWidth-vizTip.offsetWidth-8)+"px";
   vizTip.style.top=Math.min(e.clientY+14, window.innerHeight-vizTip.offsetHeight-8)+"px";
