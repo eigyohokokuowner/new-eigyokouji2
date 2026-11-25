@@ -906,7 +906,7 @@ const CLS_ORDER=["イロハ","その他","事務",""];
 const clsLabel=(c)=> c || "（空欄）";
 
 const S2={sub:"now", rosters:[], loaded:false, imp:null, msg:"", busy:false,
-  cand:{overrides:{}, draft:null, filterCls:"その他", onlyCivil:true, q:"", info:""}, // 1級候補の個人指定
+  cand:{byPeriod:{}, period:null, draft:null, filterCls:"その他", onlyCivil:true, q:"", info:"", migrated:false}, // 1級候補の個人指定（期ごと）
   niji:{periods:{}, draft:null, onlyHo:true, onlySel:false, q:"", paste:"", pasteMsg:""},
   countMode:"all", // 1級技術者の数え方："all"＝資格保有の数（純粋） ／ "real"＝実働の数（1級候補の判定で含めない人を除く）             // 二次受検資格者の登録（受検する期ごと）
   now:{period:null, cls:{"イロハ":true,"その他":true,"事務":false,"":false}, band:5, exp:5}}; // 1級候補とする分類の初期値：イロハ＋その他
@@ -916,15 +916,19 @@ const NIJI_DOC="shikakuNijiElig";       // 二次受検資格者の登録：meta
 const CAND_DOC="shikakuCandidates";     // 1級候補の個人指定：meta/shikakuCandidates {overrides:{技術者コード:"in"|"out"}}
 
 async function loadRosters(){
+  let candDocRaw=null;
   try{
     const snap=await getDocs(collection(db,"meta"));
     const list=[];
     snap.forEach((d)=>{
       if(String(d.id).startsWith(ROSTER_PREFIX)){ const v=d.data(); if(v && Array.isArray(v.rows)) list.push(v); }
       if(d.id===NIJI_DOC){ const v=d.data()||{}; S2.niji.periods=v.periods||{}; }
-      if(d.id===CAND_DOC){ const v=d.data()||{}; S2.cand.overrides=v.overrides||{}; S2.cand.info=v.updatedAt?`最終更新 ${new Date(v.updatedAt).toLocaleString("ja-JP")} ${v.updatedBy||""}`:""; }
+      if(d.id===CAND_DOC){ const v=d.data()||{}; candDocRaw=v; S2.cand.info=v.updatedAt?`最終更新 ${new Date(v.updatedAt).toLocaleString("ja-JP")} ${v.updatedBy||""}`:""; }
     });
     S2.rosters=list.sort((a,b)=>a.period-b.period);
+    // 1級候補の個人指定：期ごとの指定（byPeriod）。以前の形式（期の区別なし overrides）は、最新の期末の指定として扱う。
+    if(candDocRaw && candDocRaw.byPeriod) S2.cand.byPeriod=candDocRaw.byPeriod;
+    else if(candDocRaw && candDocRaw.overrides) S2.cand.legacy=candDocRaw.overrides; // 期末名簿がそろった時点で期ごとの形式に移す
   }catch(e){ console.error(e); S2.msg="登録済みの名簿を読み込めませんでした（"+(e.code||e.message)+"）"; }
   S2.loaded=true;
 }
@@ -1096,8 +1100,8 @@ const STAGES=[ // 段階ごとに色相を変えて、ひと目で区別でき�
   {k:"s5", label:"1級技術者",              color:"#2a78d6"}, // 青
   {k:"s4", label:"二次受検資格あり",        color:"#eb6834"}, // オレンジ
   {k:"s3", label:"技士補・実務経験中",      color:"#1baf7a"}, // 緑
-  {k:"s2", label:"一次受検可能（19歳以上）", color:"#eda100"}, // 黄
-  {k:"s1", label:"受検前（19歳未満）",       color:"#e87ba4"}, // ピンク
+  {k:"s2", label:"一次受検可能",            color:"#eda100"}, // 黄（次の一次検定の受検年度末に19歳以上）
+  {k:"s1", label:"受検前（次の一次はまだ受検できない）", color:"#e87ba4"}, // ピンク
   {k:"out",label:"対象外（分類・個人指定）",  color:"#d4d3cd"}, // 灰
 ];
 const STAGE_BY_KEY=Object.fromEntries(STAGES.map((x)=>[x.k,x]));
@@ -1124,13 +1128,32 @@ function resolveEngcd(r){
   const m=matchRosterRow(r);
   return m.engcd || r.engcd || "";
 }
-// 実働として数えるか：1級候補の判定と同じルール（個人指定が優先、「分類のとおり」なら分類のチェック）
-function countsAsReal(engcd, cls){
-  const ov=engcd ? S2.cand.overrides[engcd] : "";
+// 1級候補の個人指定（期ごと）：その期に指定が無ければ、それより前の一番新しい期の指定を引き継ぐ。
+// 一番古い指定より前の期には、一番古い指定を使う。
+function candPeriods(){
+  const c=S2.cand;
+  if(c.legacy && Object.keys(c.legacy).length && !Object.keys(c.byPeriod).length && S2.rosters.length){
+    c.byPeriod={[String(S2.rosters[S2.rosters.length-1].period)]: c.legacy}; c.legacy=null; c.migrated=true;
+  }
+  return Object.keys(c.byPeriod).map(Number).filter((x)=>!isNaN(x)).sort((a,b)=>a-b);
+}
+function candSourcePeriod(period){
+  const ps=candPeriods(); if(!ps.length) return null;
+  let pick=ps[0]; ps.forEach((x)=>{ if(x<=period) pick=x; }); return pick;
+}
+// candSourcePeriod → candPeriods の中で、旧形式の指定の移行も行う
+function ovMap(period){ const sp=candSourcePeriod(period); return sp===null ? {} : (S2.cand.byPeriod[String(sp)]||{}); }
+function ovOf(engcd, period){ return engcd ? (ovMap(period)[engcd]||"") : ""; }
+// 実働として数えるか：1級候補の判定と同じルール（その期の個人指定が優先、「分類のとおり」なら分類のチェック）
+function countsAsReal(engcd, cls, period){
+  const ov=ovOf(engcd, period);
   return ov==="in" ? true : ov==="out" ? false : !!S2.now.cls[cls||""];
 }
 const realMode=()=> S2.countMode==="real";
 const modeLabel=()=> realMode() ? "実働の数" : "資格保有の数";
+// 一次検定の受検資格（令和6年度〜）：受検年度末（3月31日）時点で19歳以上なら、学歴・実務経験を問わず受検できる。
+// 基準の期末（n期末＝(n+1957)/9/30）の次の一次検定は翌期中の7月（(n+1958)年）なので、その受検年度末は (n+1959)/3/31。
+const firstExamYearEnd=(period)=> String(period+1959)+"0331";
 // 受検する期の二次受検資格者（登録済み）の技術者コードの集合。未登録なら null。
 function nijiReg(period){
   const x=S2.niji.periods[String(period)];
@@ -1143,9 +1166,11 @@ function computeNow(roster, opt){
     const info=INFO_BY_ENGCD[engcd]||{};
     const bday=String(info.BDAY||"").replace(/[^\d]/g,"");
     const age=yearsBetween(bday, d);
+    const ageAtExamYE=yearsBetween(bday, firstExamYearEnd(roster.period)); // 次の一次検定の受検年度末の年齢
+    const tooYoung= ageAtExamYE!==null && ageAtExamYE<19;
     const lics=HELD_BY_ENGCD[engcd]||[];
     const k1=heldAt(lics,"doboku1",d), ho=heldAt(lics,"doboku1ho",d), k2=heldAt(lics,"doboku2",d);
-    const ov=engcd ? S2.cand.overrides[engcd] : "";
+    const ov=ovOf(engcd, roster.period);
     const target= ov==="in" ? true : ov==="out" ? false : !!opt.cls[r.cls||""];
     // 二次受検資格：別のシステムで算出して登録した「来期（基準の期末＋1）の受検資格者」を使う。
     // 登録が無い期だけ、技士補の取得からの年数（目安）で判定する。
@@ -1155,9 +1180,9 @@ function computeNow(roster, opt){
     let stage;
     if(k1) stage= realMode() && !target ? "out" : "s5"; // 実働の数では、含めない人の1級は数えない
     else if(!target && !isReg) stage="out";
-    else if(reg) stage= isReg ? "s4" : ho ? "s3" : (age!==null && age<19 ? "s1" : "s2");
+    else if(reg) stage= isReg ? "s4" : ho ? "s3" : (tooYoung ? "s1" : "s2");
     else if(ho) stage= exp!==null && exp>=opt.exp ? "s4" : "s3";
-    else if(age!==null && age<19) stage="s1";
+    else if(tooYoung) stage="s1";
     else stage="s2";
     return {no:r.no, name:r.name, cls:r.cls||"", engcd, age, stage, exp, has2:!!k2, ov, hasHo:!!ho, nijiReg: reg ? isReg : null,
       k1Held:!!k1, k1Real:!!k1 && target,
@@ -1292,7 +1317,7 @@ function rosterStats(roster){
     return {key:engcd?"e:"+engcd:"n:"+normCode(r.no), no:r.no, name:r.name, cls:r.cls||"", engcd,
       tenure:yearsBetween(String(info.NDAY||"").replace(/[^\d]/g,""), d),
       age:yearsBetween(String(info.BDAY||"").replace(/[^\d]/g,""), d), k1Held:!!engcd&&has1At(engcd,d), ho:!!engcd&&hoAt(engcd,d)}; });
-  ppl.forEach((p)=>{ p.k1Real=p.k1Held && countsAsReal(p.engcd,p.cls); p.k1= realMode() ? p.k1Real : p.k1Held; });
+  ppl.forEach((p)=>{ p.k1Real=p.k1Held && countsAsReal(p.engcd,p.cls,roster.period); p.k1= realMode() ? p.k1Real : p.k1Held; });
   const t=ppl.filter((p)=>p.k1), ta=t.filter((p)=>p.age!==null);
   return {period:roster.period, d, ppl, n1:t.length, n1Held:ppl.filter((p)=>p.k1Held).length, n1Real:ppl.filter((p)=>p.k1Real).length,
     nHo:ppl.filter((p)=>!p.k1Held&&p.ho).length, total:ppl.length,
@@ -1325,7 +1350,7 @@ function reconstruct(period, clsMap){
     if(!k1 && lics.some((l)=>c1.match(N(l.name)) && !l.sday)) unknownSday++;
     if(k1){
       n1Held++;
-      const ov=S2.cand.overrides[engcd];
+      const ov=ovOf(engcd, period);
       const real= ov==="in" ? true : ov==="out" ? false : (engcd in clsMap ? !!S2.now.cls[clsMap[engcd]] : true);
       if(real) n1Real++;
       if(!realMode() || real) n1++;
@@ -1477,6 +1502,21 @@ const RET_KEYS=[
   ["a50","50〜54歳",(a)=>a>=50&&a<55,97], ["a55","55〜59歳",(a)=>a>=55&&a<60,96], ["a60","60〜64歳",(a)=>a>=60&&a<65,90],
   ["a65","65〜69歳",(a)=>a>=65&&a<70,80], ["a70","70歳以上",(a)=>a>=70,65]];
 const MID_KEYS=new Set(["a30","a40"]); // 中堅（30〜49歳）
+// 在籍率の実績（年代別・入社3年以内）。「年代別の在籍率・離職率」の表と同じ数え方・同じデータ（rosterStats）を使う。
+function retentionActuals(){
+  const R=S2.rosters, st=new Map(R.map((r)=>[r.period, rosterStats(r)]));
+  const out={newbie:[0,0], ret:Object.fromEntries(RET_KEYS.map(([k])=>[k,[0,0]]))};
+  for(let i=1;i<R.length;i++){
+    if(R[i].period!==R[i-1].period+1) continue;
+    const a=st.get(R[i-1].period), b=st.get(R[i].period), bk=new Set(b.ppl.map((p)=>p.key));
+    a.ppl.forEach((p)=>{
+      const stay=bk.has(p.key);
+      if(p.tenure!==null && p.tenure<3){ out.newbie[0]++; if(stay) out.newbie[1]++; }
+      else if(p.age!==null){ const k=RET_KEYS.find(([,,f])=>f(p.age)); if(k){ out.ret[k[0]][0]++; if(stay) out.ret[k[0]][1]++; } }
+    });
+  }
+  return out;
+}
 function simDefaults(){
   const opt={...S2.now, cls:S2.now.cls};
   const P={years:15, exp:S2.now.exp, ret:{}, src:{}, newbie:90, p1:15, p2:30,
@@ -1498,8 +1538,6 @@ function simDefaults(){
     const A=at(a), B=at(b), bm=new Map(B.map((p)=>[p.key,p])), am=new Set(A.map((p)=>p.key));
     A.forEach((p)=>{
       const stay=bm.has(p.key);
-      if(p.tenure!==null && p.tenure<3){ acc.newbie[0]++; if(stay) acc.newbie[1]++; }
-      else if(p.age!==null){ const k=RET_KEYS.find(([,,f])=>f(p.age)); if(k){ acc.ret[k[0]][0]++; if(stay) acc.ret[k[0]][1]++; } }
       if(!stay) return;
       const q=bm.get(p.key);
       if(p.stage==="s2"){ acc.p1[0]++; if(["s3","s4","s5"].includes(q.stage)) acc.p1[1]++; }
@@ -1509,6 +1547,7 @@ function simDefaults(){
       if(q.stage==="s5") acc.hire.mid1++; else if(q.age!==null && q.age<=19) acc.hire.high++; else if(q.age!==null && q.age<=25) acc.hire.univ++; else acc.hire.mid++; });
   });
   const n=pairs.length;
+  const ra=retentionActuals(); acc.ret=ra.ret; acc.newbie=ra.newbie;
   RET_KEYS.forEach(([k])=>{ const [t,st]=acc.ret[k]; if(t>=8){ P.ret[k]=Math.round(st/t*100); P.src["ret_"+k]=`実績 ${st}/${t}人`; } });
   if(acc.newbie[0]>=5){ P.newbie=Math.round(acc.newbie[1]/acc.newbie[0]*100); P.src.newbie=`実績 ${acc.newbie[1]}/${acc.newbie[0]}人`; }
   if(acc.p1[0]>=10){ P.p1=Math.round(acc.p1[1]/acc.p1[0]*100); P.src.p1=`実績 ${acc.p1[1]}/${acc.p1[0]}人`; }
@@ -1540,14 +1579,17 @@ function simulate(init, P){
     st.forEach((o)=>{
       const w=o.w*rate(o.age,o.nb); if(w<1e-6) return;
       const b={age:o.age+1, stage:o.stage, exp:o.exp, nb:Math.min(3,o.nb+1), w};
-      if(b.stage==="s1"){ if(b.age>=19) b.stage="s2"; add(nx,b); }
+      if(b.stage==="s1"){ if(b.age>=18) b.stage="s2"; add(nx,b); } // 期末18歳以上なら、次の一次検定の受検年度末には19歳以上
       else if(b.stage==="s2"){ const pass=w*P.p1/100; if(pass>0) add(nx,{...b, stage:"s3", exp:0, w:pass}); if(w-pass>0) add(nx,{...b, w:w-pass}); }
       else if(b.stage==="s3"){ b.exp=o.exp+1; if(b.exp>=P.exp) b.stage="s4"; add(nx,b); }
       else if(b.stage==="s4"){ const pass=w*P.p2/100; if(pass>0) add(nx,{...b, stage:"s5", w:pass}); if(w-pass>0) add(nx,{...b, w:w-pass}); }
       else add(nx,b);
     });
-    const hire=(n,o)=>{ if(n>0) add(nx,{...o, nb:0, w:n}); };
-    hire(P.hireHigh,{age:18, stage:"s1", exp:0});
+    // 採用：一次検定を受けられる人（s2）は、入社した年の7月の一次検定から受検できるので、その年のうちに合格の割合だけ技士補になる
+    const hire=(n,o)=>{ if(!(n>0)) return;
+      if(o.stage==="s2"){ const pass=n*P.p1/100; if(pass>0) add(nx,{...o, stage:"s3", exp:0, nb:0, w:pass}); if(n-pass>0) add(nx,{...o, nb:0, w:n-pass}); }
+      else add(nx,{...o, nb:0, w:n}); };
+    hire(P.hireHigh,{age:18, stage:"s2", exp:0}); // 高卒（18歳）も入社1年目の一次検定から受検できる（受検年度末に19歳）
     hire(P.hireUniv,{age:22, stage:"s2", exp:0});
     hire(P.midNone,{age:P.midAge, stage:"s2", exp:0});
     hire(P.midHo,{age:P.midAge, stage:"s3", exp:0});
@@ -1574,6 +1616,13 @@ function renderSim(){
       <button class="btn primary" data-sub="data">データ管理へ</button></div>`;
   }
   if(!S2.sim || S2.simBase!==S2.rosters.map((r)=>r.period).join(",")){ S2.sim=simDefaults(); S2.simBase=S2.rosters.map((r)=>r.period).join(","); }
+  else {
+    // 実績・仮の値は表示のたびに最新のデータで取り直す（手入力した値だけは残す）
+    const F=simDefaults(), Q=S2.sim;
+    RET_KEYS.forEach(([k])=>{ if(Q.src["ret_"+k]!=="手入力"){ Q.ret[k]=F.ret[k]; Q.src["ret_"+k]=F.src["ret_"+k]; } });
+    ["newbie","p1","p2"].forEach((k)=>{ if(Q.src[k]!=="手入力"){ Q[k]=F[k]; Q.src[k]=F.src[k]; } });
+    if(Q.src.hire!=="手入力"){ ["hireHigh","hireUniv","midNone","midHo","mid1"].forEach((k)=>{ Q[k]=F[k]; }); Q.src.hire=F.src.hire; }
+  }
   const P=S2.sim, base=S2.rosters[S2.rosters.length-1].period;
   // 必要数
   const nperiods=[]; for(let p=base-2;p<=base+2;p++) nperiods.push(p);
@@ -1600,7 +1649,7 @@ function renderSim(){
     <div class="verdict">必要数 <b>${need0}人</b> に対し、現在（${base}期末）の1級技術者（${modeLabel()}）は <b>${fmt(A[0].s5)}人</b>${gapNow>1e-9?`で、<b class="ng">すでに${fmt(gapNow)}人不足</b>しています`:""}。
     現状のままだと ${fsTxt(fsA)}（${P.years}年後は約${fmt(A[A.length-1].s5)}人）。</div>
     ${P.p1===0||P.p2===0?`<div class="note-box">⚠ ${P.p1===0?"一次検定":""}${P.p1===0&&P.p2===0?"・":""}${P.p2===0?"二次検定":""}の合格の割合が <b>0%</b> になっているため、新しく1級になる人が出ません（新卒を増やしても1級は増えない計算になります）。実績が少ないことが原因の場合は、下の「前提条件」で実態に近い値に直してください。</div>`:""}
-    ${S2.now.cls["その他"]||Object.values(S2.cand.overrides).includes("in")?"":`<div class="note-box">1級候補が「イロハ」の分類だけになっています。「その他」に入っている技術系の若手を含めるには、「データ管理」の「1級候補の個人指定」で「含める」にしてください。</div>`}
+    ${S2.now.cls["その他"]||Object.values(ovMap(base)).includes("in")?"":`<div class="note-box">1級候補が「イロハ」の分類だけになっています。「その他」に入っている技術系の若手を含めるには、「データ管理」の「1級候補の個人指定」で「含める」にしてください。</div>`}
     <table class="grid-tbl" style="margin-top:10px"><tr><th>シナリオ</th><th>不足が始まる期</th><th>5年後</th><th>10年後</th><th>${P.years}年後</th></tr>`+
     scen.map((x)=>{ const f=firstShort(x.res,need0); return `<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${x.color};margin-right:6px"></i>${x.k}：${esc(x.name)}</td>
       <td>${f<0?"不足なし":base+f+"期末"}</td>${[5,10,P.years].map((y)=>`<td class="n">${x.res[y]?fmt(x.res[y].s5):"–"}</td>`).join("")}</tr>`; }).join("")+`</table></div>`;
@@ -1619,7 +1668,7 @@ function renderSim(){
 
   // ---- 打ち手の逆算 ----
   const bh=backCalc(init,P,need0,"hire"), bp=backCalc(init,P,need0,"pass"), bm=backCalc(init,P,need0,"mid1");
-  const lead=(kind)=> kind==="hire" ? `最短でも入社から約${1+P.exp+1}年（一次検定→実務経験${P.exp}年→二次検定）` : kind==="pass" ? "今いる技士補・受検可能者にすぐ効く（1〜数年）" : "入社したその期から";
+  const lead=(kind)=> kind==="hire" ? `最短でも入社から約${P.exp+1}年（入社1年目に一次検定→実務経験${P.exp}年→二次検定）` : kind==="pass" ? "今いる技士補・受検可能者にすぐ効く（1〜数年）" : "入社したその期から";
   const res=(b,kind)=>{
     if(fsA<0) return "現状のままで不足なし";
     if(b.ok){
@@ -1635,7 +1684,7 @@ function renderSim(){
       <tr><td>新卒（大卒）を増やす</td><td>${lead("hire")}</td><td>${res(bh,"hire")}</td></tr>
       <tr><td>一発合格を徹底する</td><td>${lead("pass")}</td><td>${res(bp,"pass")}</td></tr>
       <tr><td>中途（1級保有者）を採る</td><td>${lead("mid1")}</td><td>${res(bm,"mid1")}</td></tr></table>
-    ${fsA>0 && fsA<=1+P.exp+1 ? `<div class="note-box">⚠ 不足が始まるのは ${base+fsA}期末で、新卒が1級になるまでの年数（約${1+P.exp+1}年）より早く来ます。<b>直近の不足には中途採用か合格率の改善</b>でしか間に合いません。新卒はその後の不足への備えになります。</div>`:""}</div>`;
+    ${fsA>0 && fsA<=P.exp+1 ? `<div class="note-box">⚠ 不足が始まるのは ${base+fsA}期末で、新卒が1級になるまでの年数（約${P.exp+1}年）より早く来ます。<b>直近の不足には中途採用か合格率の改善</b>でしか間に合いません。新卒はその後の不足への備えになります。</div>`:""}</div>`;
 
   h+=renderSimInputs(P, nb, base, auto, need0);
   return h;
@@ -1671,7 +1720,8 @@ function renderSimInputs(P, nb, base, auto, need0){
   const num=(path,val,step=1,min=0,max=1000)=>`<input type="number" data-sim="${path}" value="${val}" step="${step}" min="${min}" max="${max}">`;
   const src=(t)=> !t ? "" : `<span class="src ${t.startsWith("実績")?"act":t==="仮"?"tmp":"calc"}">${esc(t)}</span>`;
   let h=`<div class="card"><h2>前提条件</h2>
-    <p class="desc">数値を変えると、すぐに計算し直します。<span class="src act">実績</span>は期末名簿の比較から、<span class="src tmp">仮</span>は実績が少ないための仮の値です。仮の値は、分かる範囲で実態に近い値に直してください。</p>
+    <p class="desc">数値を変えると、すぐに計算し直します。<span class="src act">実績</span>は期末名簿の比較から（表示のたびに最新のデータで計算し直します）、<span class="src tmp">仮</span>は実績が少ないための仮の値です。仮の値は、分かる範囲で実態に近い値に直してください。直した値は<span class="src calc">手入力</span>になり、そのまま残ります。
+    ${Object.values(P.src).includes("手入力")?`<button class="btn" id="simReset" style="margin-left:6px">手入力をやめて実績の値に戻す</button>`:""}</p>
     <div class="sim-grid">
     <div class="sim-grp"><h4>在籍率（1年後も在籍している割合）</h4>`+
       RET_KEYS.map(([k,label])=>`<div class="sim-in"><span class="l" style="white-space:nowrap">${label}${MID_KEYS.has(k)?'<span class="muted">・中堅</span>':""}</span>${num("ret."+k,P.ret[k],1,0,100)}%<span class="muted" style="white-space:nowrap">離職${Math.max(0,100-P.ret[k])}%</span>${src(P.src["ret_"+k])}</div>`).join("")+
@@ -1683,7 +1733,7 @@ function renderSimInputs(P, nb, base, auto, need0){
       <div class="sim-in"><span class="l">技士補から二次受検資格までの年数（将来分の目安。出発時点は登録を使用）</span><select data-sim="exp"><option value="5"${P.exp===5?" selected":""}>5年</option><option value="3"${P.exp===3?" selected":""}>3年</option></select></div>
       <div class="sim-in"><span class="l">予測する期間</span>${num("years",P.years,1,5,25)}年</div></div>
     <div class="sim-grp"><h4>毎年の採用（今の計画）${src(P.src.hire)}</h4>
-      <div class="sim-in"><span class="l">新卒・高卒（18歳）</span>${num("hireHigh",P.hireHigh)}人</div>
+      <div class="sim-in"><span class="l">新卒・高卒（18歳・入社1年目から一次を受検可）</span>${num("hireHigh",P.hireHigh)}人</div>
       <div class="sim-in"><span class="l">新卒・大卒（22歳）</span>${num("hireUniv",P.hireUniv)}人</div>
       <div class="sim-in"><span class="l">中途・資格なし</span>${num("midNone",P.midNone)}人</div>
       <div class="sim-in"><span class="l">中途・技士補あり</span>${num("midHo",P.midHo)}人</div>
@@ -1712,6 +1762,12 @@ function renderSimInputs(P, nb, base, auto, need0){
 }
 
 /* ---- シミュレーションの入力 ---- */
+structEl.addEventListener("click",(e)=>{
+  if(e.target.id!=="simReset" || !S2.sim) return;
+  // 手入力の印を外すと、次の表示で実績（または仮）の値に置き換わる。打ち手・必要数の設定はそのまま。
+  Object.keys(S2.sim.src).forEach((k)=>{ if(S2.sim.src[k]==="手入力") S2.sim.src[k]="仮"; });
+  renderStruct();
+});
 const setPath=(o,path,v)=>{ const ks=path.split("."); let c=o; for(let i=0;i<ks.length-1;i++) c=c[ks[i]]; c[ks[ks.length-1]]=v; };
 structEl.addEventListener("change",(e)=>{
   const t=e.target; if(!S2.sim) return;
@@ -1816,7 +1872,8 @@ function renderRetention(stats){
   const withAge=retired.map((e)=>{ const info=INFO_BY_ENGCD[String(e.ENGCD)]||{};
     const rd=String(e.RETIRE_DATE||"").replace(/[^\d]/g,""), bd=String(info.BDAY||"").replace(/[^\d]/g,"");
     const held=has1At(String(e.ENGCD), rd||"99991231");
-    return {e, age:yearsBetween(bd,rd), k1: held && (!realMode() || S2.cand.overrides[String(e.ENGCD)]!=="out")}; }).filter((x)=>x.age!==null);
+    const lastP=S2.rosters.length?S2.rosters[S2.rosters.length-1].period:0;
+    return {e, age:yearsBetween(bd,rd), k1: held && (!realMode() || ovOf(String(e.ENGCD), lastP)!=="out")}; }).filter((x)=>x.age!==null);
   const buckets=[["59歳以下",(a)=>a<60],["60歳",(a)=>a===60],["61〜64歳",(a)=>a>=61&&a<=64],["65歳",(a)=>a===65],["66〜69歳",(a)=>a>=66&&a<=69],["70歳以上",(a)=>a>=70]];
   h+=`<h3 style="font-size:13px;margin:16px 0 4px">③ 退職したときの年齢（社員データの退職日から）</h3>`;
   if(!withAge.length) h+=`<p class="muted">退職日と生年月日の両方が登録されている退職者がいないため、表示できません（退職者 ${retired.length}人）。工事実績システムの「技術者在籍・所属管理」で退職日を登録すると表示されます。</p>`;
@@ -1883,8 +1940,8 @@ function empDeptText(e){
   const c=String(e.COMPCD||"").trim();
   return /^\d+$/.test(c) ? "" : c;
 }
-function candPeople(){
-  const roster=S2.rosters[S2.rosters.length-1]; if(!roster) return [];
+function candPeople(period){
+  const roster=S2.rosters.find((x)=>x.period===period) || S2.rosters[S2.rosters.length-1]; if(!roster) return [];
   const d=periodEnd(roster.period);
   return roster.rows.map((r)=>{
     const engcd=resolveEngcd(r); if(!engcd) return null;
@@ -1892,49 +1949,69 @@ function candPeople(){
     const tags=[]; if(heldAt(lics,"doboku1",d)) tags.push("1級"); if(heldAt(lics,"doboku1ho",d)) tags.push("1級技士補");
     if(heldAt(lics,"doboku2",d)) tags.push("2級"); if(lics.some((l)=>/土木施工管理技士補/.test(N(l.name)) && gradeOf(N(l.name))===2)) tags.push("2級技士補");
     return {engcd, no:r.no, name:r.name, cls:r.cls||"", dept:empDeptText(empByEngcd(engcd)), age:yearsBetween(String(info.BDAY||"").replace(/[^\d]/g,""), d), tags,
-      auto: !!S2.now.cls[r.cls||""]};
+      auto: !!S2.now.cls[r.cls||""], period:roster.period};
   }).filter(Boolean);
 }
 function renderCandCard(){
-  const ov=S2.cand.draft || S2.cand.overrides;
+  const c=S2.cand;
+  // 期を自分で選んでいなければ、最新の期末を表示する
+  if(S2.rosters.length && (!c.periodPicked || !S2.rosters.some((x)=>x.period===c.period))) c.period=S2.rosters[S2.rosters.length-1].period;
+  const P=c.period, src=P!==null?candSourcePeriod(P):null, own=P!==null && S2.cand.byPeriod[String(P)]!==undefined;
+  const ov=c.draft || (P!==null?ovMap(P):{});
+  // 比べる前の期：登録済みの期末名簿のうち、この期より前で一番新しい期
+  const prevP=(S2.rosters.filter((x)=>x.period<P).slice(-1)[0]||{}).period;
+  const prevOv= prevP!==undefined ? ovMap(prevP) : null;
   const nIn=Object.values(ov).filter((v)=>v==="in").length, nOut=Object.values(ov).filter((v)=>v==="out").length;
+  const changed= prevOv ? new Set([...Object.keys(ov),...Object.keys(prevOv)].filter((k)=>(ov[k]||"")!==(prevOv[k]||""))) : new Set();
+  const ovLabel=(v)=> v==="in"?"含める":v==="out"?"含めない":"分類のとおり";
   let h=`<div class="card"><h2>1級候補の個人指定</h2>
     <p class="desc">通常は分類で判定します（いまの設定：${CLS_ORDER.filter((c)=>S2.now.cls[c]).map(clsLabel).join("・")||"なし"}を候補にする。「現状」画面で変更できます）。
     分類だけでは決めきれない人を、1人ずつ「含める／含めない」に指定できます。<br>
     1級を持っている人は、「資格保有の数」では指定に関係なく数え、「実働の数」では「含めない」の人（「分類のとおり」で分類にチェックが無い人も）を除きます。<br>
-    いまの指定：含める <b>${nIn}人</b>・含めない <b>${nOut}人</b>${S2.cand.info?`<span class="muted">（${esc(S2.cand.info)}）</span>`:""}</p>`;
+    指定は<b>期末ごと</b>に記録します。その期に指定が無いときは、前の期の指定を引き継ぎます（人事異動で変わった人だけ、その期で直せば済みます）。各画面では、表示している期末の指定を使います。<br>
+    ${P!==null?`<b>${P}期末</b>の指定：含める <b>${nIn}人</b>・含めない <b>${nOut}人</b>${prevOv?`・${prevP}期末から変わった人 <b>${changed.size}人</b>`:""}`:""}
+    ${S2.cand.info?`<span class="muted">（${esc(S2.cand.info)}）</span>`:""}
+    ${S2.cand.migrated?`<br><span class="pill warn">これまでの指定は${candPeriods()[0]}期末の指定として扱っています（保存すると期ごとの形式で記録されます）</span>`:""}</p>`;
   if(!canEdit) return h+`<p class="muted">指定の変更は編集権限のある人のみ行えます。</p></div>`;
   if(!S2.rosters.length) return h+`<p class="muted">期末名簿を取り込むと指定できます。</p></div>`;
-  const c=S2.cand;
-  let ppl=candPeople();
-  const noLink=S2.rosters[S2.rosters.length-1].rows.length-ppl.length;
-  if(c.filterCls!=="all") ppl=ppl.filter((p)=>p.cls===c.filterCls || (c.filterCls==="指定済み" && ov[p.engcd]));
-  if(c.filterCls==="指定済み") ppl=candPeople().filter((p)=>ov[p.engcd]);
+  let ppl=candPeople(P);
+  const noLink=(S2.rosters.find((x)=>x.period===P)||{rows:[]}).rows.length-ppl.length;
+  if(c.filterCls==="変更") ppl=ppl.filter((p)=>changed.has(p.engcd));
+  else if(c.filterCls==="指定済み") ppl=ppl.filter((p)=>ov[p.engcd]);
+  else if(c.filterCls!=="all") ppl=ppl.filter((p)=>p.cls===c.filterCls);
   if(c.onlyCivil) ppl=ppl.filter((p)=>p.tags.length || ov[p.engcd]);
   if(c.q) ppl=ppl.filter((p)=>(p.name+p.no+p.dept).replace(/[\s　]/g,"").includes(c.q.replace(/[\s　]/g,"")));
   ppl.sort((a,b)=>(a.age??999)-(b.age??999));
-  h+=`<div class="imp-row">
-      <select data-cand="filterCls">${[["その他","分類：その他"],["イロハ","分類：イロハ"],["事務","分類：事務"],["","分類：（空欄）"],["all","すべての分類"],["指定済み","指定済みの人だけ"]].map(([v,l])=>`<option value="${esc(v)}"${c.filterCls===v?" selected":""}>${l}</option>`).join("")}</select>
+  h+=`<div class="imp-row"><b>指定する期</b>
+      <select data-cand-period>${S2.rosters.map((x)=>`<option value="${x.period}"${x.period===P?" selected":""}>${x.period}期末（${fmtYmdSlash(x.baseDate)}）</option>`).join("")}</select>
+      ${own ? `<span class="pill ok">この期の指定あり</span>` : src!==null ? `<span class="pill warn">${src}期末の指定を引き継いで表示中（保存するとこの期の指定になります）</span>` : `<span class="muted">まだ指定がありません</span>`}</div>
+    <div class="imp-row">
+      <select data-cand="filterCls">${[["その他","分類：その他"],["イロハ","分類：イロハ"],["事務","分類：事務"],["","分類：（空欄）"],["all","すべての分類"],["指定済み","指定済みの人だけ"],["変更","前の期から変わった人だけ"]].map(([v,l])=>`<option value="${esc(v)}"${c.filterCls===v?" selected":""}>${l}</option>`).join("")}</select>
       <label><input type="checkbox" data-cand-chk="onlyCivil"${c.onlyCivil?" checked":""}> 土木系の資格（1級・技士補・2級）がある人だけ</label>
       <input type="search" data-cand="q" value="${esc(c.q)}" placeholder="氏名・社員番号・所属" style="padding:5px 8px;border:1px solid var(--line);border-radius:6px">
       <span class="muted">${ppl.length}人を表示（年齢の若い順）</span></div>
-    <table class="grid-tbl"><tr><th>社員番号</th><th>氏名</th><th>所属</th><th>分類</th><th>年齢</th><th>土木系の資格</th><th>分類による判定</th><th>個人指定</th></tr>`+
-    ppl.map((p)=>{ const v=ov[p.engcd]||"";
+    <table class="grid-tbl"><tr><th>社員番号</th><th>氏名</th><th>所属</th><th>分類</th><th>年齢</th><th>土木系の資格</th><th>分類による判定</th><th>個人指定（${P}期末）</th>${prevOv?`<th>${prevP}期末の指定</th>`:""}</tr>`+
+    ppl.map((p)=>{ const v=ov[p.engcd]||"", pv=prevOv?(prevOv[p.engcd]||""):"";
       return `<tr><td>${esc(p.no)}</td><td>${esc(p.name)}</td><td>${esc(p.dept)||'<span class="muted">–</span>'}</td><td>${esc(clsLabel(p.cls))}</td><td class="n">${p.age??"–"}</td>
         <td>${p.tags.map((t)=>`<span class="pill ${t==="1級"?"ok":"warn"}">${t}</span>`).join(" ")||'<span class="muted">–</span>'}</td>
-        <td>${p.tags.includes("1級")?`1級技術者（実働に${countsAsReal(p.engcd,p.cls)?"数える":"<b>数えない</b>"}）`:p.auto?"含める":"含めない"}</td>
-        <td><select data-cand-ov="${esc(p.engcd)}"><option value="">分類のとおり</option><option value="in"${v==="in"?" selected":""}>含める</option><option value="out"${v==="out"?" selected":""}>含めない</option></select></td></tr>`; }).join("")+
+        <td>${p.tags.includes("1級")?`1級技術者（実働に${(v==="in"||(v!=="out"&&p.auto))?"数える":"<b>数えない</b>"}）`:p.auto?"含める":"含めない"}</td>
+        <td><select data-cand-ov="${esc(p.engcd)}"><option value="">分類のとおり</option><option value="in"${v==="in"?" selected":""}>含める</option><option value="out"${v==="out"?" selected":""}>含めない</option></select></td>
+        ${prevOv?`<td>${v!==pv?`<span class="pill warn">変更</span> `:""}<span class="muted">${ovLabel(pv)}</span></td>`:""}</tr>`; }).join("")+
     `</table>${noLink?`<p class="desc" style="margin-top:6px">社員データと紐付いていない ${noLink}人は指定できません。</p>`:""}
-    <div class="imp-row" style="margin-top:10px"><button class="btn primary" id="candSave"${c.draft?"":" disabled"}>指定を保存</button>
+    <div class="imp-row" style="margin-top:10px"><button class="btn primary" id="candSave"${c.draft?"":" disabled"}>${P}期末の指定として保存</button>
       ${c.draft?`<button class="btn" id="candCancel">変更を取り消す</button><span class="pill warn">未保存の変更があります</span>`:""}</div></div>`;
   return h;
 }
 structEl.addEventListener("change",(e)=>{
   const t=e.target, c=S2.cand;
+  if(t.dataset.candPeriod!==undefined){
+    if(c.draft && !confirm("保存していない変更があります。破棄して期を切り替えますか？")){ t.value=c.period; return; }
+    c.draft=null; c.period=parseInt(t.value,10); c.periodPicked=true; renderStruct(); return;
+  }
   if(t.dataset.cand){ c[t.dataset.cand]=t.value; renderStruct(); }
   else if(t.dataset.candChk){ c[t.dataset.candChk]=t.checked; renderStruct(); }
   else if(t.dataset.candOv!==undefined){
-    c.draft=c.draft||{...c.overrides};
+    c.draft=c.draft||{...ovMap(c.period)};
     if(t.value) c.draft[t.dataset.candOv]=t.value; else delete c.draft[t.dataset.candOv];
     renderStruct();
   }
@@ -1942,10 +2019,12 @@ structEl.addEventListener("change",(e)=>{
 structEl.addEventListener("click", async (e)=>{
   if(e.target.id==="candCancel"){ S2.cand.draft=null; renderStruct(); return; }
   if(e.target.id!=="candSave" || !S2.cand.draft) return;
-  const rec={overrides:S2.cand.draft, updatedAt:Date.now(), updatedBy:(auth.currentUser&&auth.currentUser.email)||""};
+  const P=S2.cand.period;
+  const byPeriod={...S2.cand.byPeriod, [String(P)]:S2.cand.draft};
+  const rec={byPeriod, updatedAt:Date.now(), updatedBy:(auth.currentUser&&auth.currentUser.email)||"", updatedPeriod:P};
   try{
     await setDoc(doc(db,"meta",CAND_DOC), rec);
-    S2.cand.overrides=rec.overrides; S2.cand.draft=null; S2.cand.info=`最終更新 ${new Date(rec.updatedAt).toLocaleString("ja-JP")} ${rec.updatedBy}`;
+    S2.cand.byPeriod=byPeriod; S2.cand.draft=null; S2.cand.migrated=false; S2.cand.info=`最終更新 ${new Date(rec.updatedAt).toLocaleString("ja-JP")} ${rec.updatedBy}`;
     S2.sim=null; // シミュレーションの初期値（実績）を新しい指定で取り直す
   }catch(err){ S2.msg="指定を保存できませんでした（"+(err.code||err.message)+"）"; }
   renderStruct();
@@ -1974,7 +2053,7 @@ function targetLists(){
     lists.push({k:"s3", title:`技士補・上記以外の人（目安）`, why:`1級技士補を持ち、技士補の取得から${E}年に届いていない人です（目安）。`,
       rows:byAge(ppl.filter((p)=>p.stage==="s3")), cols:["ho","exp"], est:true});
   }
-  lists.push({k:"s2", title:`一次検定の受検対象（1級候補で19歳以上・技士補なし）`, why:`まだ1級技士補を持っていない人です。2級を持っている人には印を付けています。`,
+  lists.push({k:"s2", title:`一次検定の受検対象（${nextP}期の一次検定を受検できる人・技士補なし）`, why:`受検年度末（${fmtYmdSlash(firstExamYearEnd(roster.period))}）に19歳以上になる、まだ1級技士補を持っていない1級候補です。2級を持っている人には印を付けています。`,
     rows:byAge(ppl.filter((p)=>p.stage==="s2")), cols:["has2"]});
   const prevReg=nijiReg(roster.period);
   lists.push({k:"stuck", title:`前の期（${roster.period}期）にも受検資格があったのに、まだ1級になっていない人`, why: prevReg ? `${roster.period}期の受検資格者に登録されていて、${roster.period}期末時点で1級を持っていない人です。受検・合格の状況を確認したい人です。` : `${roster.period}期の受検資格者が登録されていないため、表示できません。`,
