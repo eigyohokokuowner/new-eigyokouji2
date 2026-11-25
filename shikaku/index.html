@@ -1521,6 +1521,7 @@ function simDefaults(){
   const opt={...S2.now, cls:S2.now.cls};
   const P={years:15, exp:S2.now.exp, ret:{}, src:{}, newbie:90, p1:15, p2:30,
     hireHigh:0, hireUniv:0, midNone:0, midHo:0, mid1:0, midAge:35,
+    midTiming:"next", // 中途（1級あり）を技術者として数え始める時期（入社後6か月以上の雇用が条件）："next"＝翌期末から／"same"＝入社した期末から
     lever:{hire:2, pass:100, mid1:1},
     need:{mode:"peak3", manual:0, roles:{"監理":true,"主任":false}, anken:true, margin:0}};
   RET_KEYS.forEach(([k,,,def])=>{ P.ret[k]=def; P.src["ret_"+k]="仮"; });
@@ -1572,7 +1573,8 @@ function simulate(init, P){
   let st=new Map();
   const add=(m,o)=>{ const k=`${o.age}|${o.stage}|${o.exp}|${o.nb}`; const c=m.get(k); if(c) c.w+=o.w; else m.set(k,{...o}); };
   init.forEach((o)=>add(st,o));
-  const snap=()=>{ const r={s5:0,s4:0,s3:0,s2:0,s1:0,s5_60:0}; st.forEach((o)=>{ r[o.stage]+=o.w; if(o.stage==="s5"&&o.age>=60) r.s5_60+=o.w; }); return r; };
+  // p5＝1級を持つ中途で、雇用6か月に満たず期末にはまだ数えない人（1級技術者の人数には入れない）
+  const snap=()=>{ const r={s5:0,s4:0,s3:0,s2:0,s1:0,s5_60:0,p5:0}; st.forEach((o)=>{ r[o.stage]+=o.w; if(o.stage==="s5"&&o.age>=60) r.s5_60+=o.w; }); return r; };
   const out=[snap()];
   for(let y=1;y<=P.years;y++){
     const nx=new Map();
@@ -1583,6 +1585,7 @@ function simulate(init, P){
       else if(b.stage==="s2"){ const pass=w*P.p1/100; if(pass>0) add(nx,{...b, stage:"s3", exp:0, w:pass}); if(w-pass>0) add(nx,{...b, w:w-pass}); }
       else if(b.stage==="s3"){ b.exp=o.exp+1; if(b.exp>=P.exp) b.stage="s4"; add(nx,b); }
       else if(b.stage==="s4"){ const pass=w*P.p2/100; if(pass>0) add(nx,{...b, stage:"s5", w:pass}); if(w-pass>0) add(nx,{...b, w:w-pass}); }
+      else if(b.stage==="p5"){ b.stage="s5"; add(nx,b); } // 翌期末には雇用6か月以上になり、技術者として数える
       else add(nx,b);
     });
     // 採用：一次検定を受けられる人（s2）は、入社した年の7月の一次検定から受検できるので、その年のうちに合格の割合だけ技士補になる
@@ -1593,7 +1596,8 @@ function simulate(init, P){
     hire(P.hireUniv,{age:22, stage:"s2", exp:0});
     hire(P.midNone,{age:P.midAge, stage:"s2", exp:0});
     hire(P.midHo,{age:P.midAge, stage:"s3", exp:0});
-    hire(P.mid1,{age:P.midAge, stage:"s5", exp:0});
+    // 中途（1級あり）：入社後6か月以上の雇用が条件。4〜9月入社なら、その期末にはまだ6か月に満たないので翌期末から数える。
+    hire(P.mid1,{age:P.midAge, stage: P.midTiming==="same" ? "s5" : "p5", exp:0});
     st=nx; out.push(snap());
   }
   return out;
@@ -1668,7 +1672,7 @@ function renderSim(){
 
   // ---- 打ち手の逆算 ----
   const bh=backCalc(init,P,need0,"hire"), bp=backCalc(init,P,need0,"pass"), bm=backCalc(init,P,need0,"mid1");
-  const lead=(kind)=> kind==="hire" ? `最短でも入社から約${P.exp+1}年（入社1年目に一次検定→実務経験${P.exp}年→二次検定）` : kind==="pass" ? "今いる技士補・受検可能者にすぐ効く（1〜数年）" : "入社したその期から";
+  const lead=(kind)=> kind==="hire" ? `最短でも入社から約${P.exp+1}年（入社1年目に一次検定→実務経験${P.exp}年→二次検定）` : kind==="pass" ? "今いる技士補・受検可能者にすぐ効く（1〜数年）" : (P.midTiming==="same" ? "入社した期末から（入社後6か月以上の雇用が条件。10〜3月入社の場合）" : "入社した翌期末から（入社後6か月以上の雇用が条件。4〜9月入社の場合）");
   const res=(b,kind)=>{
     if(fsA<0) return "現状のままで不足なし";
     if(b.ok){
@@ -1724,7 +1728,7 @@ function renderSimInputs(P, nb, base, auto, need0){
     ${Object.values(P.src).includes("手入力")?`<button class="btn" id="simReset" style="margin-left:6px">手入力をやめて実績の値に戻す</button>`:""}</p>
     <div class="sim-grid">
     <div class="sim-grp"><h4>在籍率（1年後も在籍している割合）</h4>`+
-      RET_KEYS.map(([k,label])=>`<div class="sim-in"><span class="l" style="white-space:nowrap">${label}${MID_KEYS.has(k)?'<span class="muted">・中堅</span>':""}</span>${num("ret."+k,P.ret[k],1,0,100)}%<span class="muted" style="white-space:nowrap">離職${Math.max(0,100-P.ret[k])}%</span>${src(P.src["ret_"+k])}</div>`).join("")+
+      [...RET_KEYS].reverse().map(([k,label])=>`<div class="sim-in"><span class="l" style="white-space:nowrap">${label}${MID_KEYS.has(k)?'<span class="muted">・中堅</span>':""}</span>${num("ret."+k,P.ret[k],1,0,100)}%<span class="muted" style="white-space:nowrap">離職${Math.max(0,100-P.ret[k])}%</span>${src(P.src["ret_"+k])}</div>`).join("")+
       `<div class="sim-in"><span class="l" style="white-space:nowrap">入社3年以内</span>${num("newbie",P.newbie,1,0,100)}%<span class="muted" style="white-space:nowrap">離職${Math.max(0,100-P.newbie)}%</span>${src(P.src.newbie)}</div>
       <p class="desc" style="margin:4px 0 0">入社3年以内は年齢を問いません。年齢区分の値は、入社3年以内の人を除いて数えています。</p></div>
     <div class="sim-grp"><h4>資格</h4>
@@ -1738,7 +1742,9 @@ function renderSimInputs(P, nb, base, auto, need0){
       <div class="sim-in"><span class="l">中途・資格なし</span>${num("midNone",P.midNone)}人</div>
       <div class="sim-in"><span class="l">中途・技士補あり</span>${num("midHo",P.midHo)}人</div>
       <div class="sim-in"><span class="l">中途・1級あり</span>${num("mid1",P.mid1)}人</div>
-      <div class="sim-in"><span class="l">中途の入社時の年齢</span>${num("midAge",P.midAge,1,18,70)}歳</div></div>
+      <div class="sim-in"><span class="l">中途の入社時の年齢</span>${num("midAge",P.midAge,1,18,70)}歳</div>
+      <div class="sim-in"><span class="l">中途（1級あり）を技術者として数える時期<br><span class="muted">入社後6か月以上の雇用が条件</span></span>
+        <select data-sim="midTiming"><option value="next"${P.midTiming==="next"?" selected":""}>翌期末から（4〜9月入社が中心）</option><option value="same"${P.midTiming==="same"?" selected":""}>入社した期末から（10〜3月入社が中心）</option></select></div></div>
     <div class="sim-grp"><h4>比較する打ち手（B〜D）</h4>
       <div class="sim-in"><span class="l">B：新卒（大卒）の上乗せ</span>${num("lever.hire",P.lever.hire)}人/年</div>
       <div class="sim-in"><span class="l">C：一次・二次の合格率</span>${num("lever.pass",P.lever.pass,1,0,100)}%</div>
@@ -1798,8 +1804,9 @@ function renderTurnover(stats){
     <p class="desc">前の期末にいた人のうち、翌期末の名簿にもいた割合が<b>在籍率</b>、いなかった割合が<b>離職率</b>です（実績 ${pairs.length}期分の合計）。
     年齢は前の期末時点です。入社3年以内の人は年齢に関係なく1行にまとめ、年齢区分の行からは除いています。シミュレーションの前提条件の「実績」と同じ数え方です。</p>`;
   if(!pairs.length) return h+`<p class="muted">連続する2つの期の名簿が登録されると表示されます。</p></div>`;
-  const rows=[["new","入社3年以内（年齢を問わず）",(p)=>p.tenure!==null&&p.tenure<3]].concat(
-    RET_KEYS.map(([k,label,f])=>[k,label,(p)=>!(p.tenure!==null&&p.tenure<3) && p.age!==null && f(p.age)]));
+  // 表示は年齢の高い順（70歳以上 → 29歳以下）、最後に入社3年以内
+  const rows=[...RET_KEYS].reverse().map(([k,label,f])=>[k,label,(p)=>!(p.tenure!==null&&p.tenure<3) && p.age!==null && f(p.age)])
+    .concat([["new","入社3年以内（年齢を問わず）",(p)=>p.tenure!==null&&p.tenure<3]]);
   const calc=(f,only1)=>{ let n=0, stay=0, leftNames=[];
     pairs.forEach(([a,b])=>{ const bk=new Set(b.ppl.map((p)=>p.key));
       a.ppl.forEach((p)=>{ if(!f(p) || (only1 && !p.k1)) return; n++; if(bk.has(p.key)) stay++; else leftNames.push(`${p.name}（${a.period}→${b.period}期）`); }); });
