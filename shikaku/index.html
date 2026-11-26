@@ -1837,7 +1837,7 @@ function simDefaults(){
   const P={years:15, exp:S2.now.exp, ret:{}, src:{}, newbie:90, p1:15, p2:30,
     hireHigh:0, hireUniv:0, midNone:0, midHo:0, mid1:0, midAge:35,
     midTiming:"next", // 中途（1級あり）を技術者として数え始める時期（入社後6か月以上の雇用が条件）："next"＝翌期末から／"same"＝入社した期末から
-    need:{mode:"peak3", manual:0, roles:{"監理":true,"主任":false}, anken:true, margin:0},
+    need:{mode:"peak3", manual:0, roles:{"監理":true,"主任":true}, anken:true, margin:0},
     // 使える実績：share＝必要数のうち使える実績が要る割合、p0＝1級合格の時点で使える実績を持っている割合、
     // L＝持っていない人が合格後に使える実績が付くまでの年数、mid1U＝中途（1級あり）のうち使える実績を持っている割合、util＝年代別の稼働率（相対・%）
     // exist：今いる使える実績なしの1級（配置予定なし）の扱い。"never"＝付かないとみなす ／ "L"＝L年後に付く
