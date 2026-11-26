@@ -406,6 +406,49 @@
     background:var(--panel-sunk);border:1px solid var(--line);color:var(--cyan);border-radius:6px;
     padding:6px 8px;cursor:pointer;width:fit-content;}
   .m-lic-toggle:hover{border-color:var(--cyan);}
+  /* 入札の記録 */
+  .bid-row{grid-template-columns:96px 120px minmax(0,1fr) 150px 210px 56px 150px !important;}
+  .bid-row.open{background:var(--accent-soft);}
+  .bid-detail{background:var(--panel-sunk);border-bottom:1px solid var(--line-soft);padding:14px 16px 16px;}
+  .bid-form{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px 14px;max-width:1000px;}
+  .bid-form label{display:flex;flex-direction:column;gap:4px;min-width:0;}
+  .bid-form label.wide{grid-column:span 2;}
+  .bid-form label>span{font-size:11px;color:var(--muted);font-weight:600;}
+  .bid-form input,.bid-form select,.bid-assigned-add input,.bid-assigned-add select{font-size:12.5px;padding:6px 8px;border:1px solid var(--line);
+    border-radius:6px;background:var(--panel);color:var(--ink);min-width:0;width:100%;}
+  .bid-form input:disabled{background:var(--panel-raised);color:var(--muted);}
+  .bid-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;}
+  .bid-sub-hd{font-size:12.5px;font-weight:700;color:var(--ink);margin-bottom:8px;}
+  .bid-muted{font-size:11.5px;color:var(--muted2);}
+  .bid-code{font-family:var(--mono);font-size:10.5px;color:var(--muted2);margin-left:5px;}
+  .bid-st{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;}
+  .bid-st-open{background:var(--cyan-soft);color:var(--cyan);}
+  .bid-st-bid{background:var(--green-soft);color:var(--green);}
+  .bid-st-skip{background:var(--panel-raised);color:var(--muted);border:1px solid var(--line);}
+  .bid-chip{display:inline-block;font-size:11px;padding:2px 7px;border-radius:999px;background:var(--panel-raised);
+    border:1px solid var(--line-soft);color:var(--muted);margin-right:4px;white-space:nowrap;}
+  .bid-chip.win{background:var(--green-soft);color:var(--green);border-color:transparent;font-weight:700;}
+  .bid-pending{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;background:var(--amber-soft);color:var(--amber);white-space:nowrap;}
+  .bid-filter{font-size:12px;padding:5px 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer;}
+  .bid-filter.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .bid-assigned{margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);max-width:1000px;}
+  .bid-assigned-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;}
+  .bid-assigned-role{font-size:11.5px;font-weight:700;color:var(--muted);min-width:110px;}
+  .bid-assigned-add{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;}
+  .bid-assigned-add select{width:auto;}
+  .bid-assigned-add input{width:260px;}
+  .bid-logs{display:flex;flex-direction:column;gap:6px;max-width:1100px;}
+  .bid-log{border:1px solid var(--line-soft);border-radius:8px;background:var(--panel);}
+  .bid-log-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;width:100%;background:none;border:none;padding:8px 10px;
+    cursor:pointer;text-align:left;font-size:12.5px;color:var(--ink);}
+  .bid-log-time{font-family:var(--mono);font-weight:700;}
+  .bid-count{font-weight:700;color:var(--cyan);}
+  .bid-log-body{padding:4px 12px 12px;border-top:1px solid var(--line-soft);}
+  .bid-cond{margin:4px 0 8px;padding-left:18px;font-size:12px;color:var(--muted);}
+  .bid-pool{border-collapse:collapse;font-size:12px;width:100%;max-width:760px;}
+  .bid-pool th,.bid-pool td{border:1px solid var(--line-soft);padding:3px 8px;text-align:left;}
+  .bid-pool th{background:var(--panel-raised);font-size:11px;color:var(--muted);}
+  .bid-pool tr.busy td{color:var(--muted2);background:var(--panel-raised);}
   .m-lic-panel{background:var(--panel-sunk);border-bottom:1px solid var(--line-soft);padding:12px 16px 14px 100px;}
   /* 社員の詳細情報（人事発令日・建設業区分・勤務地・雇用区分名・旧姓/新姓・登録情報） */
   .m-detail-panel{background:var(--panel-sunk);border-bottom:1px solid var(--line-soft);padding:14px 16px 16px 100px;}
@@ -1249,6 +1292,145 @@ async function deleteConsiderListFromFirestore(id){
   if(!window.fb) throw new Error("Firestoreに接続できません");
   const {db, doc, deleteDoc}=window.fb;
   await deleteDoc(doc(db,"considerLists",id));
+}
+
+/* ---------------- 入札の記録（Firestore「bids」「bidLogs」コレクション） ----------------
+   bids    ：入札1件につき1ドキュメント（ドキュメントID＝工番・案件番号を元にした値）。結果（入札した／見送った・受注／失注・配置した人）をあとから入力する。
+   bidLogs ：配置検討リストを保存するたびに1件ずつ追加する検討の記録（上書きしない。ドキュメントIDは自動）。
+   将来、別の閲覧サイト（社員有資格一覧）からこの2つを読んで「技術者配置の必要数」を分析するため、項目名・形式は変えないこと。
+     bids    : {koban, koban2, title, orderer, bidDate(YYYYMMDD), reqType(""|"none"|"exp"|"exp_score"),
+                status("検討中"|"入札した"|"見送った"), skipReason(""|"技術者不足"|"採算"|"その他"), skipNote,
+                award(""|"受注"|"失注"), assigned({役割:[技術者コード,...]}), createdAt, createdBy, updatedAt, updatedBy}
+     bidLogs : {bidKey, koban, stage, role, listTitle, savedAt, savedBy, filters, summaryLines, assignFrom, assignTo,
+                pool:[{engcd,name,age,available,conflicts,verify("ok"|"partial"|"no"|"unconf")}], poolCount, availableCount, shortlist:[技術者コード]} */
+const BID_REQ_TYPES=[
+  {v:"",          label:"未入力"},
+  {v:"none",      label:"なし（資格だけ）"},
+  {v:"exp",       label:"施工実績が必要"},
+  {v:"exp_score", label:"施工実績＋評価点で競う"},
+];
+const BID_STATUSES=["検討中","入札した","見送った"];
+const BID_SKIP_REASONS=["技術者不足","採算","その他"];
+const BID_AWARDS=["受注","失注"];
+const BID_ASSIGN_ROLES=["現場代理人","監理技術者","主任技術者","担当技術者","管理技術者","システム設計技術者"];
+const BID_VERIFY_LABELS={ok:"確認済み", partial:"一部確認済み", no:"据付実績なし", unconf:"未確認"};
+function bidReqTypeLabel(v){ const t=BID_REQ_TYPES.find((x)=>x.v===(v||"")); return t ? t.label : String(v||""); }
+// 工番・案件番号の表記ゆれ（全角英数字・前後の空白）をそろえる
+function normBidKoban(v){ return String(v||"").normalize("NFKC").trim(); }
+// 配置検討リストの「工事（工番・案件名）」タグ（例：「84149A-1　一般河川安治川…工事」）を、番号と工事名に分ける。
+// 最初の空白（全角・半角）より前を工番・案件番号、後ろを工事名とみなす。
+function splitKobanTag(tag){
+  const t=String(tag||"").trim();
+  if(!t) return {koban:"", title:""};
+  const m=t.match(/^(\S+)\s*([\s\S]*)$/);
+  return {koban: normBidKoban(m ? m[1] : t), title: (m ? m[2] : "").trim()};
+}
+// bids のドキュメントID：工番・案件番号から、FirestoreのIDに使えない文字（/ . # $ [ ] 空白）を「_」に置き換えたもの
+function bidDocId(koban){
+  let s=normBidKoban(koban).replace(/[\/\.\#\$\[\]\s]/g,"_").slice(0,150);
+  if(!s) return "";
+  if(/^__.*__$/.test(s)) s="k"+s; // 「__〜__」はFirestoreの予約IDなので避ける
+  return s;
+}
+function emptyBid(koban){
+  return {koban:normBidKoban(koban), koban2:"", title:"", orderer:"", bidDate:"", reqType:"", status:"検討中",
+    skipReason:"", skipNote:"", award:"", assigned:{}, createdAt:0, createdBy:"", updatedAt:0, updatedBy:""};
+}
+async function getBidFromFirestore(key){
+  if(!key) return null;
+  await waitForFirebase();
+  if(!window.fb) throw new Error("Firestoreに接続できません");
+  const {db, doc, getDoc}=window.fb;
+  const snap=await getDoc(doc(db,"bids",key));
+  return snap.exists() ? {id:key, ...snap.data()} : null;
+}
+// 配置検討リストの保存時：入札（bids）を作成、またはダイアログで入力した発注者・入札日・実績要件の種類で更新する。
+// 状態・結果など、入札の記録画面で入力する項目には触れない。
+async function upsertBidFromConsiderList(key, info, email){
+  if(!key) return null;
+  await waitForFirebase();
+  if(!window.fb) throw new Error("Firestoreに接続できません");
+  const {db, doc, getDoc, setDoc}=window.fb;
+  const ref=doc(db,"bids",key);
+  const snap=await getDoc(ref);
+  const now=Date.now();
+  if(snap.exists()){
+    const cur=snap.data();
+    const next={...cur,
+      orderer: String(info.orderer||""), bidDate: String(info.bidDate||""), reqType: String(info.reqType||""),
+      updatedAt: now, updatedBy: email||""};
+    if(info.title && !cur.title) next.title=String(info.title); // 工事名は未入力のときだけ補う
+    await setDoc(ref, stripUndefinedForFirestore(next));
+    return {id:key, ...next, created:false};
+  }
+  const rec={...emptyBid(info.koban), title:String(info.title||""), orderer:String(info.orderer||""),
+    bidDate:String(info.bidDate||""), reqType:String(info.reqType||""),
+    createdAt:now, createdBy:email||"", updatedAt:now, updatedBy:email||""};
+  await setDoc(ref, rec);
+  return {id:key, ...rec, created:true};
+}
+// 入札の記録画面での編集（結果の入力など）。createdAt/createdBy は保ち、更新者を記録する。
+async function saveBidToFirestore(key, rec, email){
+  await waitForFirebase();
+  if(!window.fb) throw new Error("Firestoreに接続できません");
+  const {db, doc, setDoc}=window.fb;
+  const {id, created, ...data}=rec||{};
+  const next={...emptyBid(data.koban), ...data, updatedAt:Date.now(), updatedBy:email||""};
+  await setDoc(doc(db,"bids",key), stripUndefinedForFirestore(next));
+  return {id:key, ...next};
+}
+// 検討リストを作らずに見送った入札の記録（status＝"見送った"）。同じ入札が既にある場合はエラーにする。
+async function createSkippedBidInFirestore(info, email){
+  const key=bidDocId(info.koban);
+  if(!key) throw new Error("工番・案件番号を入力してください");
+  const exists=await getBidFromFirestore(key);
+  if(exists){ const err=new Error("exists"); err.code="exists"; err.bidKey=key; throw err; }
+  const now=Date.now();
+  const rec={...emptyBid(info.koban), title:String(info.title||""), orderer:String(info.orderer||""),
+    bidDate:String(info.bidDate||""), reqType:String(info.reqType||""), status:"見送った",
+    skipReason:String(info.skipReason||""), skipNote:String(info.skipNote||""),
+    createdAt:now, createdBy:email||"", updatedAt:now, updatedBy:email||""};
+  const {db, doc, setDoc}=window.fb;
+  await setDoc(doc(db,"bids",key), rec);
+  return {id:key, ...rec};
+}
+// 検討の記録を1件追加する（上書きしない。ドキュメントIDは自動採番）
+async function addBidLogToFirestore(log){
+  await waitForFirebase();
+  if(!window.fb) throw new Error("Firestoreに接続できません");
+  const {db, collection, doc, setDoc}=window.fb;
+  const ref=doc(collection(db,"bidLogs")); // IDを自動で採番した新しいドキュメント
+  await setDoc(ref, stripUndefinedForFirestore(log));
+  return ref.id;
+}
+async function listBidsFromFirestore(){
+  await waitForFirebase();
+  if(!window.fb) return [];
+  const {db, collection, getDocs}=window.fb;
+  const snap=await getDocs(collection(db,"bids"));
+  const out=[];
+  snap.forEach((d)=>{ out.push({id:d.id, ...d.data()}); });
+  return out;
+}
+async function listBidLogsFromFirestore(){
+  await waitForFirebase();
+  if(!window.fb) return [];
+  const {db, collection, getDocs}=window.fb;
+  const snap=await getDocs(collection(db,"bidLogs"));
+  const out=[];
+  snap.forEach((d)=>{ out.push({id:d.id, ...d.data()}); });
+  return out;
+}
+// 入札が「結果未入力」かどうか：検討中のまま／入札したのに受注・失注が未入力／受注したのに配置した人が未入力
+function bidAssignedCount(b){
+  return Object.values((b && b.assigned)||{}).reduce((n,list)=> n+((list||[]).length), 0);
+}
+function bidIsPending(b){
+  const st=(b && b.status) || "検討中";
+  if(st==="検討中") return true;
+  if(st==="入札した" && !b.award) return true;
+  if(st==="入札した" && b.award==="受注" && bidAssignedCount(b)===0) return true;
+  return false;
 }
 
 /* ---------------- 配置検討リストのExcel出力（ExcelJS） ---------------- */
@@ -3992,6 +4174,409 @@ function EmployeeMaster({employees, onSave, licenses, engLicenses, onSaveEngLice
   );
 }
 
+/* ---------------- 入札の記録（bids の一覧・結果の入力・見送りの記録・検討の記録の時系列） ---------------- */
+function BidRecords({employees, userEmail}){
+  const [bids,setBids]=useState(null); // null=読み込み中
+  const [logs,setLogs]=useState([]);
+  const [loadError,setLoadError]=useState("");
+  const [filterMode,setFilterMode]=useState("all"); // all | pending | 検討中 | 入札した | 見送った
+  const [query,setQuery]=useState("");
+  const [openKey,setOpenKey]=useState(null);
+  const [draft,setDraft]=useState(null);
+  const [saving,setSaving]=useState(false);
+  const [msg,setMsg]=useState("");
+  const [openLogId,setOpenLogId]=useState(null);
+  const [assignRole,setAssignRole]=useState("監理技術者");
+  const [assignInput,setAssignInput]=useState("");
+  const [assignError,setAssignError]=useState("");
+  const emptySkip={koban:"", title:"", orderer:"", bidDate:"", reqType:"", skipReason:"技術者不足", skipNote:""};
+  const [showSkip,setShowSkip]=useState(false);
+  const [skipDraft,setSkipDraft]=useState(emptySkip);
+  const [skipError,setSkipError]=useState("");
+  const [skipSaving,setSkipSaving]=useState(false);
+
+  const flash=(t)=>{ setMsg(t); setTimeout(()=>setMsg(""), 4000); };
+  const reload=async()=>{
+    setLoadError("");
+    try{
+      const [b,l]=await Promise.all([listBidsFromFirestore(), listBidLogsFromFirestore()]);
+      setBids(b); setLogs(l);
+    }catch(e){
+      console.error("入札の記録の読み込みエラー:", e);
+      setLoadError("読み込みに失敗しました（"+(e.code||e.message||"不明なエラー")+"）");
+      setBids((prev)=>prev||[]);
+    }
+  };
+  useEffect(()=>{ reload(); },[]);
+
+  const empByCode=useMemo(()=>{
+    const m={};
+    (employees||[]).forEach((e)=>{ m[e.ENGCD]=e; });
+    return m;
+  },[employees]);
+  const empName=(code)=> (empByCode[code] && empByCode[code].ID_NAME) || ("(コード:"+code+")");
+  const ymdToInput=(v)=>{ const d=normDigits8(v); return d ? d.slice(0,4)+"-"+d.slice(4,6)+"-"+d.slice(6,8) : ""; };
+  const fmtTs=(ms)=> ms ? new Date(ms).toLocaleString("ja-JP",{year:"numeric",month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "-";
+
+  // 検討の記録を入札ごとにまとめる（古い順）
+  const logsByKey=useMemo(()=>{
+    const m={};
+    (logs||[]).forEach((l)=>{ const k=l.bidKey||""; (m[k]=m[k]||[]).push(l); });
+    Object.values(m).forEach((list)=>list.sort((a,b)=>(a.savedAt||0)-(b.savedAt||0)));
+    return m;
+  },[logs]);
+
+  const rows=useMemo(()=>{
+    const q=query.trim();
+    const list=(bids||[]).filter((b)=>{
+      if(filterMode==="pending" && !bidIsPending(b)) return false;
+      if(BID_STATUSES.includes(filterMode) && (b.status||"検討中")!==filterMode) return false;
+      if(q && !([b.koban,b.koban2,b.title,b.orderer].some((v)=>String(v||"").includes(q)))) return false;
+      return true;
+    });
+    // 入札日の新しい順。入札日が未入力のものは後ろに（その中では更新の新しい順）
+    return list.sort((a,b)=>{
+      const da=normDigits8(a.bidDate)||"", dbb=normDigits8(b.bidDate)||"";
+      if(da && dbb && da!==dbb) return dbb.localeCompare(da);
+      if(da && !dbb) return -1;
+      if(!da && dbb) return 1;
+      return (b.updatedAt||0)-(a.updatedAt||0);
+    });
+  },[bids, filterMode, query]);
+  const pendingCount=(bids||[]).filter(bidIsPending).length;
+
+  const openBid=(b)=>{
+    if(openKey===b.id){ setOpenKey(null); setDraft(null); return; }
+    setOpenKey(b.id);
+    setDraft({...emptyBid(b.koban), ...b, bidDate:ymdToInput(b.bidDate), assigned:JSON.parse(JSON.stringify(b.assigned||{}))});
+    setOpenLogId(null); setAssignInput(""); setAssignError("");
+  };
+  const setD=(field)=>(e)=>setDraft({...draft, [field]: e && e.target ? e.target.value : e});
+
+  // 配置した人の追加：「氏名（コード）」の候補から選ぶ／技術者コード／氏名（異体字も考慮）のどれでも受け付ける
+  const addAssigned=()=>{
+    const s=String(assignInput||"").trim();
+    if(!s) return;
+    let code=null;
+    const m=s.match(/[（(]\s*([0-9A-Za-z]+)\s*[)）]\s*$/);
+    if(m) code=m[1];
+    else if(/^[0-9]+$/.test(s)) code=s;
+    if(code && !empByCode[code]){
+      const n=normEmpNoSafe(code);
+      const hit=(employees||[]).find((e)=>normEmpNoSafe(e.ENGCD)===n);
+      code = hit ? hit.ENGCD : code;
+    }
+    if(!code){
+      const emp=findEmployeeByName(empByCode, s);
+      if(emp) code=emp.ENGCD;
+    }
+    if(!code || !empByCode[code]){ setAssignError("社員が見つかりません（候補から選ぶか、技術者コードを入力してください）"); return; }
+    const cur=(draft.assigned && draft.assigned[assignRole]) || [];
+    if(cur.includes(code)){ setAssignError("すでに追加されています"); return; }
+    setDraft({...draft, assigned:{...(draft.assigned||{}), [assignRole]:[...cur, code]}});
+    setAssignInput(""); setAssignError("");
+  };
+  const removeAssigned=(role, code)=>{
+    const list=((draft.assigned||{})[role]||[]).filter((c)=>c!==code);
+    const next={...(draft.assigned||{})};
+    if(list.length) next[role]=list; else delete next[role];
+    setDraft({...draft, assigned:next});
+  };
+
+  const saveDraft=async()=>{
+    if(!draft || !openKey) return;
+    setSaving(true);
+    try{
+      const st=draft.status||"検討中";
+      const rec={...draft,
+        bidDate: normDigits8(draft.bidDate)||"",
+        status: st,
+        // 状態に合わない項目は空にしておく（見送った→理由・メモ、入札した→受注/失注・配置した人）
+        skipReason: st==="見送った" ? (draft.skipReason||"") : "",
+        skipNote: st==="見送った" ? (draft.skipNote||"") : (draft.skipNote||""),
+        award: st==="入札した" ? (draft.award||"") : "",
+        assigned: (st==="入札した" && draft.award==="受注") ? (draft.assigned||{}) : {},
+      };
+      const saved=await saveBidToFirestore(openKey, rec, userEmail);
+      setBids((prev)=> (prev||[]).map((b)=> b.id===openKey ? saved : b));
+      setDraft({...saved, bidDate:ymdToInput(saved.bidDate), assigned:JSON.parse(JSON.stringify(saved.assigned||{}))});
+      flash("保存しました");
+    }catch(e){
+      console.error("入札の保存エラー:", e);
+      flash("保存に失敗しました（"+(e.code||e.message||"不明なエラー")+"）");
+    }
+    setSaving(false);
+  };
+
+  const submitSkip=async()=>{
+    setSkipError("");
+    if(!normBidKoban(skipDraft.koban)){ setSkipError("工番・案件番号を入力してください"); return; }
+    setSkipSaving(true);
+    try{
+      const rec=await createSkippedBidInFirestore({...skipDraft, bidDate:normDigits8(skipDraft.bidDate)||""}, userEmail);
+      setBids((prev)=>[...(prev||[]), rec]);
+      setShowSkip(false); setSkipDraft(emptySkip);
+      flash("見送りの記録を追加しました");
+    }catch(e){
+      if(e.code==="exists"){
+        setSkipError("この工番・案件番号の入札はすでに記録されています（"+e.bidKey+"）。一覧から開いて状態を「見送った」に変更してください。");
+      } else {
+        console.error("見送りの記録の保存エラー:", e);
+        setSkipError("保存に失敗しました（"+(e.code||e.message||"不明なエラー")+"）");
+      }
+    }
+    setSkipSaving(false);
+  };
+
+  const statusClass=(st)=> st==="入札した" ? "bid-st-bid" : st==="見送った" ? "bid-st-skip" : "bid-st-open";
+  const latestCounts=(key)=>{
+    const list=logsByKey[key]||[];
+    const last=list[list.length-1];
+    return last ? {pool:last.poolCount||0, avail:last.availableCount||0, at:last.savedAt} : null;
+  };
+  const empOptions=useMemo(()=> (employees||[])
+    .filter((e)=>e.STATUS!=="retired")
+    .map((e)=>({code:e.ENGCD, label:(e.ID_NAME||"")+"（"+e.ENGCD+"）"}))
+    .sort((a,b)=>a.label.localeCompare(b.label,"ja")),[employees]);
+
+  const renderDetail=(b)=>{
+    const d=draft||{};
+    const st=d.status||"検討中";
+    const blogs=logsByKey[b.id]||[];
+    return (
+      <div className="bid-detail">
+        <div className="bid-form">
+          <label><span>工番・案件番号</span><input type="text" value={d.koban||""} disabled/></label>
+          <label><span>受注後の工番</span><input type="text" value={d.koban2||""} onChange={setD("koban2")} placeholder="例：68G-2024"/></label>
+          <label className="wide"><span>工事名・案件名</span><input type="text" value={d.title||""} onChange={setD("title")}/></label>
+          <label><span>発注者</span><input type="text" value={d.orderer||""} onChange={setD("orderer")}/></label>
+          <label><span>入札日（開札日）</span><input type="date" value={d.bidDate||""} onChange={setD("bidDate")}/></label>
+          <label><span>技術者の実績要件</span>
+            <select value={d.reqType||""} onChange={setD("reqType")}>
+              {BID_REQ_TYPES.map((t)=><option key={t.v} value={t.v}>{t.label}</option>)}
+            </select>
+          </label>
+          <label><span>状態</span>
+            <select value={st} onChange={setD("status")}>
+              {BID_STATUSES.map((v)=><option key={v} value={v}>{v}</option>)}
+            </select>
+          </label>
+          {st==="見送った" && <React.Fragment>
+            <label><span>見送りの理由</span>
+              <select value={d.skipReason||""} onChange={setD("skipReason")}>
+                <option value="">未入力</option>
+                {BID_SKIP_REASONS.map((v)=><option key={v} value={v}>{v}</option>)}
+              </select>
+            </label>
+            <label className="wide"><span>メモ</span><input type="text" value={d.skipNote||""} onChange={setD("skipNote")} placeholder="自由記入"/></label>
+          </React.Fragment>}
+          {st==="入札した" &&
+            <label><span>結果</span>
+              <select value={d.award||""} onChange={setD("award")}>
+                <option value="">未入力</option>
+                {BID_AWARDS.map((v)=><option key={v} value={v}>{v}</option>)}
+              </select>
+            </label>
+          }
+        </div>
+        {st==="入札した" && d.award==="受注" &&
+          <div className="bid-assigned">
+            <div className="bid-sub-hd">実際に配置した人</div>
+            {Object.keys(d.assigned||{}).length===0 && <div className="bid-muted">まだ登録されていません</div>}
+            {Object.entries(d.assigned||{}).map(([role,list])=>(
+              <div key={role} className="bid-assigned-row">
+                <span className="bid-assigned-role">{role}</span>
+                {(list||[]).map((code)=>(
+                  <span key={code} className="m-lic-tag">{empName(code)}<span className="bid-code">{code}</span>
+                    <button onClick={()=>removeAssigned(role, code)}><Ic.X size={11}/></button>
+                  </span>
+                ))}
+              </div>
+            ))}
+            <div className="bid-assigned-add">
+              <select value={assignRole} onChange={(e)=>setAssignRole(e.target.value)}>
+                {BID_ASSIGN_ROLES.map((r)=><option key={r} value={r}>{r}</option>)}
+              </select>
+              <input type="text" list="bid-emp-options" value={assignInput} placeholder="氏名または技術者コード"
+                onChange={(e)=>{ setAssignInput(e.target.value); setAssignError(""); }}
+                onKeyDown={(e)=>{ if(e.key==="Enter") addAssigned(); }}/>
+              <datalist id="bid-emp-options">
+                {empOptions.map((o)=><option key={o.code} value={o.label}/>)}
+              </datalist>
+              <button className="btn-outline" onClick={addAssigned}><Ic.Plus/> 追加</button>
+            </div>
+            {assignError && <div className="m-form-err">{assignError}</div>}
+          </div>
+        }
+        <div className="bid-actions">
+          <button className="btn-primary" onClick={saveDraft} disabled={saving}>{saving ? "保存中…" : "保存"}</button>
+          <button className="btn-ghost" onClick={()=>{ setOpenKey(null); setDraft(null); }}>閉じる</button>
+          <span className="bid-muted">
+            作成：{fmtTs(b.createdAt)}{b.createdBy ? "（"+b.createdBy+"）" : ""}　更新：{fmtTs(b.updatedAt)}{b.updatedBy ? "（"+b.updatedBy+"）" : ""}
+          </span>
+        </div>
+
+        <div className="bid-sub-hd" style={{marginTop:16}}>検討の記録（{blogs.length}件・古い順）</div>
+        {blogs.length===0 && <div className="bid-muted">この入札の検討の記録はまだありません（配置検討リストを保存すると追加されます）。</div>}
+        <div className="bid-logs">
+          {blogs.map((l)=>{
+            const open=openLogId===l.id;
+            const pool=l.pool||[];
+            return (
+              <div key={l.id} className="bid-log">
+                <button type="button" className="bid-log-hd" onClick={()=>setOpenLogId(open?null:l.id)}>
+                  {open ? <Ic.Down/> : <Ic.Right/>}
+                  <span className="bid-log-time">{fmtTs(l.savedAt)}</span>
+                  <span className="bid-muted">{l.savedBy||"-"}</span>
+                  <span>「{l.listTitle||"-"}」</span>
+                  {(l.stage||l.role) && <span className="bid-chip">{[l.stage,l.role].filter(Boolean).join("・")}</span>}
+                  <span className="bid-count">条件に合った {l.poolCount||0}名 ／ 空いていた {l.availableCount||0}名</span>
+                  <span className="bid-muted">検討リスト {(l.shortlist||[]).length}名</span>
+                </button>
+                {open &&
+                  <div className="bid-log-body">
+                    <div className="bid-muted" style={{marginBottom:6}}>
+                      配置予定期間：{(l.assignFrom||l.assignTo) ? (fmtDate(l.assignFrom)+"〜"+fmtDate(l.assignTo)) : "未指定（重複判定なし）"}
+                    </div>
+                    {(l.summaryLines||[]).length>0 &&
+                      <ul className="bid-cond">{l.summaryLines.map((t,i)=><li key={i}>{t}</li>)}</ul>}
+                    {(l.shortlist||[]).length>0 &&
+                      <div style={{margin:"6px 0"}}><b style={{fontSize:12}}>検討リスト：</b>
+                        {(l.shortlist||[]).map((c)=><span key={c} className="bid-chip">{empName(c)}</span>)}
+                      </div>}
+                    <table className="bid-pool">
+                      <thead><tr><th>氏名</th><th>年齢</th><th>空き</th><th>重複</th><th>実績の確認</th><th>検討リスト</th></tr></thead>
+                      <tbody>
+                        {pool.map((p)=>(
+                          <tr key={p.engcd} className={p.available ? "" : "busy"}>
+                            <td>{p.name}<span className="bid-code">{p.engcd}</span></td>
+                            <td>{p.age===null||p.age===undefined ? "-" : p.age}</td>
+                            <td>{p.available ? "○" : "×"}</td>
+                            <td>{p.conflicts||0}</td>
+                            <td>{BID_VERIFY_LABELS[p.verify]||p.verify||"-"}</td>
+                            <td>{(l.shortlist||[]).includes(p.engcd) ? "○" : ""}</td>
+                          </tr>
+                        ))}
+                        {pool.length===0 && <tr><td colSpan="6" className="bid-muted">条件に合った技術者はいませんでした</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                }
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const unlinkedLogs=(logsByKey[""]||[]).length;
+  return (
+    <div className="card">
+      <div className="res-hd">
+        <div>
+          <h2>入札の記録</h2>
+          <p className="sub">
+            {bids===null ? "読み込み中…" : (bids.length+"件の入札　／　結果未入力 "+pendingCount+"件")}
+          </p>
+        </div>
+        <div style={{display:"flex", gap:8}}>
+          <button className="btn-outline" onClick={reload}><Ic.Refresh/> 再読み込み</button>
+          <button className="btn-outline" onClick={()=>{ setShowSkip((v)=>!v); setSkipError(""); }}><Ic.Plus/> 見送りの記録を追加</button>
+        </div>
+      </div>
+
+      <p style={{fontSize:12, color:"var(--muted)", margin:"0 0 12px"}}>
+        配置検討リストを保存すると、その工事の入札がここに作られ、保存のたびに「検討の記録」（条件に合った人数・空いていた人数）が追加されます。
+        入札した／見送った・受注／失注・配置した人を入力しておくと、将来「技術者配置の必要数」の分析に使えます。
+      </p>
+
+      {showSkip &&
+        <div className="bid-detail" style={{marginBottom:14}}>
+          <div className="bid-sub-hd">見送りの記録を追加（検討リストを作らずに見送った入札）</div>
+          <div className="bid-form">
+            <label><span>工番・案件番号 *</span><input type="text" value={skipDraft.koban} onChange={(e)=>setSkipDraft({...skipDraft, koban:e.target.value})} placeholder="例：H800182B0"/></label>
+            <label className="wide"><span>工事名・案件名</span><input type="text" value={skipDraft.title} onChange={(e)=>setSkipDraft({...skipDraft, title:e.target.value})}/></label>
+            <label><span>発注者</span><input type="text" value={skipDraft.orderer} onChange={(e)=>setSkipDraft({...skipDraft, orderer:e.target.value})}/></label>
+            <label><span>入札日（開札日）</span><input type="date" value={skipDraft.bidDate} onChange={(e)=>setSkipDraft({...skipDraft, bidDate:e.target.value})}/></label>
+            <label><span>技術者の実績要件</span>
+              <select value={skipDraft.reqType} onChange={(e)=>setSkipDraft({...skipDraft, reqType:e.target.value})}>
+                {BID_REQ_TYPES.map((t)=><option key={t.v} value={t.v}>{t.label}</option>)}
+              </select>
+            </label>
+            <label><span>見送りの理由</span>
+              <select value={skipDraft.skipReason} onChange={(e)=>setSkipDraft({...skipDraft, skipReason:e.target.value})}>
+                <option value="">未入力</option>
+                {BID_SKIP_REASONS.map((v)=><option key={v} value={v}>{v}</option>)}
+              </select>
+            </label>
+            <label className="wide"><span>メモ</span><input type="text" value={skipDraft.skipNote} onChange={(e)=>setSkipDraft({...skipDraft, skipNote:e.target.value})}/></label>
+          </div>
+          <div className="bid-actions">
+            <button className="btn-primary" onClick={submitSkip} disabled={skipSaving}>{skipSaving ? "保存中…" : "記録する"}</button>
+            <button className="btn-ghost" onClick={()=>{ setShowSkip(false); setSkipError(""); }}>キャンセル</button>
+          </div>
+          {skipError && <div className="m-form-err" style={{marginTop:6}}>{skipError}</div>}
+        </div>
+      }
+
+      <div style={{display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:12}}>
+        {[["all","すべて"],["pending","結果未入力（"+pendingCount+"）"],...BID_STATUSES.map((s)=>[s,s])].map(([v,label])=>(
+          <button key={v} className={"bid-filter"+(filterMode===v?" active":"")} onClick={()=>setFilterMode(v)}>{label}</button>
+        ))}
+        <input type="text" className="kw-input" style={{maxWidth:280, marginLeft:"auto"}} value={query}
+          onChange={(e)=>setQuery(e.target.value)} placeholder="工番・工事名・発注者で検索"/>
+      </div>
+
+      {msg && <div className="storage-warn" style={{marginBottom:10}}>{msg}</div>}
+      {loadError && <div className="m-form-err" style={{marginBottom:10}}>{loadError}</div>}
+
+      <div className="master-list">
+        <div className="master-row master-row-head bid-row">
+          <span>入札日</span><span>工番・案件番号</span><span>工事名・案件名／発注者</span><span>実績要件</span>
+          <span>状態</span><span>記録</span><span>最新の記録（条件／空き）</span>
+        </div>
+        {bids!==null && rows.map((b)=>{
+          const st=b.status||"検討中";
+          const lc=latestCounts(b.id);
+          const pending=bidIsPending(b);
+          return (
+            <React.Fragment key={b.id}>
+              <div className={"master-row bid-row"+(openKey===b.id?" open":"")} style={{cursor:"pointer"}} onClick={()=>openBid(b)}>
+                <span className="m-code">{b.bidDate ? fmtDate(b.bidDate) : "-"}</span>
+                <span className="m-code">{b.koban}{b.koban2 && <span className="bid-code" style={{display:"block"}}>→ {b.koban2}</span>}</span>
+                <span style={{minWidth:0}}>
+                  <span className="m-name" style={{display:"block", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{b.title||"-"}</span>
+                  <span className="bid-muted">{b.orderer||""}</span>
+                </span>
+                <span className="bid-muted">{bidReqTypeLabel(b.reqType)}</span>
+                <span style={{display:"flex", flexWrap:"wrap", gap:4}}>
+                  <span className={"bid-st "+statusClass(st)}>{st}</span>
+                  {st==="見送った" && b.skipReason && <span className="bid-chip">{b.skipReason}</span>}
+                  {st==="入札した" && b.award && <span className={"bid-chip"+(b.award==="受注"?" win":"")}>{b.award}</span>}
+                  {pending && <span className="bid-pending">結果未入力</span>}
+                </span>
+                <span className="bid-muted">{(logsByKey[b.id]||[]).length}件</span>
+                <span className="m-code">{lc ? (lc.pool+"名 ／ "+lc.avail+"名") : "-"}</span>
+              </div>
+              {openKey===b.id && renderDetail(b)}
+            </React.Fragment>
+          );
+        })}
+        {bids!==null && rows.length===0 && <div className="empty">該当する入札がありません</div>}
+        {bids===null && <div className="empty">読み込み中…</div>}
+      </div>
+      {unlinkedLogs>0 &&
+        <p className="bid-muted" style={{marginTop:8}}>※工番・案件番号を入れずに保存された検討の記録が {unlinkedLogs}件あります（入札には紐付いていません）。</p>}
+    </div>
+  );
+}
+// 技術者コードの比較用（先頭ゼロの有無を吸収）
+function normEmpNoSafe(v){
+  const s=String(v===undefined||v===null ? "" : v).trim();
+  return /^\d+$/.test(s) ? String(parseInt(s,10)) : s;
+}
+
 /* ---------------- master maintenance (種別マスタなど、コードマスタの編集) ---------------- */
 /* ---------------- assignment gantt (配置状況：見るだけの一覧) ---------------- */
 function AssignmentGantt({assignRecords, employeeMap, constrsltRecords, onGotoConstno, engRecords, literalMap, initialPersonName, jumpNonce}){
@@ -5441,6 +6026,11 @@ function App(){
   const [saveKobanInput,setSaveKobanInput]=useState("");
   const [saveStageInput,setSaveStageInput]=useState(""); // "製作" | "据付"
   const [saveRoleInput,setSaveRoleInput]=useState(""); // 監理技術者／主任技術者／担当技術者／管理技術者／現場代理人／システム設計技術者
+  // 入札の記録（bids）用の入力欄：発注者・入札日（YYYY-MM-DDで保持）・実績要件の種類。空欄でも保存できる。
+  const [saveOrdererInput,setSaveOrdererInput]=useState("");
+  const [saveBidDateInput,setSaveBidDateInput]=useState("");
+  const [saveReqTypeInput,setSaveReqTypeInput]=useState("");
+  const [saveBidLookup,setSaveBidLookup]=useState({key:"", status:"idle"}); // idle|loading|found|new|error
   const [savingList,setSavingList]=useState(false);
   const [showLoadDialog,setShowLoadDialog]=useState(false);
   const [savedListsIndex,setSavedListsIndex]=useState(null); // null=未取得
@@ -5452,7 +6042,48 @@ function App(){
     setSaveKobanInput(currentListTags.koban||"");
     setSaveStageInput(currentListTags.stage||"");
     setSaveRoleInput(currentListTags.role||"");
+    setSaveOrdererInput(""); setSaveBidDateInput(""); setSaveReqTypeInput("");
+    setSaveBidLookup({key:"", status:"idle"});
     setShowSaveDialog(true);
+  };
+  // 保存ダイアログの「工事（工番・案件名）」から入札（bids）を探し、既にあれば前回入力した発注者・入札日・実績要件の種類を表示する
+  useEffect(()=>{
+    if(!showSaveDialog) return;
+    const key=bidDocId(splitKobanTag(saveKobanInput).koban);
+    if(!key){ setSaveBidLookup({key:"", status:"idle"}); return; }
+    if(saveBidLookup.key===key && saveBidLookup.status!=="idle") return;
+    let cancelled=false;
+    const timer=setTimeout(async()=>{
+      setSaveBidLookup({key, status:"loading"});
+      try{
+        const b=await getBidFromFirestore(key);
+        if(cancelled) return;
+        if(b){
+          setSaveOrdererInput(b.orderer||"");
+          setSaveBidDateInput(b.bidDate ? (normDigits8(b.bidDate)||"").replace(/^(\d{4})(\d{2})(\d{2})$/,"$1-$2-$3") : "");
+          setSaveReqTypeInput(b.reqType||"");
+          setSaveBidLookup({key, status:"found", bid:b});
+        } else {
+          setSaveBidLookup({key, status:"new"});
+        }
+      }catch(e){ if(!cancelled) setSaveBidLookup({key, status:"error"}); }
+    }, 400);
+    return ()=>{ cancelled=true; clearTimeout(timer); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[showSaveDialog, saveKobanInput]);
+  // 検討の記録（bidLogs）に残す「条件に合った技術者の一覧」。Excelの技術者リストと同じ母集団（検討リストに入れた人も含む）。
+  // 実績の確認状況は、Excelと同じく「非表示にする区分」で絞り込んだ後の状態を使う（区分の実績しか無い人は "no"）。
+  const buildBidLogPool=()=>{
+    const kbnStatusByEngcd={};
+    exportKbnStatusPool.forEach((r)=>{ kbnStatusByEngcd[r.engcd]=r; });
+    const kbnActive = excludedKbnTypes.length>0;
+    return exportCandidatePool.map((r)=>{
+      const kr = kbnStatusByEngcd[r.engcd] || (kbnActive ? null : r);
+      const verify = !kr ? "no" : kr.allVerified ? "ok" : kr.partialVerified ? "partial" : kr.allRejected ? "no" : "unconf";
+      const conflicts=(r.assignConflicts||[]).length;
+      return {engcd:r.engcd, name:r.name||"", age:(r.age===null||r.age===undefined) ? null : r.age,
+        available: conflicts===0, conflicts, verify};
+    });
   };
   // 検討リスト保存時に「技術者リスト」として凍結保存するスナップショットを作る。
   // 検討リストに入れた人は技術者リストから除く。実績なし＝黄、受注工事で専任配置あり＝赤（両方当てはまる場合は赤を優先）。
@@ -5487,11 +6118,39 @@ function App(){
     setSavingList(true);
     try{
       const tags={koban:saveKobanInput.trim(), stage:saveStageInput, role:saveRoleInput};
-      await saveConsiderListToFirestore(title, considerList, considerRole, buildFilterSnapshot(), tags, buildTechnicianListSnapshot(), sessionVerified);
+      const filterSnap=buildFilterSnapshot();
+      await saveConsiderListToFirestore(title, considerList, considerRole, filterSnap, tags, buildTechnicianListSnapshot(), sessionVerified);
       setCurrentListTitle(title);
       setCurrentListTags(tags);
       setShowSaveDialog(false);
-      setToast("「"+title+"」として保存しました");
+      // 入札の記録：considerLists（作業用・上書き）とは別に、入札（bids）の作成・更新と、検討の記録（bidLogs）1件の追加を行う。
+      // ここで失敗しても検討リストの保存は完了しているので、メッセージで知らせるだけにする。
+      let bidNote="";
+      try{
+        const email=(authUser && authUser.email) || "";
+        const {koban:bidKoban, title:bidTitle}=splitKobanTag(tags.koban);
+        const bidKey=bidDocId(bidKoban);
+        if(bidKey){
+          await upsertBidFromConsiderList(bidKey, {
+            koban:bidKoban, title:bidTitle, orderer:saveOrdererInput.trim(),
+            bidDate:normDigits8(saveBidDateInput)||"", reqType:saveReqTypeInput,
+          }, email);
+        }
+        const pool=buildBidLogPool();
+        await addBidLogToFirestore({
+          bidKey, koban:bidKoban, stage:tags.stage||"", role:tags.role||"", listTitle:title,
+          savedAt:Date.now(), savedBy:email,
+          filters:filterSnap||null, summaryLines:filtersToSummaryLines(filterSnap||{}),
+          assignFrom:normDigits8(assignDateFrom)||"", assignTo:normDigits8(assignDateTo)||"",
+          pool, poolCount:pool.length, availableCount:pool.filter((p)=>p.available).length,
+          shortlist:considerList.map((c)=>c.engcd),
+        });
+        bidNote = bidKey ? "（入札の記録にも追加しました）" : "（工事の工番・案件番号が無いため、入札には紐付けずに記録しました）";
+      }catch(e){
+        console.error("入札の記録の保存エラー:", e);
+        bidNote="（※入札の記録への保存に失敗しました："+(e.code||e.message||"不明なエラー")+"）";
+      }
+      setToast("「"+title+"」として保存しました"+bidNote);
     }catch(e){
       console.error("配置検討リスト保存エラー:", e);
       setToast("保存に失敗しました（"+(e.code||e.message||"不明なエラー")+"）");
@@ -6829,6 +7488,7 @@ function App(){
         <button className={"tab-btn"+(activeTab==="detail"?" active":"")} onClick={()=>setActiveTab("detail")}>工事詳細検索</button>
         <button className={"tab-btn"+(activeTab==="personnel"?" active":"")} onClick={()=>setActiveTab("personnel")}>人事資格検索</button>
         <button className={"tab-btn"+(activeTab==="assign"?" active":"")} onClick={()=>setActiveTab("assign")}>配置状況</button>
+        <button className={"tab-btn"+(activeTab==="bids"?" active":"")} onClick={()=>setActiveTab("bids")}>入札の記録</button>
         {canEdit &&
           <button className={"tab-btn"+(activeTab==="master"?" active":"")} style={{marginLeft:"auto"}} onClick={()=>setActiveTab("master")}>技術者在籍・所属管理</button>
         }
@@ -7037,6 +7697,11 @@ function App(){
             persist(next);
           }}
         />
+      }
+
+      {/* 入札の記録：ログインしている人なら誰でも入力できる（更新者を記録する） */}
+      {activeTab==="bids" &&
+        <BidRecords employees={datasets.employee?.records || []} userEmail={(authUser && authUser.email) || ""}/>
       }
 
       {activeTab==="mastermaint" && canEdit &&
@@ -7453,7 +8118,7 @@ function App(){
       {/* 配置検討リスト：名前を付けて保存 */}
       {showSaveDialog &&
         <div className="overlay-bg" onClick={(e)=>{ if(e.target===e.currentTarget && !savingList) setShowSaveDialog(false); }}>
-          <div className="overlay-card" style={{maxWidth:440}}>
+          <div className="overlay-card" style={{maxWidth:480, maxHeight:"92vh", overflowY:"auto"}}>
             <div className="overlay-hd">
               <h3>配置検討リストを保存</h3>
               <button className="icon-btn" onClick={()=>setShowSaveDialog(false)} disabled={savingList}><Ic.X/></button>
@@ -7491,6 +8156,32 @@ function App(){
                     <option value="担当技術者">担当技術者</option>
                     <option value="管理技術者">管理技術者</option>
                     <option value="システム設計技術者">システム設計技術者</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <p style={{fontSize:11.5,color:"var(--muted)",marginTop:0,marginBottom:6}}>
+              入札の記録（任意・空欄でも保存できます）。保存のたびに「入札の記録」に検討の記録が1件追加されます。
+              {saveBidLookup.status==="loading" && <span>　入札を確認中…</span>}
+              {saveBidLookup.status==="found" && <span style={{color:"var(--cyan)"}}>　登録済みの入札（{saveBidLookup.key}）の内容を表示しています。</span>}
+              {saveBidLookup.status==="new" && <span style={{color:"var(--cyan)"}}>　新しい入札（{saveBidLookup.key}）として記録されます。</span>}
+              {saveBidLookup.status==="idle" && !splitKobanTag(saveKobanInput).koban && <span style={{color:"var(--amber)"}}>　入札に紐付けるには上の「工事（工番・案件名）」を入力してください。</span>}
+            </p>
+            <div style={{display:"flex", flexDirection:"column", gap:8, marginBottom:14}}>
+              <div>
+                <div className="field-label" style={{fontSize:11.5}}>発注者</div>
+                <input type="text" className="kw-input" placeholder="例：国土交通省 近畿地方整備局"
+                  value={saveOrdererInput} onChange={(e)=>setSaveOrdererInput(e.target.value)}/>
+              </div>
+              <div style={{display:"flex", gap:8}}>
+                <div style={{flex:1}}>
+                  <div className="field-label" style={{fontSize:11.5}}>入札日（開札日）</div>
+                  <input type="date" className="kw-input" value={saveBidDateInput} onChange={(e)=>setSaveBidDateInput(e.target.value)}/>
+                </div>
+                <div style={{flex:1}}>
+                  <div className="field-label" style={{fontSize:11.5}}>技術者の実績要件</div>
+                  <select className="dt-select" style={{width:"100%"}} value={saveReqTypeInput} onChange={(e)=>setSaveReqTypeInput(e.target.value)}>
+                    {BID_REQ_TYPES.map((t)=><option key={t.v} value={t.v}>{t.label}</option>)}
                   </select>
                 </div>
               </div>
