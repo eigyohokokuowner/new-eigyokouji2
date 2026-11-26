@@ -445,7 +445,8 @@ function fullYears(v){
 /* =====================================================================
    データ読み込み（meta の更新日時が変わっていなければブラウザ内キャッシュを使う）
    ===================================================================== */
-const TYPES=["employee","englicense","licenses","enginfo","literals","assign"];
+// constrslt（工事実績）・eng（工事実績の技術者）・kind（種別）は「使える実績」の判定に使う
+const TYPES=["employee","englicense","licenses","enginfo","literals","assign","constrslt","eng","kind"];
 const CACHE_DB="qualViewerCache";
 function idb(){
   return new Promise((res,rej)=>{
@@ -491,6 +492,7 @@ let ROWS=[], UNMATCHED=[], EMPLOYEES=[], HELD_BY_ENGCD={}, INFO_BY_ENGCD={}, ASS
 function buildRows(data){
   EMPLOYEES=data.employee||[];
   ASSIGN=data.assign||[];
+  setExpData(data);
   const licName={};
   (data.licenses||[]).forEach((l)=>{ licName[normLicCode(l.LICCD)]=l.LICNM||""; });
   const infoMap={};
@@ -910,6 +912,7 @@ const S2={sub:"now", rosters:[], loaded:false, imp:null, msg:"", busy:false,
   cand:{byPeriod:{}, period:null, draft:null, filterCls:"その他", onlyCivil:true, q:"", info:"", migrated:false}, // 1級候補の個人指定（期ごと）
   niji:{periods:{}, draft:null, onlyHo:true, onlySel:false, q:"", paste:"", pasteMsg:""},
   retWin:5, // 在籍率・離職率を集計する期間：直近◯期分（0＝全期間）。表とシミュレーションの「実績」で共通
+  expCfg:{roles:{"監理":true,"主任":true,"担当":true}, pointMin:65, years:15, incUnconf:false}, expInfo:"", // 使える実績の条件（meta/shikakuExpSettings）
   countMode:"all", // 1級技術者の数え方："all"＝資格保有の数（純粋） ／ "real"＝実働の数（1級候補の判定で含めない人を除く）             // 二次受検資格者の登録（受検する期ごと）
   now:{period:null, cls:{"イロハ":true,"その他":true,"事務":false,"":false}, band:5, exp:5}}; // 1級候補とする分類の初期値：イロハ＋その他
 const structEl=document.getElementById("struct");
@@ -925,6 +928,7 @@ async function loadRosters(){
     snap.forEach((d)=>{
       if(String(d.id).startsWith(ROSTER_PREFIX)){ const v=d.data(); if(v && Array.isArray(v.rows)) list.push(v); }
       if(d.id===NIJI_DOC){ const v=d.data()||{}; S2.niji.periods=v.periods||{}; }
+      if(d.id===EXP_DOC){ const v=d.data()||{}; S2.expCfg=normExpCfg(v.cfg); S2.expSaved=JSON.stringify(S2.expCfg); S2.expInfo=v.updatedAt?`最終更新 ${new Date(v.updatedAt).toLocaleString("ja-JP")} ${v.updatedBy||""}`:""; }
       if(d.id===CAND_DOC){ const v=d.data()||{}; candDocRaw=v; S2.cand.info=v.updatedAt?`最終更新 ${new Date(v.updatedAt).toLocaleString("ja-JP")} ${v.updatedBy||""}`:""; }
     });
     S2.rosters=list.sort((a,b)=>a.period-b.period);
@@ -1056,7 +1060,7 @@ function renderStruct(){
   else if(S2.sub==="trend") h+=renderTrend();
   else if(S2.sub==="sim") h+=renderSim();
   else if(S2.sub==="target") h+=renderTargets();
-  else h+=renderImportCard()+renderRosterListCard()+renderUnmatchedCard()+renderCandCard()+renderDiffCard();
+  else h+=renderImportCard()+renderRosterListCard()+renderUnmatchedCard()+renderCandCard()+renderExpCfgCard()+renderDiffCard();
   // 再描画しても、一覧の中のスクロール位置が戻らないようにする
   const keep={}; structEl.querySelectorAll("[data-keep-scroll][id]").forEach((el)=>{ keep[el.id]=el.scrollTop; });
   structEl.innerHTML=h;
@@ -1330,6 +1334,8 @@ function renderNow(){
     <div class="legend">${STAGES.map((x)=>`<span><i style="background:${x.color}"></i>${x.label}</span>`).join("")}</div>
     ${pyr}</div>`;
 
+  h+=renderExpNowCard(roster, ppl);
+
   // ---- 段階×年齢層の表（図の数値版） ----
   const groups=[["〜29",(a)=>a<30],["30代",(a)=>a>=30&&a<40],["40代",(a)=>a>=40&&a<50],["50代",(a)=>a>=50&&a<60],["60代",(a)=>a>=60&&a<70],["70〜",(a)=>a>=70]];
   h+=`<div class="card"><h2>段階別の人数</h2>
@@ -1353,6 +1359,85 @@ function renderNow(){
 
   S2.nowPeople=ppl; S2.nowBand=w;
   return h;
+}
+
+/* ---- データ管理：使える実績の条件 ---- */
+function renderExpCfgCard(){
+  const c=S2.expCfg;
+  let h=`<div class="card"><h2>使える実績の条件</h2>
+    <p class="desc">入札で「技術者の施工実績」として出せる実績（使える実績）の条件です。現状・シミュレーション・対象者リストで使います。
+    据付実績の有無は、工事実績システムの自動判定と同じ考え方です（製据区分が据付／製据で、据付期間内100%または従事割合100%、かつ実施工程表の整合性確認済みまたは従事割合100%なら「有」。据付期間内50%未満や製作のみは「無」。それ以外は「未確認」）。
+    工事実績システムの画面で手動で押した有／無は保存されないため、ここでは使いません。</p>`;
+  if(!EXP.eng.length) return h+`<p class="muted">工事実績データ（工事実績・技術者情報）が読み込めていません。</p></div>`;
+  h+=`<div class="now-filters" style="margin:6px 0 0">
+    <div class="grp"><b>立場</b>${EXP_ROLES.map(([k,l])=>`<label><input type="checkbox" data-exp-role="${k}"${c.roles[k]?" checked":""}> ${l}</label>`).join("")}</div>
+    <div class="grp"><b>工事成績評定点</b><input type="number" data-exp-cfg="pointMin" value="${c.pointMin}" min="0" max="100" style="width:64px">点以上<span class="muted">（0＝条件なし。点数が未登録の工事は「未確認」）</span></div>
+    <div class="grp"><b>完成からの年数</b><input type="number" data-exp-cfg="years" value="${c.years}" min="0" max="50" style="width:56px">年以内<span class="muted">（0＝制限なし）</span></div>
+    <div class="grp"><b>未確認の実績</b><select data-exp-cfg="incUnconf"><option value="0"${!c.incUnconf?" selected":""}>含めない（確認できた実績だけ）</option><option value="1"${c.incUnconf?" selected":""}>含める</option></select></div></div>`;
+  const dirty=S2.expSaved!==undefined ? S2.expSaved!==JSON.stringify(c) : JSON.stringify(c)!==JSON.stringify(normExpCfg(null));
+  if(canEdit) h+=`<div style="margin-top:8px;display:flex;gap:8px;align-items:center"><button class="btn primary" id="expCfgSave"${dirty?"":" disabled"}>この条件を保存（みんなの初期設定にする）</button>
+    <span class="muted">${dirty?"保存されていない変更があります。保存しない場合、この画面を開いている間だけ有効です。":esc(S2.expInfo||"初期設定のままです")}</span></div>`;
+  else h+=`<p class="muted" style="margin-top:6px">変えた条件は、この画面を開いている間だけ有効です（保存は編集権限のある人のみ）。</p>`;
+  // データの状況
+  const idx=expIndex(); let nOk=0,nUnc=0,nNo=0,nNoRole=0; const why={};
+  idx.forEach((L)=>L.forEach((en)=>{ if(!en.role){ nNoRole++; return; } if(en.st==="ok") nOk++; else if(en.st==="no") nNo++; else { nUnc++; why[en.why]=(why[en.why]||0)+1; } }));
+  const roleNames={}; EXP.eng.forEach((r)=>{ const n=expLit("TRGT",r.POSICD)||`（コード ${r.POSICD}）`; roleNames[n]=(roleNames[n]||0)+1; });
+  h+=`<details class="diff" style="margin-top:10px"><summary>読み込んだ工事実績データの状況</summary>
+    <p class="desc">工事実績 ${Object.keys(EXP.proj).length}件・技術者の実績 ${EXP.eng.length}行（実績のある技術者 ${idx.size}人）。<br>
+    据付実績の判定（監理・主任・担当）：有 ${nOk}件／未確認 ${nUnc}件／無 ${nNo}件。対象外の立場（現場代理人など）${nNoRole}件。</p>
+    <table class="grid-tbl"><tr><th>未確認の理由</th><th>件数</th></tr>${Object.entries(why).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="n">${v}</td></tr>`).join("")}</table>
+    <table class="grid-tbl" style="margin-top:8px"><tr><th>技術者情報の役割</th><th>行数</th><th>扱い</th></tr>${Object.entries(roleNames).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="n">${v}</td><td>${expRoleOf(k)?esc(EXP_ROLES.find(([r])=>r===expRoleOf(k))[1]):'<span class="muted">対象外</span>'}</td></tr>`).join("")}</table></details>`;
+  return h+`</div>`;
+}
+structEl.addEventListener("change",(e)=>{
+  const t=e.target;
+  if(t.dataset.expRole!==undefined){ S2.expCfg.roles[t.dataset.expRole]=t.checked; renderStruct(); }
+  else if(t.dataset.expCfg){ const k=t.dataset.expCfg; S2.expCfg[k]= k==="incUnconf" ? t.value==="1" : Math.max(0, parseFloat(t.value)||0); renderStruct(); }
+});
+structEl.addEventListener("click", async (e)=>{
+  if(e.target.id!=="expCfgSave") return;
+  const rec={cfg:S2.expCfg, updatedAt:Date.now(), updatedBy:(auth.currentUser&&auth.currentUser.email)||""};
+  try{ await setDoc(doc(db,"meta",EXP_DOC), rec); S2.expSaved=JSON.stringify(S2.expCfg); S2.expInfo=`最終更新 ${new Date(rec.updatedAt).toLocaleString("ja-JP")} ${rec.updatedBy}`; }
+  catch(err){ S2.msg="条件を保存できませんでした（"+(err.code||err.message)+"）"; }
+  renderStruct();
+});
+
+/* ---- 現状：1級技術者の使える実績 ---- */
+function renderExpNowCard(roster, ppl){
+  let h=`<div class="card"><h2>1級技術者の使える実績（${roster.period}期末時点）</h2>`;
+  if(!EXP.eng.length) return h+`<p class="muted">工事実績データ（工事実績・技術者情報）が読み込めないため、表示できません。</p></div>`;
+  const d=periodEnd(roster.period), c=S2.expCfg;
+  const tech=ppl.filter((p)=>p.stage==="s5").map((p)=>({...p, ex:expLevel(p.engcd,d), exAll:expLevel(p.engcd,d,true), exOk:expLevel(p.engcd,d,false)}));
+  const cnt=(k,f="ex")=> tech.filter((p)=>p[f].lv===k).length;
+  const cond=`${EXP_ROLES.filter(([k])=>c.roles[k]).map(([,l])=>l.replace(/（.*）/,"")).join("・")}として、据付実績「有」${c.pointMin>0?`・工事成績評定点${c.pointMin}点以上`:""}${c.years>0?`・完成から${c.years}年以内`:""}${c.incUnconf?"（未確認の実績も含める）":"（確認できた実績だけ）"}`;
+  h+=`<p class="desc">条件：${esc(cond)}。条件は「データ管理」の「使える実績の条件」で変えられます。1級技術者の数え方（${modeLabel()}）に従います。</p>
+    <div class="tiles">${EXP_LV.map((x)=>`<div class="tile"><div class="k"><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${x.color};margin-right:6px"></i>${x.label}</div><div class="v">${cnt(x.k)}<small>人</small></div>
+      <div class="s">${c.incUnconf?`確認できた実績だけなら ${cnt(x.k,"exOk")}人`:`未確認の実績も含めると ${cnt(x.k,"exAll")}人`}</div></div>`).join("")}</div>`;
+  // 年代別の積み上げ棒
+  const groups=[["〜29",(a)=>a<30],["30代",(a)=>a>=30&&a<40],["40代",(a)=>a>=40&&a<50],["50代",(a)=>a>=50&&a<60],["60代",(a)=>a>=60&&a<70],["70〜",(a)=>a>=70]];
+  const rows=groups.map(([l,f])=>({l, list:tech.filter((p)=>p.age!==null&&f(p.age))}));
+  const mx=Math.max(1,...rows.map((r)=>r.list.length));
+  S2.expTip={};
+  h+=`<div class="legend" style="margin-top:12px">${EXP_LV.map((x)=>`<span><i style="background:${x.color}"></i>${x.label}</span>`).join("")}</div>
+    <div class="pyr" style="grid-template-columns:52px 1fr;max-width:720px">`+
+    rows.map((r,i)=>{ const segs=EXP_LV.map((x)=>{ const a=r.list.filter((p)=>p.ex.lv===x.k); S2.expTip[i+"|"+x.k]={label:`${r.l}・${x.label}`, names:a.map((p)=>p.name+(p.ex.nUnc&&x.k!=="strong"?`（未確認${p.ex.nUnc}件）`:""))};
+        return a.length?`<span class="seg" style="flex:${a.length};background:${x.color}" data-exp-tip="${i}|${x.k}"></span>`:""; }).join("");
+      const nS=r.list.filter((p)=>p.ex.lv!=="none").length;
+      return `<div class="age">${r.l}</div><div class="side r"><div class="pbar" style="width:${(r.list.length/mx*100).toFixed(2)}%">${segs}</div><span class="num" style="white-space:nowrap">${r.list.length?`${r.list.length}人（あり ${nS}）`:""}</span></div>`; }).join("")+`</div>
+    <table class="grid-tbl" style="margin-top:10px"><tr><th></th>${groups.map((g)=>`<th>${g[0]}</th>`).join("")}<th>年齢不明</th><th>合計</th></tr>`+
+    EXP_LV.map((x)=>`<tr><td><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${x.color};margin-right:6px"></i>${x.label}</td>${rows.map((r)=>`<td class="n">${r.list.filter((p)=>p.ex.lv===x.k).length||""}</td>`).join("")}<td class="n">${tech.filter((p)=>p.age===null&&p.ex.lv===x.k).length||""}</td><td class="n"><b>${cnt(x.k)}</b></td></tr>`).join("")+`</table>`;
+  // 育成の時間
+  const lg=expLagActual(roster.period);
+  if(lg && lg.n){
+    const tot=lg.at.length+lg.after.length;
+    h+=`<h3 style="font-size:13px;margin:16px 0 4px">1級に合格してから使える実績が付くまで（直近15年に合格した在籍者 ${lg.n}人）</h3>
+      <table class="grid-tbl"><tr><th>合格の時点ですでに持っていた</th><th>合格後に付いた</th><th>まだ付いていない</th></tr>
+      <tr><td class="n"><b>${lg.at.length}人</b>${tot?`<span class="muted">（付いた人の${Math.round(lg.at.length/tot*100)}%）</span>`:""}</td>
+        <td class="n"><b>${lg.after.length}人</b>${lg.med!==null?`<span class="muted">（合格から中央値 ${lg.med.toFixed(1)}年）</span>`:""}</td>
+        <td class="n"><b>${lg.still.length}人</b>${lg.still.length?`<span class="muted">（合格から平均 ${(lg.still.reduce((x,p)=>x+p.yrs,0)/lg.still.length).toFixed(1)}年）</span>`:""}</td></tr></table>
+      <p class="desc" style="margin-top:6px">合格の時点で持っていた人は、担当技術者などとして合格前から据付の現場で実績を積んでいた人です。「まだ付いていない」人は対象者リストで確認できます。年数は、合格日（1級の取得日）から、初めて使える実績になった工事の完成日までです（「何年以内」の条件は見ていません）。</p>`;
+  }
+  return h+`</div>`;
 }
 
 /* =====================================================================
@@ -1554,6 +1639,172 @@ function needByPeriod(opt, periods){
   });
 }
 
+/* =====================================================================
+   使える実績（入札で「技術者の施工実績」として出せる実績）
+   ・工事実績システムの工事実績（CORINS）・技術者情報・種別情報から、1人ずつ実績を並べる。
+   ・据付実績の有無は、工事実績システムの自動判定と同じ考え方：
+       製据区分が据付／製据 かつ（据付期間内100% または 従事割合100%）かつ（実施工程表の整合性確認済み または 従事割合100%）→ 有
+       据付期間内50%未満 → 無、製作のみ → 無、それ以外 → 未確認
+   ・条件（役割・工事成績評定点・何年以内・未確認を含めるか）は meta/shikakuExpSettings に保存して共有する。
+   ===================================================================== */
+const EXP_DOC="shikakuExpSettings";
+const EXP_ROLES=[["監理","監理技術者"],["主任","主任技術者（管理技術者を含む）"],["担当","担当技術者"]];
+let EXP={proj:{}, kinds:{}, eng:[], lit:{TRGT:{},SESU:{}}, ver:0}, EXP_IDX=null, NAME_IDX=null, DUTY_CACHE=null;
+function normExpCfg(c){
+  const d={roles:{"監理":true,"主任":true,"担当":true}, pointMin:65, years:15, incUnconf:false};
+  if(!c) return d;
+  return {roles:{...d.roles, ...(c.roles||{})}, pointMin: isFinite(+c.pointMin)?+c.pointMin:d.pointMin, years: isFinite(+c.years)?+c.years:d.years, incUnconf:!!c.incUnconf};
+}
+function setExpData(data){
+  const proj={}, kinds={}, lit={TRGT:{},SESU:{}};
+  (data.constrslt||[]).forEach((r)=>{ const k=String(r.CONSTNO||"").trim(); if(k) proj[k]=r; });
+  (data.kind||[]).forEach((r)=>{ const k=String(r.CONSTNO||"").trim(); if(k) (kinds[k] ||= []).push(r); });
+  (data.literals||[]).forEach((l)=>{ if(lit[l.CDTYP]) lit[l.CDTYP][normCode(l.LTLCD)]=l.LTLNM||""; });
+  EXP={proj, kinds, eng:data.eng||[], lit, ver:EXP.ver+1};
+  EXP_IDX=null; NAME_IDX=null; DUTY_CACHE=null;
+}
+const expLit=(t,c)=> (c===undefined||c===null||c==="") ? "" : (EXP.lit[t][normCode(c)]||"");
+const expRoleOf=(name)=>{ const s=String(name||""); if(s.includes("監理")) return "監理"; if(s.includes("主任")||s.includes("管理技術者")) return "主任"; if(s.includes("担当")) return "担当"; return ""; };
+const ymdNum=(s)=> Date.UTC(+s.slice(0,4),+s.slice(4,6)-1,+s.slice(6))/86400000;
+// 従事期間（最大3つ）が from〜to をどれだけ覆っているか（%）。工事実績システムの computeEngagementPct と同じ計算。
+function coverPct(periods, from, to){
+  const f=d8(from), t=d8(to); if(!f||!t||f>t) return null;
+  const ps=periods.filter((p)=>d8(p.from)); if(!ps.length) return null;
+  let sum=0;
+  ps.forEach((p)=>{ const a=d8(p.from), b=d8(p.to); if(!a||!b) return; const st=a>f?a:f, en=b<t?b:t; if(st<=en) sum+=ymdNum(en)-ymdNum(st)+1; });
+  return Math.min(100, Math.round(sum/(ymdNum(t)-ymdNum(f)+1)*1000)/10);
+}
+const ST_RANK={no:0, unconf:1, ok:2};
+// 技術者コード → 実績の一覧（同じ工事・同じ立場は1件にまとめ、判定の良い方を残す）
+function expIndex(){
+  if(EXP_IDX && EXP_IDX.ver===EXP.ver) return EXP_IDX.map;
+  const map=new Map(), byKey=new Map();
+  EXP.eng.forEach((r)=>{
+    const engcd=String(r.ENGCD||"").trim(), cn=String(r.CONSTNO||"").trim(); if(!engcd||!cn) return;
+    const proj=EXP.proj[cn]; if(!proj) return;
+    const roleName=expLit("TRGT", r.POSICD), role=expRoleOf(roleName);
+    const periods=[["KOKF01","KOKT01"],["KOKF02","KOKT02"],["KOKF03","KOKT03"]].map(([f,t])=>({from:r[f], to:r[t]})).filter((p)=>p.from);
+    const ks=(EXP.kinds[cn]||[]).map((k)=>expLit("SESU",k.KBN));
+    const isInst=ks.some((k)=>k==="据付"||k==="製据");
+    const inst=coverPct(periods, proj.SSDAY, proj.KOJDAY||proj.KOKT), jw=coverPct(periods, proj.KOKF, proj.KOKT);
+    const full=jw!==null&&jw>=100, sched=parseFloat(proj.SCHED_CHECKED)===1;
+    let st, why;
+    if(!isInst && ks.length){ st="no"; why="製作のみ"; }
+    else if(isInst && ((inst!==null&&inst>=100)||full) && (sched||full)){ st="ok"; why=""; }
+    else if(inst!==null && inst<50){ st="no"; why=`据付期間内${inst}%`; }
+    else { st="unconf"; why= !ks.length ? "種別が未登録" : !sched&&!full ? "実施工程表の整合性が未確認" : `据付期間内${inst===null?"不明":inst+"%"}`; }
+    const pt=(proj.POINT===undefined||proj.POINT===null||proj.POINT==="") ? null : parseFloat(proj.POINT);
+    const en={engcd, constno:cn, name:((proj.NAM1||"")+" "+(proj.NAM2||"")).trim(), role, roleName, kokt:d8(proj.KOKT), point:isNaN(pt)?null:pt, st, why, orderer:proj.KYA1||""};
+    const key=engcd+"|"+cn+"|"+role, old=byKey.get(key);
+    if(old){ if(ST_RANK[en.st]>ST_RANK[old.st]) Object.assign(old,en); return; }
+    byKey.set(key,en); (map.get(engcd) || map.set(engcd,[]).get(engcd)).push(en);
+  });
+  EXP_IDX={ver:EXP.ver, map};
+  return map;
+}
+// 1件の実績が、日付 d の時点で「使える実績」か："ok"＝使える ／ "unconf"＝確認すれば使える可能性 ／ ""＝使えない
+function expUsable(en, d, noWindow){
+  const c=S2.expCfg;
+  if(!en.role || !c.roles[en.role]) return "";
+  if(!en.kokt || en.kokt>d) return "";                    // 完成していない
+  if(!noWindow && c.years>0 && en.kokt<addYears(d,-c.years)) return ""; // 古すぎる
+  if(en.st==="no") return "";
+  let s=en.st;
+  if(c.pointMin>0){ if(en.point===null) s="unconf"; else if(en.point<c.pointMin) return ""; }
+  return s;
+}
+// 日付 d の時点の段階：strong＝監理・主任として使える実績あり ／ usable＝担当技術者の実績のみ ／ none＝なし
+// inc：未確認の実績も含める（省略時は設定に従う）
+function expLevel(engcd, d, inc){
+  if(inc===undefined) inc=S2.expCfg.incUnconf;
+  const L=(engcd && expIndex().get(String(engcd)))||[];
+  let strong=false, use=false, nOk=0, nUnc=0;
+  L.forEach((en)=>{ const s=expUsable(en,d); if(!s) return;
+    if(s==="unconf"){ nUnc++; if(!inc) return; } else nOk++;
+    use=true; if(en.role!=="担当") strong=true; });
+  return {lv: strong?"strong":use?"usable":"none", nOk, nUnc};
+}
+// 初めて使える実績が付いた日（完成日）。期間の制限（何年以内）は見ない。
+function expFirst(engcd, inc){
+  if(inc===undefined) inc=S2.expCfg.incUnconf;
+  let f="";
+  ((engcd && expIndex().get(String(engcd)))||[]).forEach((en)=>{ const s=expUsable(en,"99991231",true); if(!s || (s==="unconf"&&!inc)) return; if(!f||en.kokt<f) f=en.kokt; });
+  return f;
+}
+const EXP_LV=[{k:"strong",label:"監理・主任の使える実績あり",color:"#1c5aa6"},{k:"usable",label:"担当技術者の使える実績のみ",color:"#6fa3e6"},{k:"none",label:"使える実績なし",color:"#d4d3cd"}];
+const EXP_LV_BY=Object.fromEntries(EXP_LV.map((x)=>[x.k,x]));
+// 配置データの技術者名 → 技術者コード（同姓同名は対象外）
+function engcdByName(name){
+  if(!NAME_IDX){ NAME_IDX=new Map();
+    const put=(n,c)=>{ const k=normPersonName(n); if(!k) return; NAME_IDX.set(k, NAME_IDX.has(k)&&NAME_IDX.get(k)!==c ? null : c); };
+    EMPLOYEES.forEach((e)=>{ const c=String(e.ENGCD); put(e.ID_NAME,c); if(e.NAME_CHANGE) put(e.NAME_CHANGE,c); if(e.OLD_NAME) put(e.OLD_NAME,c); }); }
+  return NAME_IDX.get(normPersonName(name))||"";
+}
+// 配置データの技術者の配置（役割つき）。案件区分に「据」があれば据付。受注前の案件かどうかも持つ。
+function assignDuty(){
+  if(DUTY_CACHE) return DUTY_CACHE;
+  const parents={}; ASSIGN.forEach((r)=>{ if(r["タイプ"]==="案件・工番") parents[r.ID]=r; });
+  const out=[];
+  ASSIGN.forEach((r)=>{
+    if(r["タイプ"]!=="技術者") return;
+    const par=parents[r.PARENT]||{}, roleName=String(r["役割"]||"");
+    const from=d8(r["配置期間(自)"])||d8(par["工期(自)"]), to=d8(r["配置期間(至)"])||d8(par["工期(至)"]);
+    if(!from||!to) return;
+    const kubun=String(r["案件区分"]||par["案件区分"]||"");
+    const name=String(r["技術者名"]||"").replace(/[\s　]/g,"");
+    out.push({name, engcd:engcdByName(name), role:expRoleOf(roleName), roleName, from, to, inst:kubun.includes("据"), kubun,
+      koban:String(par["工番・案件"]||""), title:String(par["工事名・案件名"]||""), anken:isAnken(par["工番・案件"])});
+  });
+  DUTY_CACHE=out; return out;
+}
+// 月の一覧（期 p1〜p2、10月〜翌9月）
+function monthsOf(p1,p2){ const a=[]; for(let p=p1;p<=p2;p++) for(let i=0;i<12;i++){ const y=p+1956+(i>=3?1:0), m=((9+i)%12)+1; a.push({ms:`${y}${String(m).padStart(2,"0")}01`, me:`${y}${String(m).padStart(2,"0")}31`}); } return a; }
+// 必要数の役割（監理・主任）で配置された人のうち、配置された月の初めに使える実績を持っていた割合（直近3期・受注済みの工事）
+function expShareActual(roles, base){
+  const duty=assignDuty().filter((t)=>t.role && roles[t.role] && !t.anken);
+  let n=0, u=0, unk=0;
+  monthsOf(base-2, base).forEach(({ms,me})=>{
+    const seen=new Set();
+    duty.forEach((t)=>{ if(t.from>me||t.to<ms) return; if(seen.has(t.name)) return; seen.add(t.name);
+      if(!t.engcd){ unk++; return; } n++; if(expLevel(t.engcd, ms).lv!=="none") u++; });
+  });
+  return {n,u,unk};
+}
+// 年代別の稼働率：期末名簿の1級技術者（使える実績あり）が、直近3期の36か月のうち何か月、監理・主任として配置されていたか
+const UTIL_BANDS=[["u39","〜39歳",(a)=>a<40],["u49","40代",(a)=>a>=40&&a<50],["u59","50代",(a)=>a>=50&&a<60],["u64","60〜64歳",(a)=>a>=60&&a<65],["u65","65歳以上",(a)=>a>=65]];
+function utilActual(base){
+  const roster=S2.rosters.find((r)=>r.period===base); if(!roster) return null;
+  const d=periodEnd(base), ppl=computeNow(roster,S2.now).filter((p)=>p.stage==="s5" && p.age!==null && p.engcd && expLevel(p.engcd,d).lv!=="none");
+  const duty=assignDuty().filter((t)=>t.engcd && (t.role==="監理"||t.role==="主任") && !t.anken);
+  const months=monthsOf(base-2, base);
+  const by={}; UTIL_BANDS.forEach(([k])=>by[k]={n:0, m:0});
+  ppl.forEach((p)=>{ const mine=duty.filter((t)=>t.engcd===p.engcd); let m=0;
+    months.forEach(({ms,me})=>{ if(mine.some((t)=>t.from<=me&&t.to>=ms)) m++; });
+    const b=UTIL_BANDS.find(([,,f])=>f(p.age)); by[b[0]].n++; by[b[0]].m+=m; });
+  UTIL_BANDS.forEach(([k])=>{ const x=by[k]; x.rate= x.n ? x.m/(x.n*months.length) : null; });
+  const ref=Math.max(0,...UTIL_BANDS.map(([k])=>by[k].n>=3 && by[k].rate!==null ? by[k].rate : 0));
+  UTIL_BANDS.forEach(([k])=>{ const x=by[k]; x.rel= ref>0 && x.n>=3 && x.rate!==null ? Math.min(100,Math.round(x.rate/ref*100)) : null; });
+  return {by, ref, n:ppl.length};
+}
+// 1級に合格した時点で使える実績を持っていた割合と、合格後に付くまでの年数（直近15年に合格した在籍者）
+function expLagActual(base){
+  const roster=S2.rosters.find((r)=>r.period===base); if(!roster) return null;
+  const d=periodEnd(base), from=addYears(d,-15);
+  const ppl=computeNow(roster,S2.now).filter((p)=>p.k1Held && p.engcd && /^\d{8}$/.test(p.k1Sday||"") && p.k1Sday>=from);
+  const at=[], after=[], still=[];
+  ppl.forEach((p)=>{ const f=expFirst(p.engcd);
+    if(f && f<=p.k1Sday) at.push(p);
+    else if(f && f<=d) after.push({...p, yrs:(ymdNum(f)-ymdNum(p.k1Sday))/365.25});
+    else still.push({...p, yrs:(ymdNum(d)-ymdNum(p.k1Sday))/365.25}); });
+  const ys=after.map((x)=>x.yrs).sort((a,b)=>a-b);
+  const med= ys.length ? (ys.length%2 ? ys[(ys.length-1)/2] : (ys[ys.length/2-1]+ys[ys.length/2])/2) : null;
+  return {n:ppl.length, at, after, still, med};
+}
+// 今の配置予定から、使える実績が付く見込みの配置（据付で、立場が条件に入る役割、まだ終わっていない）
+function expPlanOf(engcd, d){
+  return assignDuty().filter((t)=>t.engcd===engcd && t.inst && t.role && S2.expCfg.roles[t.role] && t.to>d).sort((a,b)=>a.to<b.to?-1:1);
+}
+
 // ---- 前提条件の初期値（実績があれば実績、少なければ仮の値） ----
 // 在籍率の年齢区分（全世代）。[キー, 表示, 判定, 実績が少ないときの仮の値(%)]。シミュレーションと「年代別の在籍率・離職率」で共通。
 const RET_KEYS=[
@@ -1586,10 +1837,14 @@ function simDefaults(){
   const P={years:15, exp:S2.now.exp, ret:{}, src:{}, newbie:90, p1:15, p2:30,
     hireHigh:0, hireUniv:0, midNone:0, midHo:0, mid1:0, midAge:35,
     midTiming:"next", // 中途（1級あり）を技術者として数え始める時期（入社後6か月以上の雇用が条件）："next"＝翌期末から／"same"＝入社した期末から
-    lever:{hire:2, pass:100, mid1:1},
-    need:{mode:"peak3", manual:0, roles:{"監理":true,"主任":false}, anken:true, margin:0}};
+    need:{mode:"peak3", manual:0, roles:{"監理":true,"主任":false}, anken:true, margin:0},
+    // 使える実績：share＝必要数のうち使える実績が要る割合、p0＝1級合格の時点で使える実績を持っている割合、
+    // L＝持っていない人が合格後に使える実績が付くまでの年数、mid1U＝中途（1級あり）のうち使える実績を持っている割合、util＝年代別の稼働率（相対・%）
+    // exist：今いる使える実績なしの1級（配置予定なし）の扱い。"never"＝付かないとみなす ／ "L"＝L年後に付く
+    u:{share:80, p0:30, L:3, mid1U:100, exist:"never", useUtil:true, util:{u39:100,u49:100,u59:100,u64:100,u65:100}},
+    lever:{hire:2, pass:100, mid1:1, lag:1}};
   RET_KEYS.forEach(([k,,,def])=>{ P.ret[k]=def; P.src["ret_"+k]="仮"; });
-  P.src.newbie=P.src.p1=P.src.p2="仮"; P.src.hire="仮";
+  P.src.newbie=P.src.p1=P.src.p2="仮"; P.src.hire="仮"; P.src.u_share=P.src.u_p0=P.src.u_L=P.src.u_mid1U=P.src.u_util="仮";
   const R=S2.rosters;
   // 合格の割合・採用人数は1級候補（分類）を使うので、両方の期に分類がある組だけで計算する。在籍率は分類を使わないので全期を使う。
   const pairs=[]; for(let i=1;i<R.length;i++) if(R[i].period===R[i-1].period+1 && !R[i].noCls && !R[i-1].noCls) pairs.push([R[i-1],R[i]]);
@@ -1624,29 +1879,61 @@ function simDefaults(){
   return P;
 }
 
+const U_DEF={share:80, p0:30, L:3, mid1U:100, util:{u39:100,u49:100,u59:100,u64:100,u65:100}};
+// 使える実績の「実績」の値（必要数の役割に合わせるため、表示のたびに計算し直す）
+function expSimActuals(P, base){
+  const F={};
+  if(!EXP.eng.length) return F;
+  const sh=expShareActual(P.need.roles, base);
+  if(sh.n>=12) F.share={v:Math.round(sh.u/sh.n*100), src:`実績（直近3期・のべ${sh.n}人月のうち${sh.u}）`};
+  const lg=expLagActual(base);
+  if(lg && lg.at.length+lg.after.length>=3){ F.p0={v:Math.round(lg.at.length/(lg.at.length+lg.after.length)*100), src:`実績 ${lg.at.length}/${lg.at.length+lg.after.length}人`}; }
+  if(lg && lg.after.length>=2){ F.L={v:Math.max(1,Math.round(lg.med)), src:`実績（中央値 ${lg.med.toFixed(1)}年・${lg.after.length}人）`}; }
+  const ut=utilActual(base);
+  if(ut && ut.ref>0){ const v={}; UTIL_BANDS.forEach(([k])=>{ v[k]= ut.by[k].rel!==null ? ut.by[k].rel : 100; });
+    F.util={v, src:`実績（直近3期・${ut.n}人）`}; }
+  return F;
+}
+const utilOf=(P,age)=>{ if(!P.u.useUtil) return 1; const b=UTIL_BANDS.find(([,,f])=>f(age)); return (P.u.util[b[0]]??100)/100; };
+
 // ---- 計算本体 ----
 function simInit(P){
   const roster=S2.rosters[S2.rosters.length-1];
   const ppl=computeNow(roster,{...S2.now, exp:P.exp}).filter((p)=>p.stage!=="out");
   const d=periodEnd(roster.period);
   const avgAge=(st)=>{ const a=ppl.filter((p)=>p.stage===st && p.age!==null); return a.length ? Math.round(a.reduce((x,p)=>x+p.age,0)/a.length) : 45; };
+  // ul：使える実績が付くまでの年数（0＝持っている、-1＝まだ1級でない人で、合格の時点で決める）
+  const ulOf=(p)=>{
+    if(!EXP.eng.length) return 0; // 工事実績データが無いときは、使える実績を見ない（1級＝使える扱い）
+    if(p.engcd && expLevel(p.engcd,d).lv!=="none") return 0;
+    if(p.stage!=="s5") return -1;
+    const plan=p.engcd ? expPlanOf(p.engcd,d) : [];
+    if(plan.length){ const end=plan[0].to, per=(end.slice(4)>="1001" ? +end.slice(0,4)+1 : +end.slice(0,4))-1956; return Math.max(1, per-roster.period+1); } // 完成した期の翌期末から（CORINS登録・評定を待つ）
+    return P.u.exist==="L" ? Math.max(0,P.u.L) : 99; // 99＝予測の期間中には付かない
+  };
+  const hasPlan=(p)=> p.stage==="s5" && !!p.engcd && EXP.eng.length>0 && expLevel(p.engcd,d).lv==="none" && expPlanOf(p.engcd,d).length>0;
   return ppl.map((p)=>{ const info=INFO_BY_ENGCD[p.engcd]||{};
     const t=yearsBetween(String(info.NDAY||"").replace(/[^\d]/g,""), d);
-    return {age: p.age!==null ? p.age : avgAge(p.stage), stage:p.stage, exp: p.exp!==null ? p.exp : (p.stage==="s4"?P.exp:0), nb: t===null?3:Math.min(3,t), w:1}; });
+    return {age: p.age!==null ? p.age : avgAge(p.stage), stage:p.stage, exp: p.exp!==null ? p.exp : (p.stage==="s4"?P.exp:0), nb: t===null?3:Math.min(3,t), ul:ulOf(p), plan:hasPlan(p), w:1}; });
 }
 function simulate(init, P){
   const rate=(age,nb)=>{ if(nb<3) return P.newbie/100; const k=RET_KEYS.find(([,,f])=>f(age)); return P.ret[k[0]]/100; };
   let st=new Map();
-  const add=(m,o)=>{ const k=`${o.age}|${o.stage}|${o.exp}|${o.nb}`; const c=m.get(k); if(c) c.w+=o.w; else m.set(k,{...o}); };
+  const add=(m,o)=>{ if(o.ul===undefined) o={...o, ul:-1};
+    // 1級になった人：合格の時点で使える実績を持っている割合（p0）は0年、残りはL年後
+    if((o.stage==="s5"||o.stage==="p5") && o.ul<0){ const a=o.w*P.u.p0/100; if(a>0) add(m,{...o, ul:0, w:a}); if(o.w-a>0) add(m,{...o, ul:Math.max(0,P.u.L), w:o.w-a}); return; }
+    const k=`${o.age}|${o.stage}|${o.exp}|${o.nb}|${o.ul}`; const c=m.get(k); if(c) c.w+=o.w; else m.set(k,{...o}); };
   init.forEach((o)=>add(st,o));
   // p5＝1級を持つ中途で、雇用6か月に満たず期末にはまだ数えない人（1級技術者の人数には入れない）
-  const snap=()=>{ const r={s5:0,s4:0,s3:0,s2:0,s1:0,s5_60:0,p5:0}; st.forEach((o)=>{ r[o.stage]+=o.w; if(o.stage==="s5"&&o.age>=60) r.s5_60+=o.w; }); return r; };
+  // s5u＝使える実績ありの1級、s5ue＝その戦力換算（年代別の稼働率をかける）
+  const snap=()=>{ const r={s5:0,s4:0,s3:0,s2:0,s1:0,s5_60:0,p5:0,s5u:0,s5ue:0,s5u_60:0}; st.forEach((o)=>{ r[o.stage]+=o.w; if(o.stage==="s5"&&o.age>=60) r.s5_60+=o.w;
+    if(o.stage==="s5" && o.ul===0){ r.s5u+=o.w; r.s5ue+=o.w*utilOf(P,o.age); if(o.age>=60) r.s5u_60+=o.w; } }); return r; };
   const out=[snap()];
   for(let y=1;y<=P.years;y++){
     const nx=new Map();
     st.forEach((o)=>{
       const w=o.w*rate(o.age,o.nb); if(w<1e-6) return;
-      const b={age:o.age+1, stage:o.stage, exp:o.exp, nb:Math.min(3,o.nb+1), w};
+      const b={age:o.age+1, stage:o.stage, exp:o.exp, nb:Math.min(3,o.nb+1), ul: o.ul>0 ? o.ul-1 : o.ul, w};
       if(b.stage==="s1"){ if(b.age>=18) b.stage="s2"; add(nx,b); } // 期末18歳以上なら、次の一次検定の受検年度末には19歳以上
       else if(b.stage==="s2"){ const pass=w*P.p1/100; if(pass>0) add(nx,{...b, stage:"s3", exp:0, w:pass}); if(w-pass>0) add(nx,{...b, w:w-pass}); }
       else if(b.stage==="s3"){ b.exp=o.exp+1; if(b.exp>=P.exp) b.stage="s4"; add(nx,b); }
@@ -1663,21 +1950,24 @@ function simulate(init, P){
     hire(P.midNone,{age:P.midAge, stage:"s2", exp:0});
     hire(P.midHo,{age:P.midAge, stage:"s3", exp:0});
     // 中途（1級あり）：入社後6か月以上の雇用が条件。4〜9月入社なら、その期末にはまだ6か月に満たないので翌期末から数える。
-    hire(P.mid1,{age:P.midAge, stage: P.midTiming==="same" ? "s5" : "p5", exp:0});
+    { const st5= P.midTiming==="same" ? "s5" : "p5", a=P.mid1*P.u.mid1U/100;
+      hire(a,{age:P.midAge, stage:st5, exp:0, ul:0}); hire(P.mid1-a,{age:P.midAge, stage:st5, exp:0, ul:Math.max(0,P.u.L)}); }
     st=nx; out.push(snap());
   }
   return out;
 }
 // 不足が始まる期（出発時点＝今は打ち手で変えられないので、翌期以降で判定する）
-const firstShort=(res,need)=>{ for(let i=1;i<res.length;i++) if(res[i].s5 < need-1e-9) return i; return -1; };
+const firstShort=(res,need,m="s5")=>{ for(let i=1;i<res.length;i++) if(res[i][m] < need-1e-9) return i; return -1; };
 // 打ち手の逆算：不足をゼロにできる最小値を探す（無理なら「最大でも不足が残る期」を返す）
-function backCalc(init, P, need, kind){
+function backCalc(init, P, need, kind, m="s5"){
   const mk=(v)=>{ const Q=JSON.parse(JSON.stringify(P));
-    if(kind==="hire") Q.hireUniv=P.hireUniv+v; else if(kind==="mid1") Q.mid1=P.mid1+v; else { Q.p1=Math.max(P.p1,v); Q.p2=Math.max(P.p2,v); } return Q; };
-  const vals= kind==="pass" ? Array.from({length:101},(_,i)=>i) : Array.from({length:41},(_,i)=>i);
-  for(const v of vals){ const r=simulate(init,mk(v)); if(firstShort(r,need)<0) return {ok:true, v}; }
-  const maxV=vals[vals.length-1], r=simulate(init,mk(maxV));
-  return {ok:false, v:maxV, short:r.map((x,i)=>i>0&&x.s5<need-1e-9?i:-1).filter((i)=>i>=0)};
+    if(kind==="hire") Q.hireUniv=P.hireUniv+v; else if(kind==="mid1") Q.mid1=P.mid1+v; else if(kind==="lag") Q.u.L=v; else { Q.p1=Math.max(P.p1,v); Q.p2=Math.max(P.p2,v); } return Q; };
+  // lag：使える実績が付くまでの年数を、今の値から短くしていく（init の「L年後」の人も同じ年数に置き直す）
+  const vals= kind==="pass" ? Array.from({length:101},(_,i)=>i) : kind==="lag" ? Array.from({length:Math.max(0,P.u.L)+1},(_,i)=>Math.max(0,P.u.L)-i) : Array.from({length:41},(_,i)=>i);
+  const run=(v)=> simulate(kind==="lag" ? init.map((o)=> o.stage==="s5" && o.ul>0 && !o.plan ? {...o, ul:v} : o) : init, mk(v));
+  for(const v of vals){ const r=run(v); if(firstShort(r,need,m)<0) return {ok:true, v}; }
+  const maxV=vals[vals.length-1], r=run(maxV);
+  return {ok:false, v:maxV, short:r.map((x,i)=>i>0&&x[m]<need-1e-9?i:-1).filter((i)=>i>=0)};
 }
 
 function renderSim(){
@@ -1694,6 +1984,11 @@ function renderSim(){
     if(Q.src.hire!=="手入力"){ ["hireHigh","hireUniv","midNone","midHo","mid1"].forEach((k)=>{ Q[k]=F[k]; }); Q.src.hire=F.src.hire; }
   }
   const P=S2.sim, base=S2.rosters[S2.rosters.length-1].period;
+  // 使える実績の「実績」の値（手入力していないものだけ置き換える）
+  { const FA=expSimActuals(P, base);
+    ["share","p0","L"].forEach((k)=>{ if(P.src["u_"+k]==="手入力") return; if(FA[k]){ P.u[k]=FA[k].v; P.src["u_"+k]=FA[k].src; } else { P.u[k]=U_DEF[k]; P.src["u_"+k]="仮"; } });
+    if(P.src.u_mid1U!=="手入力") P.u.mid1U=U_DEF.mid1U;
+    if(P.src.u_util!=="手入力"){ if(FA.util){ P.u.util=FA.util.v; P.src.u_util=FA.util.src; } else { P.u.util={...U_DEF.util}; P.src.u_util="仮"; } } }
   // 必要数
   const nperiods=[]; for(let p=base-2;p<=base+2;p++) nperiods.push(p);
   const nb=needByPeriod(P.need, nperiods);
@@ -1701,15 +1996,23 @@ function renderSim(){
   const auto= P.need.mode==="peak3" ? Math.max(0,...past.map((x)=>x.peak)) : past.reduce((s,x)=>s+x.avg,0)/past.length;
   const need0= P.need.mode==="manual" ? P.need.manual : Math.ceil(auto*(1+P.need.margin/100));
   const init=simInit(P);
+  const hasExp=EXP.eng.length>0;
+  const needU=Math.ceil(need0*P.u.share/100-1e-9);
   const scen=[
     {k:"A", name:"現状のまま", color:"#2a78d6", P},
     {k:"B", name:`新卒（大卒）を毎年＋${P.lever.hire}人`, color:"#eb6834", P:{...P, hireUniv:P.hireUniv+P.lever.hire}},
     {k:"C", name:`合格率を${P.lever.pass}%に（一発合格）`, color:"#1baf7a", P:{...P, p1:Math.max(P.p1,P.lever.pass), p2:Math.max(P.p2,P.lever.pass)}},
     {k:"D", name:`中途（1級保有）を毎年＋${P.lever.mid1}人`, color:"#eda100", P:{...P, mid1:P.mid1+P.lever.mid1}},
   ].map((x)=>({...x, res:simulate(init,x.P)}));
+  // E：若手に早く使える実績を積ませる（使える実績が付くまでの年数を短くする）。使える実績の予測にだけ出す。
+  const lagE=Math.max(0,P.lever.lag);
+  const scenE={k:"E", name:`使える実績のない1級を現場に入れ、${lagE}年で付ける`, color:"#e87ba4", P:{...P, u:{...P.u, L:lagE}}};
+  scenE.res=simulate(init.map((o)=> o.stage==="s5" && o.ul>0 && !o.plan ? {...o, ul:lagE} : o), scenE.P);
+  const scenU=scen.concat([scenE]);
   const cats=scen[0].res.map((_,i)=>`${base+i}期末`);
   const A=scen[0].res, fsA=firstShort(A,need0);
-  S2.simTip={cats, scen, need0};
+  S2.simTip={cats, scen, need0, m:"s5"};
+  S2.simTipU={cats, scen:scenU, need0:needU, m:"s5ue"};
 
   // ---- 結論 ----
   const fmt=(v)=> (Math.round(v*10)/10).toFixed(1).replace(/\.0$/,"");
@@ -1718,6 +2021,9 @@ function renderSim(){
   let h=`<div class="card"><h2>結論（${base}期末から${P.years}期分の予測）</h2>
     <div class="verdict">必要数 <b>${need0}人</b> に対し、現在（${base}期末）の1級技術者（${modeLabel()}）は <b>${fmt(A[0].s5)}人</b>${gapNow>1e-9?`で、<b class="ng">すでに${fmt(gapNow)}人不足</b>しています`:""}。
     現状のままだと ${fsTxt(fsA)}（${P.years}年後は約${fmt(A[A.length-1].s5)}人）。</div>
+    ${hasExp ? (()=>{ const fu=firstShort(A,needU,"s5ue"), gu=needU-A[0].s5ue;
+      return `<div class="verdict" style="margin-top:8px">そのうち<b>使える実績が要る分は ${needU}人</b>（必要数の${P.u.share}%）に対し、使える実績ありの1級は <b>${fmt(A[0].s5u)}人</b>${P.u.useUtil?`（年代別の稼働率をかけた戦力換算 <b>${fmt(A[0].s5ue)}人</b>）`:""}${gu>1e-9?`で、<b class="ng">すでに${fmt(gu)}人不足</b>しています`:""}。
+        現状のままだと ${fu<0?`<b class="ok">${base+1}〜${base+P.years}期末は不足しません</b>`:`<b class="ng">${base+fu}期末から不足します</b>`}。</div>`; })() : `<div class="note-box">工事実績データが読み込めないため、使える実績を考えない計算です。</div>`}
     ${P.p1===0||P.p2===0?`<div class="note-box">⚠ ${P.p1===0?"一次検定":""}${P.p1===0&&P.p2===0?"・":""}${P.p2===0?"二次検定":""}の合格の割合が <b>0%</b> になっているため、新しく1級になる人が出ません（新卒を増やしても1級は増えない計算になります）。実績が少ないことが原因の場合は、下の「前提条件」で実態に近い値に直してください。</div>`:""}
     ${S2.now.cls["その他"]||Object.values(ovMap(base)).includes("in")?"":`<div class="note-box">1級候補が「イロハ」の分類だけになっています。「その他」に入っている技術系の若手を含めるには、「データ管理」の「1級候補の個人指定」で「含める」にしてください。</div>`}
     <table class="grid-tbl" style="margin-top:10px"><tr><th>シナリオ</th><th>不足が始まる期</th><th>5年後</th><th>10年後</th><th>${P.years}年後</th></tr>`+
@@ -1736,11 +2042,31 @@ function renderSim(){
      <tr><td class="muted">A：技士補（経験中＋二次受検可能）</td>${A.map((r)=>`<td class="n muted">${fmt(r.s3+r.s4)}</td>`).join("")}</tr></table>
     <p class="desc" style="margin-top:6px">赤字は必要数を下回る期です。人数は期待値なので小数になります。</p></div>`;
 
+  // ---- 使える実績ありの1級（戦力換算）の予測 ----
+  if(hasExp){
+    const mU=P.u.useUtil?"s5ue":"s5u";
+    S2.simTipU.m=mU;
+    const seriesU=scenU.map((x)=>({name:x.k, color:x.color, values:x.res.map((r)=>Math.round(r[mU]*10)/10)}));
+    h+=`<div class="card"><h2>使える実績ありの1級技術者${P.u.useUtil?"（戦力換算）":""}の予測</h2>
+      <p class="desc">入札で技術者の施工実績として出せる実績（条件は「データ管理」の「使える実績の条件」）を持つ1級技術者の人数です。${P.u.useUtil?"年代別の稼働率をかけて、実際に現場を任せられる量に直しています（例：稼働率50%の人は0.5人）。":""}
+      1級に合格しても、使える実績が付くまでは数えません。点線は使える実績が要る分の必要数（${needU}人）です。</p>
+      <div class="legend">${scenU.map((x)=>`<span><i style="background:${x.color}"></i>${x.k}：${esc(x.name)}</span>`).join("")}<span><i style="background:#fff;border:2px dashed #b3261e;width:10px;height:10px"></i>使える実績が要る分（${needU}人）</span></div>
+      ${simChartSVG(cats, seriesU, needU, "u")}
+      <table class="grid-tbl" style="margin-top:10px"><tr><th>期末</th>${cats.map((c)=>`<th>${c.replace("期末","")}</th>`).join("")}</tr>`+
+      scenU.map((x)=>`<tr><td>${x.k}</td>${x.res.map((r)=>`<td class="n"${r[mU]<needU-1e-9?` style="color:#b3261e;font-weight:700"`:""}>${fmt(r[mU])}</td>`).join("")}</tr>`).join("")+
+      `<tr><td class="muted">A：使える実績ありの人数</td>${A.map((r)=>`<td class="n muted">${fmt(r.s5u)}</td>`).join("")}</tr>
+       <tr><td class="muted">A：うち60歳以上</td>${A.map((r)=>`<td class="n muted">${fmt(r.s5u_60)}</td>`).join("")}</tr>
+       <tr><td class="muted">A：1級だが使える実績がまだない</td>${A.map((r)=>`<td class="n muted">${fmt(r.s5-r.s5u)}</td>`).join("")}</tr></table></div>`;
+  }
+
   // ---- 打ち手の逆算 ----
   const bh=backCalc(init,P,need0,"hire"), bp=backCalc(init,P,need0,"pass"), bm=backCalc(init,P,need0,"mid1");
+  const mU=P.u.useUtil?"s5ue":"s5u", fsU=hasExp?firstShort(A,needU,mU):-1;
+  const bu= hasExp ? {hire:backCalc(init,P,needU,"hire",mU), pass:backCalc(init,P,needU,"pass",mU), mid1:backCalc(init,P,needU,"mid1",mU), lag:backCalc(init,P,needU,"lag",mU)} : null;
   const lead=(kind)=> kind==="hire" ? `最短でも入社から約${P.exp+1}年（入社1年目に一次検定→実務経験${P.exp}年→二次検定）` : kind==="pass" ? "今いる技士補・受検可能者にすぐ効く（1〜数年）" : (P.midTiming==="same" ? "入社した期末から（入社後6か月以上の雇用が条件。10〜3月入社の場合）" : "入社した翌期末から（入社後6か月以上の雇用が条件。4〜9月入社の場合）");
-  const res=(b,kind)=>{
-    if(fsA<0) return "現状のままで不足なし";
+  const res=(b,kind,fs=fsA)=>{
+    if(fs<0) return "現状のままで不足なし";
+    if(kind==="lag") return b.ok ? `使える実績のない1級を現場に入れ、<b>${b.v}年</b> 以内に実績を付ける（今 ${P.u.L}年）` : `<b class="ng">この打ち手だけでは解消できません</b>（0年にしても ${b.short.map((i)=>base+i).join("・")}期末が不足）`;
     if(b.ok){
       if(kind!=="pass") return `毎年 <b>＋${b.v}人</b>（今の計画に上乗せ）`;
       const up=[P.p1<b.v?`一次（今 ${P.p1}%）`:"", P.p2<b.v?`二次（今 ${P.p2}%）`:""].filter(Boolean);
@@ -1750,17 +2076,18 @@ function renderSim(){
   };
   h+=`<div class="card"><h2>不足をなくすには（打ち手ごとの逆算）</h2>
     <p class="desc">それぞれの打ち手を<b>単独で</b>使ったとき、${base+1}〜${base+P.years}期末の間ずっと必要数（${need0}人）を下回らないために必要な量です（今の期末の人数は打ち手では変えられないので対象外です）。</p>
-    <table class="grid-tbl"><tr><th>打ち手</th><th>効き始めるまで</th><th>不足をなくすのに必要な量</th></tr>
-      <tr><td>新卒（大卒）を増やす</td><td>${lead("hire")}</td><td>${res(bh,"hire")}</td></tr>
-      <tr><td>一発合格を徹底する</td><td>${lead("pass")}</td><td>${res(bp,"pass")}</td></tr>
-      <tr><td>中途（1級保有者）を採る</td><td>${lead("mid1")}</td><td>${res(bm,"mid1")}</td></tr></table>
+    <table class="grid-tbl"><tr><th>打ち手</th><th>効き始めるまで</th><th>1級の人数の不足をなくすには（${need0}人）</th>${bu?`<th>使える実績ありの不足をなくすには（${needU}人）</th>`:""}</tr>
+      <tr><td>新卒（大卒）を増やす</td><td>${lead("hire")}${bu?`＋使える実績が付くまで`:""}</td><td>${res(bh,"hire")}</td>${bu?`<td>${res(bu.hire,"hire",fsU)}</td>`:""}</tr>
+      <tr><td>一発合格を徹底する</td><td>${lead("pass")}</td><td>${res(bp,"pass")}</td>${bu?`<td>${res(bu.pass,"pass",fsU)}</td>`:""}</tr>
+      <tr><td>中途（1級保有者）を採る</td><td>${lead("mid1")}</td><td>${res(bm,"mid1")}</td>${bu?`<td>${res(bu.mid1,"mid1",fsU)}</td>`:""}</tr>
+      ${bu?`<tr><td>使える実績のない1級を、据付の現場に監理・主任・担当として入れる</td><td>配置した工事の完成後から</td><td class="muted">1級の人数は変わらない</td><td>${res(bu.lag,"lag",fsU)}</td></tr>`:""}</table>
     ${fsA>0 && fsA<=P.exp+1 ? `<div class="note-box">⚠ 不足が始まるのは ${base+fsA}期末で、新卒が1級になるまでの年数（約${P.exp+1}年）より早く来ます。<b>直近の不足には中途採用か合格率の改善</b>でしか間に合いません。新卒はその後の不足への備えになります。</div>`:""}</div>`;
 
   h+=renderSimInputs(P, nb, base, auto, need0);
   return h;
 }
 
-function simChartSVG(cats, series, need){
+function simChartSVG(cats, series, need, tipKey){
   const W=860, H=280, L=44, R=40, T=14, B=34;
   const vals=series.flatMap((s)=>s.values).concat([need]);
   const maxV=Math.max(1,...vals);
@@ -1782,7 +2109,7 @@ function simChartSVG(cats, series, need){
   });
   ends.forEach(({s,yy})=>{ g+=`<text x="${W-R+6}" y="${yy+4}" font-size="12" font-weight="700" fill="#1f2330">${s.name}</text>`; });
   cats.forEach((c,i)=>{ const half=(W-L-R)/Math.max(1,cats.length-1)/2;
-    g+=`<rect class="hit" x="${x(i)-half}" y="${T}" width="${half*2}" height="${H-T-B}" data-sim-i="${i}"/>`; });
+    g+=`<rect class="hit" x="${x(i)-half}" y="${T}" width="${half*2}" height="${H-T-B}" data-sim-i="${i}"${tipKey?` data-sim-k="${tipKey}"`:""}/>`; });
   return g+`</svg>`;
 }
 
@@ -1814,7 +2141,18 @@ function renderSimInputs(P, nb, base, auto, need0){
     <div class="sim-grp"><h4>比較する打ち手（B〜D）</h4>
       <div class="sim-in"><span class="l">B：新卒（大卒）の上乗せ</span>${num("lever.hire",P.lever.hire)}人/年</div>
       <div class="sim-in"><span class="l">C：一次・二次の合格率</span>${num("lever.pass",P.lever.pass,1,0,100)}%</div>
-      <div class="sim-in"><span class="l">D：中途（1級保有）の上乗せ</span>${num("lever.mid1",P.lever.mid1)}人/年</div></div>
+      <div class="sim-in"><span class="l">D：中途（1級保有）の上乗せ</span>${num("lever.mid1",P.lever.mid1)}人/年</div>
+      <div class="sim-in"><span class="l">E：使える実績のない1級（今いる人と、これから合格する人）を据付の現場に入れ、実績が付くまでの年数を</span>${num("lever.lag",P.lever.lag,1,0,20)}年に</div></div>
+    <div class="sim-grp"><h4>使える実績（入札で出せる施工実績）</h4>
+      ${EXP.eng.length?"":`<p class="desc">工事実績データが読み込めないため、この欄は計算に使っていません。</p>`}
+      <div class="sim-in"><span class="l">必要数のうち、使える実績が要る割合<br><span class="muted">過去の配置で、監理・主任として配置された人のうち使える実績を持っていた割合</span></span>${num("u.share",P.u.share,1,0,100)}%${src(P.src.u_share)}</div>
+      <div class="sim-in"><span class="l">1級に合格した時点で、使える実績を持っている割合<br><span class="muted">担当技術者などで、合格前に実績を積んでいた人</span></span>${num("u.p0",P.u.p0,1,0,100)}%${src(P.src.u_p0)}</div>
+      <div class="sim-in"><span class="l">持っていない人が、合格後に使える実績が付くまで<br><span class="muted">配置予定がある人は、その工事の完成の翌期末から</span></span>${num("u.L",P.u.L,1,0,20)}年${src(P.src.u_L)}</div>
+      <div class="sim-in"><span class="l">今いる使える実績なしの1級で、配置予定がない人</span><select data-sim="u.exist"><option value="never"${P.u.exist!=="L"?" selected":""}>予測の期間中は付かないとみなす</option><option value="L"${P.u.exist==="L"?" selected":""}>上の年数で付くとみなす</option></select></div>
+      <div class="sim-in"><span class="l">中途（1級あり）のうち、使える実績を持っている割合</span>${num("u.mid1U",P.u.mid1U,1,0,100)}%${src(P.src.u_mid1U)}</div>
+      <div class="sim-in"><label><input type="checkbox" data-sim-chk="u.useUtil"${P.u.useUtil?" checked":""}> 年代別の稼働率をかける（戦力換算）</label>${src(P.src.u_util)}</div>
+      ${P.u.useUtil?UTIL_BANDS.map(([k,label])=>`<div class="sim-in"><span class="l" style="padding-left:18px">${label}</span>${num("u.util."+k,P.u.util[k],5,0,100)}%</div>`).join("")+
+        `<p class="desc" style="margin:4px 0 0">稼働率は、使える実績ありの1級が直近3期（36か月）のうち監理・主任として配置されていた月の割合を、一番高い年代を100%として比べた値です（対象3人未満の年代は100%）。</p>`:""}</div>
     </div>`;
   // 必要数
   h+=`<h3 style="font-size:13px;margin:16px 0 6px">必要数（1級技術者が何人いればよいか）</h3>
@@ -1848,13 +2186,15 @@ structEl.addEventListener("change",(e)=>{
     setPath(S2.sim, t.dataset.sim, v);
     if(t.dataset.sim==="ret."+t.dataset.sim.split(".")[1] || ["newbie","p1","p2"].includes(t.dataset.sim)) S2.sim.src[t.dataset.sim.startsWith("ret.")?"ret_"+t.dataset.sim.split(".")[1]:t.dataset.sim]="手入力";
     if(["hireHigh","hireUniv","midNone","midHo","mid1"].includes(t.dataset.sim)) S2.sim.src.hire="手入力";
+    if(/^u\.(share|p0|L|mid1U)$/.test(t.dataset.sim)) S2.sim.src["u_"+t.dataset.sim.slice(2)]="手入力";
+    if(t.dataset.sim.startsWith("u.util.")) S2.sim.src.u_util="手入力";
     renderStruct(); }
   else if(t.dataset.simChk){ setPath(S2.sim, t.dataset.simChk, t.checked); renderStruct(); }
 });
 structEl.addEventListener("mousemove",(e)=>{
   const hit=e.target.closest("[data-sim-i]"); if(!hit || !S2.simTip) return;
-  const i=parseInt(hit.dataset.simI,10), t=S2.simTip;
-  vizTip.innerHTML=`<b>${esc(t.cats[i])}</b>（必要数 ${t.need0}人）<br>`+t.scen.map((x)=>`<span style="color:${x.color}">■</span> ${x.k}：${(Math.round(x.res[i].s5*10)/10)}人`).join("<br>");
+  const i=parseInt(hit.dataset.simI,10), t= hit.dataset.simK==="u" && S2.simTipU ? S2.simTipU : S2.simTip;
+  vizTip.innerHTML=`<b>${esc(t.cats[i])}</b>（${t.m==="s5"?"必要数":"使える実績が要る分"} ${t.need0}人）<br>`+t.scen.map((x)=>`<span style="color:${x.color}">■</span> ${x.k}：${(Math.round(x.res[i][t.m]*10)/10)}人`).join("<br>");
   vizTip.style.display="block";
   vizTip.style.left=Math.min(e.clientX+14, window.innerWidth-vizTip.offsetWidth-8)+"px";
   vizTip.style.top=Math.min(e.clientY+14, window.innerHeight-vizTip.offsetHeight-8)+"px";
@@ -2188,6 +2528,11 @@ structEl.addEventListener("click",(e)=>{
 const vizTip=document.getElementById("vizTip");
 structEl.addEventListener("mousemove",(e)=>{
   if(e.target.closest("[data-lc-i]") || e.target.closest("[data-sim-i]")) return; // 折れ線グラフ側のツールチップに任せる
+  const ex=e.target.closest("[data-exp-tip]");
+  if(ex && S2.expTip){ const t=S2.expTip[ex.dataset.expTip]; if(t){
+    vizTip.innerHTML=`<b>${esc(t.label)}</b>：${t.names.length}人<div class="nm">${t.names.slice(0,20).map(esc).join("、")}${t.names.length>20?` ほか${t.names.length-20}人`:""}</div>`;
+    vizTip.style.display="block";
+    vizTip.style.left=Math.min(e.clientX+14, window.innerWidth-vizTip.offsetWidth-8)+"px"; vizTip.style.top=Math.min(e.clientY+14, window.innerHeight-vizTip.offsetHeight-8)+"px"; return; } }
   const sg=e.target.closest("[data-tip-stage]");
   if(!sg || !S2.nowPeople){ vizTip.style.display="none"; return; }
   const b=parseInt(sg.dataset.tipBand,10), k=sg.dataset.tipStage, w=S2.nowBand;
@@ -2340,12 +2685,24 @@ function targetLists(){
     rows:byAge(ppl.filter((p)=>p.stage==="s5" && p.age!==null && p.age>=55 && p.age<60),true), cols:["k1"]});
   lists.push({k:"reemp", title:`60歳以上（再雇用など）の1級技術者`, why:`年齢の高い順。いつまで在籍できるかの見通しが、将来の人数に大きく影響します。`,
     rows:byAge(ppl.filter((p)=>p.stage==="s5" && p.age!==null && p.age>=60),true), cols:["k1"]});
+  if(EXP.eng.length){
+    const d=periodEnd(roster.period);
+    const t1=ppl.filter((p)=>p.stage==="s5").map((p)=>{ const ex=expLevel(p.engcd,d), plan=p.engcd?expPlanOf(p.engcd,d):[];
+      return Object.assign(p,{exLv:ex.lv, exUnc:ex.nUnc, plans:plan}); });
+    lists.push({k:"noexp", title:`使える実績がまだない1級技術者`, why:`1級は持っているが、入札で出せる施工実績（データ管理の「使える実績の条件」）がない人です。年齢の若い順。「配置予定」は、使える実績が付く見込みの配置（据付で、条件に入る立場）です。配置予定がない人は、据付の現場に入れることを検討したい人です。`,
+      rows:byAge(t1.filter((p)=>p.exLv==="none")), cols:["k1","unc","plan"]});
+    lists.push({k:"tanto", title:`担当技術者の実績だけの1級技術者`, why:`使える実績はあるが、監理技術者・主任技術者としての実績がまだない人です。総合評価では監理・主任の実績の方が評価されることが多いため、次は監理・主任として配置したい人です。`,
+      rows:byAge(t1.filter((p)=>p.exLv==="usable")), cols:["k1","planDuty"]});
+  }
   return {roster, nextP, reg, ppl, lists};
 }
 const TL_COLS={ho:["技士補の取得日",(p)=>p.hasHo?(fmtYmdSlash(p.hoSday)||"不明"):"技士補なし"], exp:["技士補からの年数",(p)=>p.exp===null?"不明":p.exp+"年"],
   prev:["前の期も資格あり",(p)=>p.nijiPrev?"○":""], note:["備考",(p)=>p.stage==="s5"?"すでに1級を保有":!p.hasHo?"技士補なし（経過措置などで登録）":""],
   now:["現在の段階",(p)=>(STAGE_BY_KEY[p.stage]||{}).label||""],
-  has2:["2級",(p)=>p.has2?"2級あり":""], k1:["1級の取得日",(p)=>fmtYmdSlash(p.k1Sday)||"不明"]};
+  has2:["2級",(p)=>p.has2?"2級あり":""], k1:["1級の取得日",(p)=>fmtYmdSlash(p.k1Sday)||"不明"],
+  unc:["未確認の実績",(p)=>p.exUnc?`${p.exUnc}件（確認すれば使える可能性）`:""],
+  plan:["配置予定（使える実績が付く見込み）",(p)=>(p.plans||[]).map((t)=>`${t.koban} ${t.title}（${t.roleName}・〜${fmtYmdSlash(t.to)}）`).join(" ／ ")||"なし"],
+  planDuty:["監理・主任としての配置予定",(p)=>(p.plans||[]).filter((t)=>t.role!=="担当").map((t)=>`${t.koban} ${t.title}（${t.roleName}・〜${fmtYmdSlash(t.to)}）`).join(" ／ ")||"なし"]};
 function renderTargets(){
   if(!S2.rosters.length){
     return `<div class="card"><h2>対象者リスト</h2><p class="desc">期末名簿がまだ登録されていません。</p><button class="btn primary" data-sub="data">データ管理へ</button></div>`;
