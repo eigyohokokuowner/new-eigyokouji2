@@ -1313,10 +1313,20 @@ const BID_ASSIGN_ROLES=["現場代理人","監理技術者","主任技術者","�
 const BID_VERIFY_LABELS={ok:"確認済み", partial:"一部確認済み", no:"据付実績なし", unconf:"未確認"};
 /* ---- 集計用の検索条件（bidLogs.cond / condKey） ----
    filters（画面の設定そのまま）とは別に、決まった名前・画面に表示している名前（コードマスタの名前）で保存する。
-   指定していない条件は null（数値の 0・空欄、空の配列も「指定なし」として null）。 */
-const BID_COND_VERSION=1;
-// condKey に並べる項目と順番（年度は yearsWithin を使い、fyFrom 等と ageBaseDate は含めない）
-const BID_COND_KEY_ORDER=["yearsWithin","branch","gateCategory","gateType","gateStructure","openingMethod","pointMin",
+   指定していない条件は null（数値の 0・空欄、空の配列も「指定なし」として null）。
+   condVersion 2 以降は、公告の要件（req）と社内の絞り込み（internal）に分けて保存する：
+     cond = {condVersion:2,
+             req:{fyFrom, fyFromMonth, fyTo, fyToMonth, yearsWithin, gateCategory, gateType, gateStructure, openingMethod,
+                  pointMin, spanMin, heightMin, areaMin, areaIncludeDepth, depthMin, intakeMin, dischargeMin,
+                  roles, licenses, licenseMode, [ageBaseDate, ageMin, ageMax, femaleOnly]},
+             internal:{branch, [ageBaseDate, ageMin, ageMax, femaleOnly]}}
+     年齢条件・性別（[ ]の4項目）は、保存ダイアログで「年齢・性別は社内の絞り込み」にチェックしたときは internal、
+     それ以外は req に入る（どちらか一方にだけ入る）。
+   ※condVersion 1（以前の版）は req/internal に分けず、すべての項目を cond の直下に持っていた。 */
+const BID_COND_VERSION=2;
+const BID_COND_AGE_KEYS=["ageBaseDate","ageMin","ageMax","femaleOnly"];
+// condKey に並べる項目と順番。公告の要件（req）の項目だけで作る（年度は yearsWithin を使い、fyFrom 等と ageBaseDate は含めない）
+const BID_COND_KEY_ORDER=["yearsWithin","gateCategory","gateType","gateStructure","openingMethod","pointMin",
   "spanMin","heightMin","areaMin","areaIncludeDepth","depthMin","intakeMin","dischargeMin","roles","licenses","licenseMode",
   "ageMin","ageMax","femaleOnly"];
 function condNum(v){
@@ -1330,8 +1340,18 @@ function condArr(list){
   const a=(list||[]).map((x)=>String(x===null||x===undefined?"":x).trim()).filter(Boolean);
   return a.length ? [...new Set(a)] : null;
 }
-// raw：画面の設定値（コードは名前へ変換済みのもの）。saveYmd：保存した日（YYYYMMDD）。
+// raw：画面の設定値（コードは名前へ変換済みのもの）。raw.ageGenderInternal=true なら年齢条件・性別を社内の絞り込みにする。
+// saveYmd：保存した日（YYYYMMDD）。
 function buildBidCond(raw, saveYmd){
+  const flat=buildBidCondFlat(raw, saveYmd);
+  const {condVersion, branch, ...rest}=flat;
+  const req={}, age={};
+  Object.keys(rest).forEach((k)=>{ (BID_COND_AGE_KEYS.includes(k) ? age : req)[k]=rest[k]; });
+  const internal={branch};
+  Object.assign(raw.ageGenderInternal ? internal : req, age);
+  return {condVersion:BID_COND_VERSION, req, internal};
+}
+function buildBidCondFlat(raw, saveYmd){
   const ymd=String(saveYmd||"");
   const m=parseInt(ymd.slice(4,6),10), y=parseInt(ymd.slice(0,4),10);
   const saveFY = isNaN(y) ? null : (m>=4 ? y : y-1); // 保存した日の年度（4月始まり）
@@ -1361,15 +1381,16 @@ function buildBidCond(raw, saveYmd){
 }
 // 集計用の文字列：指定された条件だけを決まった順に「項目名=値」で並べ、「;」でつなぐ（配列は名前順に「|」でつなぐ）。
 // true/false の項目は true のときだけ含める（areaIncludeDepth は areaMin が指定されているときだけ）。何も指定が無ければ ""。
-function bidCondKey(cond){
-  if(!cond) return "";
+function bidCondKey(condIn){
+  if(!condIn) return "";
+  const cond = condIn.req ? condIn.req : condIn; // condVersion 1（req/internal に分かれていない記録）にも対応
   const parts=[];
   BID_COND_KEY_ORDER.forEach((k)=>{
     const v=cond[k];
     if(v===null || v===undefined) return;
     if(typeof v==="boolean"){
       if(!v) return;
-      if(k==="areaIncludeDepth" && cond.areaMin===null) return;
+      if(k==="areaIncludeDepth" && (cond.areaMin===null || cond.areaMin===undefined)) return;
       parts.push(k+"=true"); return;
     }
     if(Array.isArray(v)){
@@ -4522,6 +4543,7 @@ function BidRecords({employees, userEmail}){
                   <span>「{l.listTitle||"-"}」</span>
                   {(l.stage||l.role) && <span className="bid-chip">{[l.stage,l.role].filter(Boolean).join("・")}</span>}
                   <span className="bid-count">条件に合った {l.poolCount||0}名 ／ 空いていた {l.availableCount||0}名</span>
+                  {(l.reqPoolCount!==undefined && l.reqPoolCount!==l.poolCount) && <span className="bid-muted">（公告の要件だけなら {l.reqPoolCount}名）</span>}
                   <span className="bid-muted">検討リスト {(l.shortlist||[]).length}名</span>
                 </button>
                 {open &&
@@ -4529,21 +4551,28 @@ function BidRecords({employees, userEmail}){
                     <div className="bid-muted" style={{marginBottom:6}}>
                       配置予定期間：{(l.assignFrom||l.assignTo) ? (fmtDate(l.assignFrom)+"〜"+fmtDate(l.assignTo)) : "未指定（重複判定なし）"}
                     </div>
-                    <div className="bid-sub-hd" style={{fontSize:12, margin:"4px 0"}}>検索条件（集計用）</div>
                     {!l.cond ? (
                       <div className="bid-muted" style={{marginBottom:6}}>この記録には集計用の条件がありません（以前の版で保存された記録）。</div>
-                    ) : bidCondDisplayRows(l.cond).length===0 ? (
-                      <div className="bid-muted" style={{marginBottom:6}}>指定された条件はありません。</div>
-                    ) : (
-                      <table className="bid-pool" style={{maxWidth:640, marginBottom:4}}>
-                        <tbody>
-                          {bidCondDisplayRows(l.cond).map(([k,v])=>(
-                            <tr key={k}><th style={{width:150}}>{k}</th><td>{v}</td></tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                    {l.condKey && <div className="bid-code" style={{margin:"0 0 8px", display:"block", wordBreak:"break-all"}}>condKey：{l.condKey}</div>}
+                    ) : (()=>{
+                      // condVersion 2 以降は 公告の要件（req）／社内の絞り込み（internal）に分けて表示。1 は分けずに表示。
+                      const groups = l.cond.req
+                        ? [["公告の要件", l.cond.req], ["社内の絞り込み", l.cond.internal||{}]]
+                        : [["検索条件（集計用）", l.cond]];
+                      return groups.map(([label,obj])=>{
+                        const rws=bidCondDisplayRows(obj);
+                        return (
+                          <div key={label}>
+                            <div className="bid-sub-hd" style={{fontSize:12, margin:"4px 0"}}>{label}</div>
+                            {rws.length===0
+                              ? <div className="bid-muted" style={{marginBottom:6}}>指定された条件はありません。</div>
+                              : <table className="bid-pool" style={{maxWidth:640, marginBottom:6}}>
+                                  <tbody>{rws.map(([k,v])=>(<tr key={k}><th style={{width:150}}>{k}</th><td>{v}</td></tr>))}</tbody>
+                                </table>}
+                          </div>
+                        );
+                      });
+                    })()}
+                    {l.condKey && <div className="bid-code" style={{margin:"0 0 8px", display:"block", wordBreak:"break-all"}}>condKey（公告の要件）：{l.condKey}</div>}
                     {(l.shortlist||[]).length>0 &&
                       <div style={{margin:"6px 0"}}><b style={{fontSize:12}}>検討リスト：</b>
                         {(l.shortlist||[]).map((c)=><span key={c} className="bid-chip">{empName(c)}</span>)}
@@ -6064,6 +6093,8 @@ function App(){
   const [ageMax,setAgeMax]=useState("");
   const [ageAsOf,setAgeAsOf]=useState("");
   const [femaleOnly,setFemaleOnly]=useState(false); // OFF=男性＆女性（全員）、ON=女性のみ
+  // 年齢条件・性別を「社内の絞り込み（公告の要件ではない）」として入札の記録に残すか（保存ダイアログで指定。初期は公告の要件）
+  const [ageGenderInternal,setAgeGenderInternal]=useState(false);
   const [assignDateFrom,setAssignDateFrom]=useState("");
   const [assignDateTo,setAssignDateTo]=useState("");
   const [selectedEngcds,setSelectedEngcds]=useState([]);
@@ -6217,8 +6248,11 @@ function App(){
       roles: (selectedRoles||[]).map((c)=>lookupLit("TRGT", c)),
       licenses: selectedLicenses, licenseMode,
       ageBaseDate: ageAsOf, ageMin, ageMax, femaleOnly,
+      ageGenderInternal: ageGenderInternal && hasAgeGenderCond,
     }, ymd);
   };
+  // 検索で年齢条件か性別を指定しているか（保存ダイアログの「社内の絞り込み」チェック欄を出す条件）
+  const hasAgeGenderCond = condNum(ageMin)!==null || condNum(ageMax)!==null || !!femaleOnly;
   // 検討リスト保存時に「技術者リスト」として凍結保存するスナップショットを作る。
   // 検討リストに入れた人は技術者リストから除く。実績なし＝黄、受注工事で専任配置あり＝赤（両方当てはまる場合は赤を優先）。
   // 実績確認状況は「非表示にする区分」で絞り込んだ後（画面に表示されている状態）のものを反映する。
@@ -6272,6 +6306,11 @@ function App(){
         }
         const pool=buildBidLogPool();
         const cond=buildBidLogCond();
+        // 社内の絞り込み（年齢条件・性別を社内扱いにした場合）をかける前の、公告の要件だけで条件に合った人数。
+        // 支店は候補の母集団を絞らないので、社内扱いの年齢条件・性別が無ければ pool の人数と同じ。
+        const reqPoolCount = (ageGenderInternal && hasAgeGenderCond)
+          ? computeCandidatePool(false, undefined, {ignoreAgeGender:true}).length
+          : pool.length;
         await addBidLogToFirestore({
           bidKey, koban:bidKoban, stage:tags.stage||"", role:tags.role||"", listTitle:title,
           savedAt:Date.now(), savedBy:email,
@@ -6279,7 +6318,7 @@ function App(){
           assignFrom:normDigits8(assignDateFrom)||"", assignTo:normDigits8(assignDateTo)||"",
           pool, poolCount:pool.length, availableCount:pool.filter((p)=>p.available).length,
           shortlist:considerList.map((c)=>c.engcd),
-          cond, condKey:bidCondKey(cond),
+          cond, condKey:bidCondKey(cond), reqPoolCount,
         });
         bidNote = bidKey ? "（入札の記録にも追加しました）" : "（工事の工番・案件番号が無いため、入札には紐付けずに記録しました）";
       }catch(e){
@@ -6797,9 +6836,12 @@ function App(){
   // Excel／まとめ資料の技術者リスト（黄＝据付実績なし・赤＝受注工事で専任配置重複、を見せるための母集団）に使う。
   // applyKbnFilter：「非表示にする区分」だけを個別に適用するかどうか（省略時はapplyDisplayFiltersと同じ）。
   // Excel用に「区分の絞り込みだけ反映した実績確認状況」を求めるとき、(false, true) で呼ぶ。
-  const computeCandidatePool=(applyDisplayFilters, applyKbnFilterArg)=>{
+  // opts.ignoreAgeGender：年齢条件・性別をかけない（入札の記録の reqPoolCount＝公告の要件だけで条件に合った人数を求めるときに使う）
+  const computeCandidatePool=(applyDisplayFilters, applyKbnFilterArg, opts)=>{
     if(!requiredLoaded || !searched) return [];
     const applyKbnFilter = applyKbnFilterArg===undefined ? applyDisplayFilters : applyKbnFilterArg;
+    const ignoreAgeGender = !!(opts && opts.ignoreAgeGender);
+    const femaleOnlyF = ignoreAgeGender ? false : femaleOnly;
     // 数値の条件は、空欄・0・数字以外を「指定なし」として扱う（0を入れても、値が空欄の実績や生年月日不明の人を外さない）。
     // 入札の記録（bidLogs.cond）も同じ決まりで保存しているので、検索結果と記録が食い違わない。
     const keikMinN = condNum(keikMin);
@@ -6809,8 +6851,8 @@ function App(){
     const syusMinN = condNum(syusMin);
     const horyuMinN = condNum(horyuMin);
     const pointMinN = condNum(pointMin);
-    const ageMinN = condNum(ageMin);
-    const ageMaxN = condNum(ageMax);
+    const ageMinN = ignoreAgeGender ? null : condNum(ageMin);
+    const ageMaxN = ignoreAgeGender ? null : condNum(ageMax);
     const assignFilterFrom = assignDateFrom ? normDigits8(assignDateFrom) : null;
     const assignFilterTo = assignDateTo ? normDigits8(assignDateTo) : null;
     const hasAssignFilter = assignFilterFrom!==null || assignFilterTo!==null;
@@ -6873,7 +6915,7 @@ function App(){
         if(ageMaxN!==null && age>ageMaxN) return;
       }
 
-      if(femaleOnly){
+      if(femaleOnlyF){
         const emp=employeeMap[engRow.ENGCD];
         if(!emp || emp.GENDER!=="女性") return;
       }
@@ -7067,7 +7109,7 @@ function App(){
           if(ageMinN!==null && age<ageMinN) return;
           if(ageMaxN!==null && age>ageMaxN) return;
         }
-        if(femaleOnly && (!emp || emp.GENDER!=="女性")) return;
+        if(femaleOnlyF && (!emp || emp.GENDER!=="女性")) return;
         if(selectedDept.length){
           const matched=selectedDept.some((cat)=> deptCategoryMatches(emp && emp.DEPT, cat));
           if(!matched) return;
@@ -7204,7 +7246,7 @@ function App(){
     selectedBunya, selectedGateCategory, selectedGateType, selectedGateStructure, selectedKaihei,
     selectedRoles, selectedLicenses, licenseMode,
     ageMin, ageMax, ageAsOf, selectedDept,
-    femaleOnly,
+    femaleOnly, ageGenderInternal,
     assignDateFrom, assignDateTo, selectedEngcds,
     keikMin, heighMin, areaMin, areaIncludeSuis,
     suisMin, syusMin, horyuMin, pointMin,
@@ -7234,6 +7276,7 @@ function App(){
     if(f.ageAsOf!==undefined) setAgeAsOf(f.ageAsOf);
     if(f.selectedDept!==undefined) setSelectedDept(f.selectedDept);
     if(f.femaleOnly!==undefined) setFemaleOnly(f.femaleOnly);
+    setAgeGenderInternal(!!f.ageGenderInternal);
     if(f.assignDateFrom!==undefined) setAssignDateFrom(f.assignDateFrom);
     if(f.assignDateTo!==undefined) setAssignDateTo(f.assignDateTo);
     if(f.selectedEngcds!==undefined) setSelectedEngcds(f.selectedEngcds);
@@ -7324,7 +7367,7 @@ function App(){
     setSelectedKaihei([]);
     setSelectedRoles([]); setSelectedLicenses([]); setLicenseMode("or");
     setAgeMin(""); setAgeMax(""); setAgeAsOf(""); setSelectedDept([]);
-    setFemaleOnly(false);
+    setFemaleOnly(false); setAgeGenderInternal(false);
     setAssignDateFrom(""); setAssignDateTo(""); setSelectedEngcds([]);
     setKeikMin(""); setHeighMin(""); setAreaMin(""); setAreaIncludeSuis(false);
     setSuisMin(""); setSyusMin(""); setHoryuMin(""); setPointMin("");
@@ -8307,6 +8350,13 @@ function App(){
               {saveBidLookup.status==="idle" && !splitKobanTag(saveKobanInput).koban && <span style={{color:"var(--amber)"}}>　入札に紐付けるには上の「工事（工番・案件名）」を入力してください。</span>}
             </p>
             <div style={{display:"flex", flexDirection:"column", gap:8, marginBottom:14}}>
+              {hasAgeGenderCond &&
+                <label className="chk-inline" style={{width:"fit-content"}}
+                  title="チェックすると、検索で指定した年齢条件・性別を、入札の記録では「社内の絞り込み」として残します（公告の要件の集計には含めません）">
+                  <input type="checkbox" checked={ageGenderInternal} onChange={(e)=>setAgeGenderInternal(e.target.checked)}/>
+                  <span style={{fontSize:12}}>年齢・性別は社内の絞り込み（公告の要件ではない）</span>
+                </label>
+              }
               <div>
                 <div className="field-label" style={{fontSize:11.5}}>発注者</div>
                 <input type="text" className="kw-input" placeholder="例：国土交通省 近畿地方整備局"
