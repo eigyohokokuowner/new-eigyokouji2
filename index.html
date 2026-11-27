@@ -407,7 +407,7 @@
     padding:6px 8px;cursor:pointer;width:fit-content;}
   .m-lic-toggle:hover{border-color:var(--cyan);}
   /* 入札の記録 */
-  .bid-row{grid-template-columns:96px 120px minmax(0,1fr) 150px 210px 56px 150px !important;}
+  .bid-row{grid-template-columns:96px 120px minmax(0,1fr) 210px 56px 150px !important;}
   .bid-row.open{background:var(--accent-soft);}
   .bid-detail{background:var(--panel-sunk);border-bottom:1px solid var(--line-soft);padding:14px 16px 16px;}
   .bid-form{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px 14px;max-width:1000px;}
@@ -1298,23 +1298,119 @@ async function deleteConsiderListFromFirestore(id){
    bids    ：入札1件につき1ドキュメント（ドキュメントID＝工番・案件番号を元にした値）。結果（入札した／見送った・受注／失注・配置した人）をあとから入力する。
    bidLogs ：配置検討リストを保存するたびに1件ずつ追加する検討の記録（上書きしない。ドキュメントIDは自動）。
    将来、別の閲覧サイト（社員有資格一覧）からこの2つを読んで「技術者配置の必要数」を分析するため、項目名・形式は変えないこと。
-     bids    : {koban, koban2, title, orderer, bidDate(YYYYMMDD), reqType(""|"none"|"exp"|"exp_score"),
+     bids    : {koban, koban2, title, orderer, bidDate(YYYYMMDD),
                 status("検討中"|"入札した"|"見送った"), skipReason(""|"技術者不足"|"採算"|"その他"), skipNote,
                 award(""|"受注"|"失注"), assigned({役割:[技術者コード,...]}), createdAt, createdBy, updatedAt, updatedBy}
      bidLogs : {bidKey, koban, stage, role, listTitle, savedAt, savedBy, filters, summaryLines, assignFrom, assignTo,
-                pool:[{engcd,name,age,available,conflicts,verify("ok"|"partial"|"no"|"unconf")}], poolCount, availableCount, shortlist:[技術者コード]} */
-const BID_REQ_TYPES=[
-  {v:"",          label:"未入力"},
-  {v:"none",      label:"なし（資格だけ）"},
-  {v:"exp",       label:"施工実績が必要"},
-  {v:"exp_score", label:"施工実績＋評価点で競う"},
-];
+                pool:[{engcd,name,age,available,conflicts,verify("ok"|"partial"|"no"|"unconf"),
+                       matched:[{constno,role,kokt,point,verify}]}], poolCount, availableCount, shortlist:[技術者コード],
+                cond（集計用の検索条件。buildBidCond参照）, condKey（集計用の条件文字列。bidCondKey参照）}
+   ※以前の版にあった bids.reqType（技術者の実績要件の種類）は廃止。既に保存されたデータに残っていても使わない。 */
 const BID_STATUSES=["検討中","入札した","見送った"];
 const BID_SKIP_REASONS=["技術者不足","採算","その他"];
 const BID_AWARDS=["受注","失注"];
 const BID_ASSIGN_ROLES=["現場代理人","監理技術者","主任技術者","担当技術者","管理技術者","システム設計技術者"];
 const BID_VERIFY_LABELS={ok:"確認済み", partial:"一部確認済み", no:"据付実績なし", unconf:"未確認"};
-function bidReqTypeLabel(v){ const t=BID_REQ_TYPES.find((x)=>x.v===(v||"")); return t ? t.label : String(v||""); }
+/* ---- 集計用の検索条件（bidLogs.cond / condKey） ----
+   filters（画面の設定そのまま）とは別に、決まった名前・画面に表示している名前（コードマスタの名前）で保存する。
+   指定していない条件は null（数値の 0・空欄、空の配列も「指定なし」として null）。 */
+const BID_COND_VERSION=1;
+// condKey に並べる項目と順番（年度は yearsWithin を使い、fyFrom 等と ageBaseDate は含めない）
+const BID_COND_KEY_ORDER=["yearsWithin","branch","gateCategory","gateType","gateStructure","openingMethod","pointMin",
+  "spanMin","heightMin","areaMin","areaIncludeDepth","depthMin","intakeMin","dischargeMin","roles","licenses","licenseMode",
+  "ageMin","ageMax","femaleOnly"];
+function condNum(v){
+  if(v===null || v===undefined) return null;
+  const s=String(v).trim();
+  if(s==="") return null;
+  const n=parseFloat(s);
+  return (isNaN(n) || n===0) ? null : n;
+}
+function condArr(list){
+  const a=(list||[]).map((x)=>String(x===null||x===undefined?"":x).trim()).filter(Boolean);
+  return a.length ? [...new Set(a)] : null;
+}
+// raw：画面の設定値（コードは名前へ変換済みのもの）。saveYmd：保存した日（YYYYMMDD）。
+function buildBidCond(raw, saveYmd){
+  const ymd=String(saveYmd||"");
+  const m=parseInt(ymd.slice(4,6),10), y=parseInt(ymd.slice(0,4),10);
+  const saveFY = isNaN(y) ? null : (m>=4 ? y : y-1); // 保存した日の年度（4月始まり）
+  const fyFrom=condNum(raw.fyFrom), fyTo=condNum(raw.fyTo);
+  const preset=condNum(raw.fyPresetYears);
+  const yearsWithin = fyFrom===null ? null
+    : (preset!==null ? preset : (saveFY!==null ? Math.max(1, saveFY - fyFrom + 1) : null));
+  const licenses=condArr(raw.licenses);
+  const areaMin=condNum(raw.areaMin);
+  return {
+    condVersion: BID_COND_VERSION,
+    fyFrom, fyFromMonth: condNum(raw.fyFromMonth), fyTo, fyToMonth: condNum(raw.fyToMonth),
+    yearsWithin,
+    branch: String(raw.branch||"").trim() || null,
+    gateCategory: condArr(raw.gateCategory), gateType: condArr(raw.gateType), gateStructure: condArr(raw.gateStructure),
+    openingMethod: condArr(raw.openingMethod),
+    pointMin: condNum(raw.pointMin),
+    spanMin: condNum(raw.spanMin), heightMin: condNum(raw.heightMin),
+    areaMin, areaIncludeDepth: !!raw.areaIncludeDepth,
+    depthMin: condNum(raw.depthMin), intakeMin: condNum(raw.intakeMin), dischargeMin: condNum(raw.dischargeMin),
+    roles: condArr(raw.roles),
+    licenses, licenseMode: licenses ? (raw.licenseMode==="and" ? "すべて" : "いずれか") : null,
+    ageBaseDate: normDigits8(raw.ageBaseDate) || ymd || null,
+    ageMin: condNum(raw.ageMin), ageMax: condNum(raw.ageMax),
+    femaleOnly: !!raw.femaleOnly,
+  };
+}
+// 集計用の文字列：指定された条件だけを決まった順に「項目名=値」で並べ、「;」でつなぐ（配列は名前順に「|」でつなぐ）。
+// true/false の項目は true のときだけ含める（areaIncludeDepth は areaMin が指定されているときだけ）。何も指定が無ければ ""。
+function bidCondKey(cond){
+  if(!cond) return "";
+  const parts=[];
+  BID_COND_KEY_ORDER.forEach((k)=>{
+    const v=cond[k];
+    if(v===null || v===undefined) return;
+    if(typeof v==="boolean"){
+      if(!v) return;
+      if(k==="areaIncludeDepth" && cond.areaMin===null) return;
+      parts.push(k+"=true"); return;
+    }
+    if(Array.isArray(v)){
+      if(!v.length) return;
+      parts.push(k+"="+[...v].sort((a,b)=>String(a).localeCompare(String(b),"ja")).join("|")); return;
+    }
+    parts.push(k+"="+v);
+  });
+  return parts.join(";");
+}
+// 「入札の記録」画面で cond の指定された条件を一覧表示するための [見出し, 値] の配列
+function bidCondDisplayRows(cond){
+  if(!cond) return [];
+  const rows=[];
+  const list=(v)=> (v||[]).join("、");
+  if(cond.yearsWithin!==null && cond.yearsWithin!==undefined){
+    const range=(cond.fyFrom!==null ? cond.fyFrom+"年"+(cond.fyFromMonth? cond.fyFromMonth+"月" : "") : "")+"〜"
+      +(cond.fyTo!==null && cond.fyTo!==undefined ? cond.fyTo+"年"+(cond.fyToMonth? cond.fyToMonth+"月" : "") : "");
+    rows.push(["実績の期間", "直近"+cond.yearsWithin+"年度以内（"+range+"）"]);
+  }
+  if(cond.branch) rows.push(["支店", cond.branch]);
+  if(cond.gateCategory) rows.push(["ゲートカテゴリ", list(cond.gateCategory)]);
+  if(cond.gateType) rows.push(["ゲート種類", list(cond.gateType)]);
+  if(cond.gateStructure) rows.push(["ゲート構造", list(cond.gateStructure)]);
+  if(cond.openingMethod) rows.push(["開閉方式", list(cond.openingMethod)]);
+  if(cond.pointMin!==null && cond.pointMin!==undefined) rows.push(["工事成績評定点", cond.pointMin+"点以上"]);
+  if(cond.spanMin!==null && cond.spanMin!==undefined) rows.push(["径間", cond.spanMin+"m以上"]);
+  if(cond.heightMin!==null && cond.heightMin!==undefined) rows.push(["高さ", cond.heightMin+"m以上"]);
+  if(cond.areaMin!==null && cond.areaMin!==undefined) rows.push([cond.areaIncludeDepth ? "径間×高さ×水深" : "径間×高さ", cond.areaMin+(cond.areaIncludeDepth?"":"m²")+"以上"]);
+  if(cond.depthMin!==null && cond.depthMin!==undefined) rows.push(["水深", cond.depthMin+"m以上"]);
+  if(cond.intakeMin!==null && cond.intakeMin!==undefined) rows.push(["取水量", cond.intakeMin+"m³/s以上"]);
+  if(cond.dischargeMin!==null && cond.dischargeMin!==undefined) rows.push(["放流量", cond.dischargeMin+"m³/s以上"]);
+  if(cond.roles) rows.push(["実績時の役割", list(cond.roles)]);
+  if(cond.licenses) rows.push(["必要資格", list(cond.licenses)+"（"+(cond.licenseMode||"いずれか")+"）"]);
+  if((cond.ageMin!==null && cond.ageMin!==undefined) || (cond.ageMax!==null && cond.ageMax!==undefined)){
+    rows.push(["年齢", (cond.ageMin!==null&&cond.ageMin!==undefined ? cond.ageMin+"歳以上" : "")+(cond.ageMax!==null&&cond.ageMax!==undefined ? cond.ageMax+"歳以下" : "")
+      +(cond.ageBaseDate ? "（基準日 "+fmtDate(cond.ageBaseDate)+"）" : "")]);
+  }
+  if(cond.femaleOnly) rows.push(["性別", "女性のみ"]);
+  return rows;
+}
 // 工番・案件番号の表記ゆれ（全角英数字・前後の空白）をそろえる
 function normBidKoban(v){ return String(v||"").normalize("NFKC").trim(); }
 // 配置検討リストの「工事（工番・案件名）」タグ（例：「84149A-1　一般河川安治川…工事」）を、番号と工事名に分ける。
@@ -1333,7 +1429,7 @@ function bidDocId(koban){
   return s;
 }
 function emptyBid(koban){
-  return {koban:normBidKoban(koban), koban2:"", title:"", orderer:"", bidDate:"", reqType:"", status:"検討中",
+  return {koban:normBidKoban(koban), koban2:"", title:"", orderer:"", bidDate:"", status:"検討中",
     skipReason:"", skipNote:"", award:"", assigned:{}, createdAt:0, createdBy:"", updatedAt:0, updatedBy:""};
 }
 async function getBidFromFirestore(key){
@@ -1357,14 +1453,14 @@ async function upsertBidFromConsiderList(key, info, email){
   if(snap.exists()){
     const cur=snap.data();
     const next={...cur,
-      orderer: String(info.orderer||""), bidDate: String(info.bidDate||""), reqType: String(info.reqType||""),
+      orderer: String(info.orderer||""), bidDate: String(info.bidDate||""),
       updatedAt: now, updatedBy: email||""};
     if(info.title && !cur.title) next.title=String(info.title); // 工事名は未入力のときだけ補う
     await setDoc(ref, stripUndefinedForFirestore(next));
     return {id:key, ...next, created:false};
   }
   const rec={...emptyBid(info.koban), title:String(info.title||""), orderer:String(info.orderer||""),
-    bidDate:String(info.bidDate||""), reqType:String(info.reqType||""),
+    bidDate:String(info.bidDate||""),
     createdAt:now, createdBy:email||"", updatedAt:now, updatedBy:email||""};
   await setDoc(ref, rec);
   return {id:key, ...rec, created:true};
@@ -1387,7 +1483,7 @@ async function createSkippedBidInFirestore(info, email){
   if(exists){ const err=new Error("exists"); err.code="exists"; err.bidKey=key; throw err; }
   const now=Date.now();
   const rec={...emptyBid(info.koban), title:String(info.title||""), orderer:String(info.orderer||""),
-    bidDate:String(info.bidDate||""), reqType:String(info.reqType||""), status:"見送った",
+    bidDate:String(info.bidDate||""), status:"見送った",
     skipReason:String(info.skipReason||""), skipNote:String(info.skipNote||""),
     createdAt:now, createdBy:email||"", updatedAt:now, updatedBy:email||""};
   const {db, doc, setDoc}=window.fb;
@@ -2328,13 +2424,13 @@ function ConstructionDetail({constrsltRecords, kindByConst, engRecords, literalM
     const fHasTo = fFyTo!=="" && fFyTo!==null && fFyTo!==undefined && !isNaN(parseInt(fFyTo,10));
     const fromYM = fHasFrom ? parseInt(fFyFrom,10)*100 + parseInt(fFyFromMonth||"1",10) : null;
     const toYM = fHasTo ? parseInt(fFyTo,10)*100 + parseInt(fFyToMonth||"12",10) : null;
-    const keikMinN=fKeikMin===""?null:parseFloat(fKeikMin);
-    const heighMinN=fHeighMin===""?null:parseFloat(fHeighMin);
-    const areaMinN=fAreaMin===""?null:parseFloat(fAreaMin);
-    const suisMinN=fSuisMin===""?null:parseFloat(fSuisMin);
-    const syusMinN=fSyusMin===""?null:parseFloat(fSyusMin);
-    const horyuMinN=fHoryuMin===""?null:parseFloat(fHoryuMin);
-    const pointMinN=fPointMin===""?null:parseFloat(fPointMin);
+    const keikMinN=condNum(fKeikMin);
+    const heighMinN=condNum(fHeighMin);
+    const areaMinN=condNum(fAreaMin);
+    const suisMinN=condNum(fSuisMin);
+    const syusMinN=condNum(fSyusMin);
+    const horyuMinN=condNum(fHoryuMin);
+    const pointMinN=condNum(fPointMin);
     // 施工場所：空白（全角・半角）を無視して部分一致で比較する（例：「高知県」→施工場所に高知県を含む工事）
     const placeKw=fPlace.replace(/[\s\u3000]/g,"");
     const amountN=fAmount==="" ? null : parseFloat(fAmount);
@@ -4189,7 +4285,7 @@ function BidRecords({employees, userEmail}){
   const [assignRole,setAssignRole]=useState("監理技術者");
   const [assignInput,setAssignInput]=useState("");
   const [assignError,setAssignError]=useState("");
-  const emptySkip={koban:"", title:"", orderer:"", bidDate:"", reqType:"", skipReason:"技術者不足", skipNote:""};
+  const emptySkip={koban:"", title:"", orderer:"", bidDate:"", skipReason:"技術者不足", skipNote:""};
   const [showSkip,setShowSkip]=useState(false);
   const [skipDraft,setSkipDraft]=useState(emptySkip);
   const [skipError,setSkipError]=useState("");
@@ -4351,11 +4447,6 @@ function BidRecords({employees, userEmail}){
           <label className="wide"><span>工事名・案件名</span><input type="text" value={d.title||""} onChange={setD("title")}/></label>
           <label><span>発注者</span><input type="text" value={d.orderer||""} onChange={setD("orderer")}/></label>
           <label><span>入札日（開札日）</span><input type="date" value={d.bidDate||""} onChange={setD("bidDate")}/></label>
-          <label><span>技術者の実績要件</span>
-            <select value={d.reqType||""} onChange={setD("reqType")}>
-              {BID_REQ_TYPES.map((t)=><option key={t.v} value={t.v}>{t.label}</option>)}
-            </select>
-          </label>
           <label><span>状態</span>
             <select value={st} onChange={setD("status")}>
               {BID_STATUSES.map((v)=><option key={v} value={v}>{v}</option>)}
@@ -4438,14 +4529,27 @@ function BidRecords({employees, userEmail}){
                     <div className="bid-muted" style={{marginBottom:6}}>
                       配置予定期間：{(l.assignFrom||l.assignTo) ? (fmtDate(l.assignFrom)+"〜"+fmtDate(l.assignTo)) : "未指定（重複判定なし）"}
                     </div>
-                    {(l.summaryLines||[]).length>0 &&
-                      <ul className="bid-cond">{l.summaryLines.map((t,i)=><li key={i}>{t}</li>)}</ul>}
+                    <div className="bid-sub-hd" style={{fontSize:12, margin:"4px 0"}}>検索条件（集計用）</div>
+                    {!l.cond ? (
+                      <div className="bid-muted" style={{marginBottom:6}}>この記録には集計用の条件がありません（以前の版で保存された記録）。</div>
+                    ) : bidCondDisplayRows(l.cond).length===0 ? (
+                      <div className="bid-muted" style={{marginBottom:6}}>指定された条件はありません。</div>
+                    ) : (
+                      <table className="bid-pool" style={{maxWidth:640, marginBottom:4}}>
+                        <tbody>
+                          {bidCondDisplayRows(l.cond).map(([k,v])=>(
+                            <tr key={k}><th style={{width:150}}>{k}</th><td>{v}</td></tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {l.condKey && <div className="bid-code" style={{margin:"0 0 8px", display:"block", wordBreak:"break-all"}}>condKey：{l.condKey}</div>}
                     {(l.shortlist||[]).length>0 &&
                       <div style={{margin:"6px 0"}}><b style={{fontSize:12}}>検討リスト：</b>
                         {(l.shortlist||[]).map((c)=><span key={c} className="bid-chip">{empName(c)}</span>)}
                       </div>}
                     <table className="bid-pool">
-                      <thead><tr><th>氏名</th><th>年齢</th><th>空き</th><th>重複</th><th>実績の確認</th><th>検討リスト</th></tr></thead>
+                      <thead><tr><th>氏名</th><th>年齢</th><th>空き</th><th>重複</th><th>実績の確認</th><th>条件に合った実績</th><th>検討リスト</th></tr></thead>
                       <tbody>
                         {pool.map((p)=>(
                           <tr key={p.engcd} className={p.available ? "" : "busy"}>
@@ -4454,10 +4558,19 @@ function BidRecords({employees, userEmail}){
                             <td>{p.available ? "○" : "×"}</td>
                             <td>{p.conflicts||0}</td>
                             <td>{BID_VERIFY_LABELS[p.verify]||p.verify||"-"}</td>
+                            <td style={{fontSize:11}}>
+                              {!p.matched ? "-" : p.matched.map((mm,mi)=>(
+                                <div key={mi} title={"工期の終わり "+fmtDate(mm.kokt)}>
+                                  <span className="bid-code" style={{marginLeft:0}}>{mm.constno}</span> {mm.role}
+                                  {mm.point!==null && mm.point!==undefined ? "　"+mm.point+"点" : ""}
+                                  {"　"+(BID_VERIFY_LABELS[mm.verify]||mm.verify)}
+                                </div>
+                              ))}
+                            </td>
                             <td>{(l.shortlist||[]).includes(p.engcd) ? "○" : ""}</td>
                           </tr>
                         ))}
-                        {pool.length===0 && <tr><td colSpan="6" className="bid-muted">条件に合った技術者はいませんでした</td></tr>}
+                        {pool.length===0 && <tr><td colSpan="7" className="bid-muted">条件に合った技術者はいませんでした</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -4499,11 +4612,6 @@ function BidRecords({employees, userEmail}){
             <label className="wide"><span>工事名・案件名</span><input type="text" value={skipDraft.title} onChange={(e)=>setSkipDraft({...skipDraft, title:e.target.value})}/></label>
             <label><span>発注者</span><input type="text" value={skipDraft.orderer} onChange={(e)=>setSkipDraft({...skipDraft, orderer:e.target.value})}/></label>
             <label><span>入札日（開札日）</span><input type="date" value={skipDraft.bidDate} onChange={(e)=>setSkipDraft({...skipDraft, bidDate:e.target.value})}/></label>
-            <label><span>技術者の実績要件</span>
-              <select value={skipDraft.reqType} onChange={(e)=>setSkipDraft({...skipDraft, reqType:e.target.value})}>
-                {BID_REQ_TYPES.map((t)=><option key={t.v} value={t.v}>{t.label}</option>)}
-              </select>
-            </label>
             <label><span>見送りの理由</span>
               <select value={skipDraft.skipReason} onChange={(e)=>setSkipDraft({...skipDraft, skipReason:e.target.value})}>
                 <option value="">未入力</option>
@@ -4533,7 +4641,7 @@ function BidRecords({employees, userEmail}){
 
       <div className="master-list">
         <div className="master-row master-row-head bid-row">
-          <span>入札日</span><span>工番・案件番号</span><span>工事名・案件名／発注者</span><span>実績要件</span>
+          <span>入札日</span><span>工番・案件番号</span><span>工事名・案件名／発注者</span>
           <span>状態</span><span>記録</span><span>最新の記録（条件／空き）</span>
         </div>
         {bids!==null && rows.map((b)=>{
@@ -4549,7 +4657,6 @@ function BidRecords({employees, userEmail}){
                   <span className="m-name" style={{display:"block", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{b.title||"-"}</span>
                   <span className="bid-muted">{b.orderer||""}</span>
                 </span>
-                <span className="bid-muted">{bidReqTypeLabel(b.reqType)}</span>
                 <span style={{display:"flex", flexWrap:"wrap", gap:4}}>
                   <span className={"bid-st "+statusClass(st)}>{st}</span>
                   {st==="見送った" && b.skipReason && <span className="bid-chip">{b.skipReason}</span>}
@@ -5944,6 +6051,8 @@ function App(){
   const currentFY = now.getMonth()+1>=4 ? now.getFullYear() : now.getFullYear()-1;
   const [fyFrom,setFyFrom]=useState("");
   const [fyFromMonth,setFyFromMonth]=useState("");
+  // 「直近5年度／10年度／15年度」ボタンで年度を指定したときの年数（年を直接入力したら空に戻す）。入札の記録の yearsWithin に使う。
+  const [fyPresetYears,setFyPresetYears]=useState("");
   const [fyTo,setFyTo]=useState("");
   const [fyToMonth,setFyToMonth]=useState("");
   const [selectedBunya,setSelectedBunya]=useState([]);
@@ -6029,7 +6138,6 @@ function App(){
   // 入札の記録（bids）用の入力欄：発注者・入札日（YYYY-MM-DDで保持）・実績要件の種類。空欄でも保存できる。
   const [saveOrdererInput,setSaveOrdererInput]=useState("");
   const [saveBidDateInput,setSaveBidDateInput]=useState("");
-  const [saveReqTypeInput,setSaveReqTypeInput]=useState("");
   const [saveBidLookup,setSaveBidLookup]=useState({key:"", status:"idle"}); // idle|loading|found|new|error
   const [savingList,setSavingList]=useState(false);
   const [showLoadDialog,setShowLoadDialog]=useState(false);
@@ -6042,7 +6150,7 @@ function App(){
     setSaveKobanInput(currentListTags.koban||"");
     setSaveStageInput(currentListTags.stage||"");
     setSaveRoleInput(currentListTags.role||"");
-    setSaveOrdererInput(""); setSaveBidDateInput(""); setSaveReqTypeInput("");
+    setSaveOrdererInput(""); setSaveBidDateInput("");
     setSaveBidLookup({key:"", status:"idle"});
     setShowSaveDialog(true);
   };
@@ -6061,7 +6169,6 @@ function App(){
         if(b){
           setSaveOrdererInput(b.orderer||"");
           setSaveBidDateInput(b.bidDate ? (normDigits8(b.bidDate)||"").replace(/^(\d{4})(\d{2})(\d{2})$/,"$1-$2-$3") : "");
-          setSaveReqTypeInput(b.reqType||"");
           setSaveBidLookup({key, status:"found", bid:b});
         } else {
           setSaveBidLookup({key, status:"new"});
@@ -6081,9 +6188,36 @@ function App(){
       const kr = kbnStatusByEngcd[r.engcd] || (kbnActive ? null : r);
       const verify = !kr ? "no" : kr.allVerified ? "ok" : kr.partialVerified ? "partial" : kr.allRejected ? "no" : "unconf";
       const conflicts=(r.assignConflicts||[]).length;
+      // その人が条件に合った実績の一覧（1件ずつ：工事番号・実績時の役割の名前・工期の終わり・工事成績評定点・その実績の確認状況）
+      const matched=(r.entries||[]).map((en)=>{
+        const pt=(en.point===undefined||en.point===null||String(en.point).trim()==="") ? null : parseFloat(en.point);
+        return {
+          constno: en.constno||"",
+          role: en.role||"",
+          kokt: normDigits8(en.kokt)||"",
+          point: (pt===null || isNaN(pt)) ? null : pt,
+          verify: en.verifyStatus==="ok" ? "ok" : en.verifyStatus==="no" ? "no" : "unconf",
+        };
+      });
       return {engcd:r.engcd, name:r.name||"", age:(r.age===null||r.age===undefined) ? null : r.age,
-        available: conflicts===0, conflicts, verify};
+        available: conflicts===0, conflicts, verify, matched};
     });
+  };
+  // 集計用の検索条件（bidLogs.cond）。コードは画面に表示している名前（コードマスタの名前）に置き換える。
+  const buildBidLogCond=()=>{
+    const today=new Date();
+    const ymd=""+today.getFullYear()+String(today.getMonth()+1).padStart(2,"0")+String(today.getDate()).padStart(2,"0");
+    return buildBidCond({
+      fyFrom, fyFromMonth, fyTo, fyToMonth, fyPresetYears,
+      branch: selectedBranch,
+      gateCategory: selectedGateCategory, gateType: selectedGateType, gateStructure: selectedGateStructure,
+      openingMethod: (selectedKaihei||[]).map((c)=>lookupLit("KHKI", c)),
+      pointMin, spanMin: keikMin, heightMin: heighMin, areaMin, areaIncludeDepth: areaIncludeSuis,
+      depthMin: suisMin, intakeMin: syusMin, dischargeMin: horyuMin,
+      roles: (selectedRoles||[]).map((c)=>lookupLit("TRGT", c)),
+      licenses: selectedLicenses, licenseMode,
+      ageBaseDate: ageAsOf, ageMin, ageMax, femaleOnly,
+    }, ymd);
   };
   // 検討リスト保存時に「技術者リスト」として凍結保存するスナップショットを作る。
   // 検討リストに入れた人は技術者リストから除く。実績なし＝黄、受注工事で専任配置あり＝赤（両方当てはまる場合は赤を優先）。
@@ -6133,10 +6267,11 @@ function App(){
         if(bidKey){
           await upsertBidFromConsiderList(bidKey, {
             koban:bidKoban, title:bidTitle, orderer:saveOrdererInput.trim(),
-            bidDate:normDigits8(saveBidDateInput)||"", reqType:saveReqTypeInput,
+            bidDate:normDigits8(saveBidDateInput)||"",
           }, email);
         }
         const pool=buildBidLogPool();
+        const cond=buildBidLogCond();
         await addBidLogToFirestore({
           bidKey, koban:bidKoban, stage:tags.stage||"", role:tags.role||"", listTitle:title,
           savedAt:Date.now(), savedBy:email,
@@ -6144,6 +6279,7 @@ function App(){
           assignFrom:normDigits8(assignDateFrom)||"", assignTo:normDigits8(assignDateTo)||"",
           pool, poolCount:pool.length, availableCount:pool.filter((p)=>p.available).length,
           shortlist:considerList.map((c)=>c.engcd),
+          cond, condKey:bidCondKey(cond),
         });
         bidNote = bidKey ? "（入札の記録にも追加しました）" : "（工事の工番・案件番号が無いため、入札には紐付けずに記録しました）";
       }catch(e){
@@ -6664,15 +6800,17 @@ function App(){
   const computeCandidatePool=(applyDisplayFilters, applyKbnFilterArg)=>{
     if(!requiredLoaded || !searched) return [];
     const applyKbnFilter = applyKbnFilterArg===undefined ? applyDisplayFilters : applyKbnFilterArg;
-    const keikMinN = keikMin==="" ? null : parseFloat(keikMin);
-    const heighMinN = heighMin==="" ? null : parseFloat(heighMin);
-    const areaMinN = areaMin==="" ? null : parseFloat(areaMin);
-    const suisMinN = suisMin==="" ? null : parseFloat(suisMin);
-    const syusMinN = syusMin==="" ? null : parseFloat(syusMin);
-    const horyuMinN = horyuMin==="" ? null : parseFloat(horyuMin);
-    const pointMinN = pointMin==="" ? null : parseFloat(pointMin);
-    const ageMinN = ageMin==="" ? null : parseFloat(ageMin);
-    const ageMaxN = ageMax==="" ? null : parseFloat(ageMax);
+    // 数値の条件は、空欄・0・数字以外を「指定なし」として扱う（0を入れても、値が空欄の実績や生年月日不明の人を外さない）。
+    // 入札の記録（bidLogs.cond）も同じ決まりで保存しているので、検索結果と記録が食い違わない。
+    const keikMinN = condNum(keikMin);
+    const heighMinN = condNum(heighMin);
+    const areaMinN = condNum(areaMin);
+    const suisMinN = condNum(suisMin);
+    const syusMinN = condNum(syusMin);
+    const horyuMinN = condNum(horyuMin);
+    const pointMinN = condNum(pointMin);
+    const ageMinN = condNum(ageMin);
+    const ageMaxN = condNum(ageMax);
     const assignFilterFrom = assignDateFrom ? normDigits8(assignDateFrom) : null;
     const assignFilterTo = assignDateTo ? normDigits8(assignDateTo) : null;
     const hasAssignFilter = assignFilterFrom!==null || assignFilterTo!==null;
@@ -7062,7 +7200,7 @@ function App(){
   },[results, sortMode]);
 
   const buildFilterSnapshot=()=>({
-    fyFrom, fyFromMonth, fyTo, fyToMonth,
+    fyFrom, fyFromMonth, fyTo, fyToMonth, fyPresetYears,
     selectedBunya, selectedGateCategory, selectedGateType, selectedGateStructure, selectedKaihei,
     selectedRoles, selectedLicenses, licenseMode,
     ageMin, ageMax, ageAsOf, selectedDept,
@@ -7079,6 +7217,7 @@ function App(){
   const applyFilterSnapshot=(f)=>{
     if(!f) return;
     if(f.fyFrom!==undefined) setFyFrom(f.fyFrom);
+    setFyPresetYears(f.fyPresetYears!==undefined ? f.fyPresetYears : "");
     if(f.fyFromMonth!==undefined) setFyFromMonth(f.fyFromMonth);
     if(f.fyTo!==undefined) setFyTo(f.fyTo);
     if(f.fyToMonth!==undefined) setFyToMonth(f.fyToMonth);
@@ -7140,13 +7279,13 @@ function App(){
       const names=f.selectedKaihei.map((c)=>(literalMap.KHKI&&literalMap.KHKI[c])||c);
       lines.push("開閉方式："+names.join("・"));
     }
-    if(f.pointMin) lines.push("工事成績評定点以上："+f.pointMin+"点");
-    if(f.keikMin) lines.push("径間以上："+f.keikMin+"m");
-    if(f.heighMin) lines.push("高さ以上："+f.heighMin+"m");
-    if(f.areaMin) lines.push("径間×高さ"+(f.areaIncludeSuis?"×水深":"")+"以上："+f.areaMin+(f.areaIncludeSuis?"m²・m":"m²"));
-    if(f.suisMin) lines.push("水深以上："+f.suisMin+"m");
-    if(f.syusMin) lines.push("取水量以上："+f.syusMin+"m³/s");
-    if(f.horyuMin) lines.push("放流量以上："+f.horyuMin+"m³/s");
+    if(condNum(f.pointMin)!==null) lines.push("工事成績評定点以上："+f.pointMin+"点");
+    if(condNum(f.keikMin)!==null) lines.push("径間以上："+f.keikMin+"m");
+    if(condNum(f.heighMin)!==null) lines.push("高さ以上："+f.heighMin+"m");
+    if(condNum(f.areaMin)!==null) lines.push("径間×高さ"+(f.areaIncludeSuis?"×水深":"")+"以上："+f.areaMin+(f.areaIncludeSuis?"m²・m":"m²"));
+    if(condNum(f.suisMin)!==null) lines.push("水深以上："+f.suisMin+"m");
+    if(condNum(f.syusMin)!==null) lines.push("取水量以上："+f.syusMin+"m³/s");
+    if(condNum(f.horyuMin)!==null) lines.push("放流量以上："+f.horyuMin+"m³/s");
     if((f.selectedRoles||[]).length){
       const names=f.selectedRoles.map((c)=>(literalMap.TRGT&&literalMap.TRGT[c])||("役割("+c+")"));
       lines.push("実績時の役割："+names.join("・"));
@@ -7154,11 +7293,11 @@ function App(){
     if((f.selectedLicenses||[]).length){
       lines.push("必要資格："+f.selectedLicenses.join("・")+"の"+(f.licenseMode==="and"?"すべて":"いずれか"));
     }
-    if(f.ageMin || f.ageMax || f.ageAsOf){
+    if(condNum(f.ageMin)!==null || condNum(f.ageMax)!==null || f.ageAsOf){
       let txt="年齢条件：";
       if(f.ageAsOf) txt+=fmtDate(f.ageAsOf)+"時点　";
-      if(f.ageMin) txt+=f.ageMin+"歳以上　";
-      if(f.ageMax) txt+=f.ageMax+"歳以下";
+      if(condNum(f.ageMin)!==null) txt+=f.ageMin+"歳以上　";
+      if(condNum(f.ageMax)!==null) txt+=f.ageMax+"歳以下";
       lines.push(txt.trim());
     }
     if(f.femaleOnly) lines.push("性別：女性のみ");
@@ -7180,7 +7319,7 @@ function App(){
   };
 
   const resetFilters=()=>{
-    setFyFrom(currentFY-9); setFyFromMonth("04"); setFyTo(currentFY); setFyToMonth("04");
+    setFyFrom(currentFY-9); setFyFromMonth("04"); setFyTo(currentFY); setFyToMonth("04"); setFyPresetYears("");
     setSelectedBunya([]); setSelectedGateCategory([]); setSelectedGateType([]); setSelectedGateStructure([]);
     setSelectedKaihei([]);
     setSelectedRoles([]); setSelectedLicenses([]); setLicenseMode("or");
@@ -7733,7 +7872,7 @@ function App(){
               <div className="field-label">年度</div>
               <div className="field-control">
                 <div className="yr-inline">
-                  <input type="number" placeholder="指定なし" value={fyFrom} onChange={(e)=>setFyFrom(e.target.value)}/>
+                  <input type="number" placeholder="指定なし" value={fyFrom} onChange={(e)=>{ setFyFrom(e.target.value); setFyPresetYears(""); }}/>
                   <span>年</span>
                   <select value={fyFromMonth} onChange={(e)=>setFyFromMonth(e.target.value)}>
                     <option value="">指定なし</option>
@@ -7755,9 +7894,9 @@ function App(){
                 </div>
                 <div className="yr-presets">
                   {[5,10,15].map((n)=>(
-                    <button key={n} onClick={()=>{ setFyFrom(currentFY-(n-1)); setFyFromMonth("04"); setFyTo(""); setFyToMonth(""); }}>直近{n}年度</button>
+                    <button key={n} onClick={()=>{ setFyFrom(currentFY-(n-1)); setFyFromMonth("04"); setFyTo(""); setFyToMonth(""); setFyPresetYears(n); }}>直近{n}年度</button>
                   ))}
-                  <button onClick={()=>{ setFyFrom(""); setFyFromMonth(""); setFyTo(""); setFyToMonth(""); }}>指定なし（すべて）</button>
+                  <button onClick={()=>{ setFyFrom(""); setFyFromMonth(""); setFyTo(""); setFyToMonth(""); setFyPresetYears(""); }}>指定なし（すべて）</button>
                 </div>
               </div>
             </div>
@@ -8178,12 +8317,7 @@ function App(){
                   <div className="field-label" style={{fontSize:11.5}}>入札日（開札日）</div>
                   <input type="date" className="kw-input" value={saveBidDateInput} onChange={(e)=>setSaveBidDateInput(e.target.value)}/>
                 </div>
-                <div style={{flex:1}}>
-                  <div className="field-label" style={{fontSize:11.5}}>技術者の実績要件</div>
-                  <select className="dt-select" style={{width:"100%"}} value={saveReqTypeInput} onChange={(e)=>setSaveReqTypeInput(e.target.value)}>
-                    {BID_REQ_TYPES.map((t)=><option key={t.v} value={t.v}>{t.label}</option>)}
-                  </select>
-                </div>
+                <div style={{flex:1}}></div>
               </div>
             </div>
             <div className="actions-row">
