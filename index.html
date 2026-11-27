@@ -1302,22 +1302,25 @@ async function deleteConsiderListFromFirestore(id){
                 status("検討中"|"入札した"|"見送った"), skipReason(""|"技術者不足"|"採算"|"その他"), skipNote,
                 award(""|"受注"|"失注"), assigned({役割:[技術者コード,...]}), createdAt, createdBy, updatedAt, updatedBy}
      bidLogs : {bidKey, koban, stage, role, listTitle, savedAt, savedBy, filters, summaryLines, assignFrom, assignTo,
-                pool:[{engcd,name,age,qualified,available,conflicts,verify("ok"|"partial"|"no"|"unconf"),
+                pool:[{engcd,name,age,qualified,shortlisted,available,autoAvailable,conflicts,verify("ok"|"partial"|"no"|"unconf"),
                        matched:[{constno,role,kokt,point,verify}]}],
-                poolCount, qualifiedCount, unconfirmedCount, availableCount, reqPoolCount, shortlist:[技術者コード],
+                countVersion(3), poolCount, qualifiedCount, unconfirmedCount, availableCount, autoAvailableCount, reqPoolCount,
+                shortlist:[技術者コード],
                 cond（集計用の検索条件。buildBidCond参照）, condKey（集計用の条件文字列。bidCondKey参照）}
    人数の定義（2026/11 決定）：
      poolCount        … 検索でヒットした全員（参考）。表示用の絞り込み（受注重複を除く・確認状況など）はかけない。
      qualifiedCount   … 条件に合う人：実績の確認状況が「確認済み」「一部確認済み」（verify＝"ok"／"partial"）の人。
                         据付実績なし（"no"）は含めない。未確認（"unconf"）は含めず、unconfirmedCount に別に数える。
-     availableCount   … 条件に合う人のうち、空いていた人：配置予定期間に「受注工事での専任配置の重複」が無い人
-                        （画面の「受注工事で専任配置が重複する技術者を除く」で外れる人＝Excelの赤、以外）。
+     availableCount   … 空いていた人：検討リストに入れた人のうち、条件に合う人（据付実績なし・未確認の人は数えない）。
+                        担当者が時期も含めて「出せる」と判断した人数として扱う（countVersion 3 以降）。
+     autoAvailableCount … 参考：条件に合う人のうち、配置予定期間に「受注工事での専任配置の重複」が無い人（自動判定）。
+                        画面の「受注工事で専任配置が重複する技術者を除く」で外れる人（Excelの赤）以外。
                         未受注案件や担当などの重複は空き扱い。配置予定期間を指定せずに保存した場合は null（不明）。
      reqPoolCount     … 社内の絞り込み（社内扱いの年齢条件・性別）をかける前の、公告の要件だけで「条件に合う人」の人数。
-     pool の1人ずつの qualified は条件に合うか（true/false）、available は空いていたか（期間未指定なら null）。
-     conflicts は配置予定と重なっている件数（受注・未受注・役割を問わず。参考）。
-   ※2026/11/27 以前の記録は、poolCount＝条件に合った人数、availableCount＝重複が1件も無い人数（期間未指定でも全員を空き）
-     という以前の定義で保存されている（qualifiedCount が無いもの）。
+     pool の1人ずつ：qualified＝条件に合うか、shortlisted＝検討リストに入れたか、available＝空いていた（shortlisted かつ qualified）、
+     autoAvailable＝自動判定の空き（期間未指定なら null）、conflicts＝配置予定と重なっている件数（受注・未受注・役割を問わず。参考）。
+   ※以前の記録：countVersion が無く qualifiedCount も無いもの＝poolCount が条件に合った人数、availableCount が重複の無い人数（旧定義）。
+     countVersion が無く qualifiedCount があるもの＝availableCount が自動判定の空き（今の autoAvailableCount と同じ定義）。
    ※以前の版にあった bids.reqType（技術者の実績要件の種類）は廃止。既に保存されたデータに残っていても使わない。 */
 const BID_STATUSES=["検討中","入札した","見送った"];
 const BID_SKIP_REASONS=["技術者不足","採算","その他"];
@@ -4461,12 +4464,16 @@ function BidRecords({employees, userEmail}){
   const statusClass=(st)=> st==="入札した" ? "bid-st-bid" : st==="見送った" ? "bid-st-skip" : "bid-st-open";
   // 記録の人数。新しい定義（qualifiedCount あり）と、以前の定義の記録の両方に対応する。
   const logCounts=(l)=>{
-    const isNew = l.qualifiedCount!==undefined;
+    const isNew = (l.countVersion||0)>=3;
+    const hasQ = l.qualifiedCount!==undefined;
+    const nz=(v)=> (v===null || v===undefined) ? null : v;
     return {
       isNew,
-      qualified: isNew ? l.qualifiedCount : (l.poolCount||0),
-      unconf: isNew ? (l.unconfirmedCount||0) : null,
-      avail: (l.availableCount===null || l.availableCount===undefined) ? null : l.availableCount,
+      qualified: hasQ ? l.qualifiedCount : (l.poolCount||0),
+      unconf: hasQ ? (l.unconfirmedCount||0) : null,
+      // 空いていた＝検討リストに入れた条件に合う人（countVersion 3 以降）。以前の記録は保存されている値をそのまま出す。
+      avail: nz(l.availableCount),
+      auto: isNew ? nz(l.autoAvailableCount) : (hasQ ? nz(l.availableCount) : null),
       reqPool: l.reqPoolCount,
     };
   };
@@ -4568,8 +4575,9 @@ function BidRecords({employees, userEmail}){
                   {(l.stage||l.role) && <span className="bid-chip">{[l.stage,l.role].filter(Boolean).join("・")}</span>}
                   {(()=>{ const c=logCounts(l); return (
                     <React.Fragment>
-                      <span className="bid-count">条件に合う {c.qualified}名 ／ 空いていた {c.avail===null ? "不明（期間未指定）" : c.avail+"名"}</span>
+                      <span className="bid-count">条件に合う {c.qualified}名 ／ 空いていた {c.avail===null ? "不明" : c.avail+"名"}</span>
                       {c.unconf ? <span className="bid-muted">未確認 {c.unconf}名</span> : null}
+                      {c.isNew && <span className="bid-muted">自動判定の空き {c.auto===null ? "不明（期間未指定）" : c.auto+"名"}</span>}
                       {(c.reqPool!==undefined && c.reqPool!==c.qualified) && <span className="bid-muted">（公告の要件だけなら {c.reqPool}名）</span>}
                       {!c.isNew && <span className="bid-muted">（以前の数え方の記録）</span>}
                     </React.Fragment>
@@ -4608,14 +4616,17 @@ function BidRecords({employees, userEmail}){
                         {(l.shortlist||[]).map((c)=><span key={c} className="bid-chip">{empName(c)}</span>)}
                       </div>}
                     <table className="bid-pool">
-                      <thead><tr><th>氏名</th><th>年齢</th><th>条件に合う</th><th>空き</th><th>重複</th><th>実績の確認</th><th>条件に合った実績</th><th>検討リスト</th></tr></thead>
+                      <thead><tr><th>氏名</th><th>年齢</th><th>条件に合う</th><th>検討リスト</th><th>空き</th><th>自動判定の空き</th><th>重複</th><th>実績の確認</th><th>条件に合った実績</th></tr></thead>
                       <tbody>
                         {pool.map((p)=>(
-                          <tr key={p.engcd} className={(p.qualified===false || p.available===false) ? "busy" : ""}>
+                          <tr key={p.engcd} className={p.qualified===false ? "busy" : ""}>
                             <td>{p.name}<span className="bid-code">{p.engcd}</span></td>
                             <td>{p.age===null||p.age===undefined ? "-" : p.age}</td>
                             <td>{p.qualified===undefined ? "-" : (p.qualified ? "○" : "×")}</td>
-                            <td title={p.available===false ? "受注工事での専任配置と重複" : ""}>{p.available===null||p.available===undefined ? "-" : (p.available ? "○" : "×")}</td>
+                            <td>{(l.shortlist||[]).includes(p.engcd) ? "○" : ""}</td>
+                            <td>{(l.countVersion||0)>=3 ? (p.available ? "○" : "") : "-"}</td>
+                            {(()=>{ const auto=(l.countVersion||0)>=3 ? p.autoAvailable : (l.qualifiedCount!==undefined ? p.available : undefined);
+                              return <td title={auto===false ? "受注工事での専任配置と重複" : ""}>{auto===null||auto===undefined ? "-" : (auto ? "○" : "×")}</td>; })()}
                             <td>{p.conflicts||0}</td>
                             <td>{BID_VERIFY_LABELS[p.verify]||p.verify||"-"}</td>
                             <td style={{fontSize:11}}>
@@ -4627,10 +4638,9 @@ function BidRecords({employees, userEmail}){
                                 </div>
                               ))}
                             </td>
-                            <td>{(l.shortlist||[]).includes(p.engcd) ? "○" : ""}</td>
                           </tr>
                         ))}
-                        {pool.length===0 && <tr><td colSpan="8" className="bid-muted">条件に合った技術者はいませんでした</td></tr>}
+                        {pool.length===0 && <tr><td colSpan="9" className="bid-muted">条件に合った技術者はいませんでした</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -4662,7 +4672,8 @@ function BidRecords({employees, userEmail}){
       <p style={{fontSize:12, color:"var(--muted)", margin:"0 0 12px"}}>
         配置検討リストを保存すると、その工事の入札がここに作られ、保存のたびに「検討の記録」が追加されます。
         「条件に合う」＝検索でヒットした人のうち実績が確認済み・一部確認済みの人（据付実績なし・未確認は含まない）、
-        「空いていた」＝そのうち配置予定期間に受注工事の専任配置と重なっていない人（期間を指定していなければ不明）。
+        「空いていた」＝検討リストに入れた人のうち、条件に合う人（検討リストには、その時期に出せる人を全員入れてください）。
+        参考の「自動判定の空き」＝条件に合う人のうち、配置予定期間に受注工事の専任配置と重なっていない人（期間を指定していなければ不明）。
         入札した／見送った・受注／失注・配置した人を入力しておくと、将来「技術者配置の必要数」の分析に使えます。
       </p>
 
@@ -6270,7 +6281,9 @@ function App(){
       });
       return {engcd:r.engcd, name:r.name||"", age:(r.age===null||r.age===undefined) ? null : r.age,
         qualified: verify==="ok" || verify==="partial",
-        available: hasPeriod ? !r.excludedForAwardedDutyOverlap : null,
+        shortlisted: isInConsiderList(r.engcd),
+        available: isInConsiderList(r.engcd) && (verify==="ok" || verify==="partial"),
+        autoAvailable: hasPeriod ? !r.excludedForAwardedDutyOverlap : null,
         conflicts, verify, matched};
     });
   };
@@ -6349,7 +6362,9 @@ function App(){
         const hasPeriod = !!(normDigits8(assignDateFrom) || normDigits8(assignDateTo));
         const qualifiedCount=pool.filter((p)=>p.qualified).length;
         const unconfirmedCount=pool.filter((p)=>p.verify==="unconf").length;
-        const availableCount = hasPeriod ? pool.filter((p)=>p.qualified && p.available).length : null;
+        // 空いていた人数＝検討リストに入れた人のうち条件に合う人。自動判定の空き（参考）は期間未指定なら null。
+        const availableCount = pool.filter((p)=>p.available).length;
+        const autoAvailableCount = hasPeriod ? pool.filter((p)=>p.qualified && p.autoAvailable).length : null;
         // 社内の絞り込み（年齢条件・性別を社内扱いにした場合）をかける前の、公告の要件だけで「条件に合う人」の人数。
         // 支店は候補の母集団を絞らないので、社内扱いの年齢条件・性別が無ければ qualifiedCount と同じ。
         const reqPoolCount = (ageGenderInternal && hasAgeGenderCond)
@@ -6360,7 +6375,7 @@ function App(){
           savedAt:Date.now(), savedBy:email,
           filters:filterSnap||null, summaryLines:filtersToSummaryLines(filterSnap||{}),
           assignFrom:normDigits8(assignDateFrom)||"", assignTo:normDigits8(assignDateTo)||"",
-          pool, poolCount:pool.length, qualifiedCount, unconfirmedCount, availableCount,
+          countVersion:3, pool, poolCount:pool.length, qualifiedCount, unconfirmedCount, availableCount, autoAvailableCount,
           shortlist:considerList.map((c)=>c.engcd),
           cond, condKey:bidCondKey(cond), reqPoolCount,
         });
