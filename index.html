@@ -1302,9 +1302,22 @@ async function deleteConsiderListFromFirestore(id){
                 status("検討中"|"入札した"|"見送った"), skipReason(""|"技術者不足"|"採算"|"その他"), skipNote,
                 award(""|"受注"|"失注"), assigned({役割:[技術者コード,...]}), createdAt, createdBy, updatedAt, updatedBy}
      bidLogs : {bidKey, koban, stage, role, listTitle, savedAt, savedBy, filters, summaryLines, assignFrom, assignTo,
-                pool:[{engcd,name,age,available,conflicts,verify("ok"|"partial"|"no"|"unconf"),
-                       matched:[{constno,role,kokt,point,verify}]}], poolCount, availableCount, shortlist:[技術者コード],
+                pool:[{engcd,name,age,qualified,available,conflicts,verify("ok"|"partial"|"no"|"unconf"),
+                       matched:[{constno,role,kokt,point,verify}]}],
+                poolCount, qualifiedCount, unconfirmedCount, availableCount, reqPoolCount, shortlist:[技術者コード],
                 cond（集計用の検索条件。buildBidCond参照）, condKey（集計用の条件文字列。bidCondKey参照）}
+   人数の定義（2026/11 決定）：
+     poolCount        … 検索でヒットした全員（参考）。表示用の絞り込み（受注重複を除く・確認状況など）はかけない。
+     qualifiedCount   … 条件に合う人：実績の確認状況が「確認済み」「一部確認済み」（verify＝"ok"／"partial"）の人。
+                        据付実績なし（"no"）は含めない。未確認（"unconf"）は含めず、unconfirmedCount に別に数える。
+     availableCount   … 条件に合う人のうち、空いていた人：配置予定期間に「受注工事での専任配置の重複」が無い人
+                        （画面の「受注工事で専任配置が重複する技術者を除く」で外れる人＝Excelの赤、以外）。
+                        未受注案件や担当などの重複は空き扱い。配置予定期間を指定せずに保存した場合は null（不明）。
+     reqPoolCount     … 社内の絞り込み（社内扱いの年齢条件・性別）をかける前の、公告の要件だけで「条件に合う人」の人数。
+     pool の1人ずつの qualified は条件に合うか（true/false）、available は空いていたか（期間未指定なら null）。
+     conflicts は配置予定と重なっている件数（受注・未受注・役割を問わず。参考）。
+   ※2026/11/27 以前の記録は、poolCount＝条件に合った人数、availableCount＝重複が1件も無い人数（期間未指定でも全員を空き）
+     という以前の定義で保存されている（qualifiedCount が無いもの）。
    ※以前の版にあった bids.reqType（技術者の実績要件の種類）は廃止。既に保存されたデータに残っていても使わない。 */
 const BID_STATUSES=["検討中","入札した","見送った"];
 const BID_SKIP_REASONS=["技術者不足","採算","その他"];
@@ -4446,10 +4459,21 @@ function BidRecords({employees, userEmail}){
   };
 
   const statusClass=(st)=> st==="入札した" ? "bid-st-bid" : st==="見送った" ? "bid-st-skip" : "bid-st-open";
+  // 記録の人数。新しい定義（qualifiedCount あり）と、以前の定義の記録の両方に対応する。
+  const logCounts=(l)=>{
+    const isNew = l.qualifiedCount!==undefined;
+    return {
+      isNew,
+      qualified: isNew ? l.qualifiedCount : (l.poolCount||0),
+      unconf: isNew ? (l.unconfirmedCount||0) : null,
+      avail: (l.availableCount===null || l.availableCount===undefined) ? null : l.availableCount,
+      reqPool: l.reqPoolCount,
+    };
+  };
   const latestCounts=(key)=>{
     const list=logsByKey[key]||[];
     const last=list[list.length-1];
-    return last ? {pool:last.poolCount||0, avail:last.availableCount||0, at:last.savedAt} : null;
+    return last ? logCounts(last) : null;
   };
   const empOptions=useMemo(()=> (employees||[])
     .filter((e)=>e.STATUS!=="retired")
@@ -4542,8 +4566,14 @@ function BidRecords({employees, userEmail}){
                   <span className="bid-muted">{l.savedBy||"-"}</span>
                   <span>「{l.listTitle||"-"}」</span>
                   {(l.stage||l.role) && <span className="bid-chip">{[l.stage,l.role].filter(Boolean).join("・")}</span>}
-                  <span className="bid-count">条件に合った {l.poolCount||0}名 ／ 空いていた {l.availableCount||0}名</span>
-                  {(l.reqPoolCount!==undefined && l.reqPoolCount!==l.poolCount) && <span className="bid-muted">（公告の要件だけなら {l.reqPoolCount}名）</span>}
+                  {(()=>{ const c=logCounts(l); return (
+                    <React.Fragment>
+                      <span className="bid-count">条件に合う {c.qualified}名 ／ 空いていた {c.avail===null ? "不明（期間未指定）" : c.avail+"名"}</span>
+                      {c.unconf ? <span className="bid-muted">未確認 {c.unconf}名</span> : null}
+                      {(c.reqPool!==undefined && c.reqPool!==c.qualified) && <span className="bid-muted">（公告の要件だけなら {c.reqPool}名）</span>}
+                      {!c.isNew && <span className="bid-muted">（以前の数え方の記録）</span>}
+                    </React.Fragment>
+                  ); })()}
                   <span className="bid-muted">検討リスト {(l.shortlist||[]).length}名</span>
                 </button>
                 {open &&
@@ -4578,13 +4608,14 @@ function BidRecords({employees, userEmail}){
                         {(l.shortlist||[]).map((c)=><span key={c} className="bid-chip">{empName(c)}</span>)}
                       </div>}
                     <table className="bid-pool">
-                      <thead><tr><th>氏名</th><th>年齢</th><th>空き</th><th>重複</th><th>実績の確認</th><th>条件に合った実績</th><th>検討リスト</th></tr></thead>
+                      <thead><tr><th>氏名</th><th>年齢</th><th>条件に合う</th><th>空き</th><th>重複</th><th>実績の確認</th><th>条件に合った実績</th><th>検討リスト</th></tr></thead>
                       <tbody>
                         {pool.map((p)=>(
-                          <tr key={p.engcd} className={p.available ? "" : "busy"}>
+                          <tr key={p.engcd} className={(p.qualified===false || p.available===false) ? "busy" : ""}>
                             <td>{p.name}<span className="bid-code">{p.engcd}</span></td>
                             <td>{p.age===null||p.age===undefined ? "-" : p.age}</td>
-                            <td>{p.available ? "○" : "×"}</td>
+                            <td>{p.qualified===undefined ? "-" : (p.qualified ? "○" : "×")}</td>
+                            <td title={p.available===false ? "受注工事での専任配置と重複" : ""}>{p.available===null||p.available===undefined ? "-" : (p.available ? "○" : "×")}</td>
                             <td>{p.conflicts||0}</td>
                             <td>{BID_VERIFY_LABELS[p.verify]||p.verify||"-"}</td>
                             <td style={{fontSize:11}}>
@@ -4599,7 +4630,7 @@ function BidRecords({employees, userEmail}){
                             <td>{(l.shortlist||[]).includes(p.engcd) ? "○" : ""}</td>
                           </tr>
                         ))}
-                        {pool.length===0 && <tr><td colSpan="7" className="bid-muted">条件に合った技術者はいませんでした</td></tr>}
+                        {pool.length===0 && <tr><td colSpan="8" className="bid-muted">条件に合った技術者はいませんでした</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -4629,7 +4660,9 @@ function BidRecords({employees, userEmail}){
       </div>
 
       <p style={{fontSize:12, color:"var(--muted)", margin:"0 0 12px"}}>
-        配置検討リストを保存すると、その工事の入札がここに作られ、保存のたびに「検討の記録」（条件に合った人数・空いていた人数）が追加されます。
+        配置検討リストを保存すると、その工事の入札がここに作られ、保存のたびに「検討の記録」が追加されます。
+        「条件に合う」＝検索でヒットした人のうち実績が確認済み・一部確認済みの人（据付実績なし・未確認は含まない）、
+        「空いていた」＝そのうち配置予定期間に受注工事の専任配置と重なっていない人（期間を指定していなければ不明）。
         入札した／見送った・受注／失注・配置した人を入力しておくと、将来「技術者配置の必要数」の分析に使えます。
       </p>
 
@@ -4671,7 +4704,7 @@ function BidRecords({employees, userEmail}){
       <div className="master-list">
         <div className="master-row master-row-head bid-row">
           <span>入札日</span><span>工番・案件番号</span><span>工事名・案件名／発注者</span>
-          <span>状態</span><span>記録</span><span>最新の記録（条件／空き）</span>
+          <span>状態</span><span>記録</span><span>最新の記録（条件に合う／空き）</span>
         </div>
         {bids!==null && rows.map((b)=>{
           const st=b.status||"検討中";
@@ -4693,7 +4726,7 @@ function BidRecords({employees, userEmail}){
                   {pending && <span className="bid-pending">結果未入力</span>}
                 </span>
                 <span className="bid-muted">{(logsByKey[b.id]||[]).length}件</span>
-                <span className="m-code">{lc ? (lc.pool+"名 ／ "+lc.avail+"名") : "-"}</span>
+                <span className="m-code">{lc ? (lc.qualified+"名 ／ "+(lc.avail===null ? "-" : lc.avail+"名")) : "-"}</span>
               </div>
               {openKey===b.id && renderDetail(b)}
             </React.Fragment>
@@ -6211,11 +6244,16 @@ function App(){
   },[showSaveDialog, saveKobanInput]);
   // 検討の記録（bidLogs）に残す「条件に合った技術者の一覧」。Excelの技術者リストと同じ母集団（検討リストに入れた人も含む）。
   // 実績の確認状況は、Excelと同じく「非表示にする区分」で絞り込んだ後の状態を使う（区分の実績しか無い人は "no"）。
-  const buildBidLogPool=()=>{
+  // opts を渡すと、その条件で候補を求め直す（reqPoolCount 用：{ignoreAgeGender:true}）。
+  const buildBidLogPool=(opts)=>{
+    const candRows = opts ? computeCandidatePool(false, undefined, opts) : exportCandidatePool;
+    const kbnRows = opts ? computeCandidatePool(false, true, opts) : exportKbnStatusPool;
+    // 配置予定期間を指定しているか（指定が無ければ空き状況は判定していない＝null）
+    const hasPeriod = !!(normDigits8(assignDateFrom) || normDigits8(assignDateTo));
     const kbnStatusByEngcd={};
-    exportKbnStatusPool.forEach((r)=>{ kbnStatusByEngcd[r.engcd]=r; });
+    kbnRows.forEach((r)=>{ kbnStatusByEngcd[r.engcd]=r; });
     const kbnActive = excludedKbnTypes.length>0;
-    return exportCandidatePool.map((r)=>{
+    return candRows.map((r)=>{
       const kr = kbnStatusByEngcd[r.engcd] || (kbnActive ? null : r);
       const verify = !kr ? "no" : kr.allVerified ? "ok" : kr.partialVerified ? "partial" : kr.allRejected ? "no" : "unconf";
       const conflicts=(r.assignConflicts||[]).length;
@@ -6231,7 +6269,9 @@ function App(){
         };
       });
       return {engcd:r.engcd, name:r.name||"", age:(r.age===null||r.age===undefined) ? null : r.age,
-        available: conflicts===0, conflicts, verify, matched};
+        qualified: verify==="ok" || verify==="partial",
+        available: hasPeriod ? !r.excludedForAwardedDutyOverlap : null,
+        conflicts, verify, matched};
     });
   };
   // 集計用の検索条件（bidLogs.cond）。コードは画面に表示している名前（コードマスタの名前）に置き換える。
@@ -6306,17 +6346,21 @@ function App(){
         }
         const pool=buildBidLogPool();
         const cond=buildBidLogCond();
-        // 社内の絞り込み（年齢条件・性別を社内扱いにした場合）をかける前の、公告の要件だけで条件に合った人数。
-        // 支店は候補の母集団を絞らないので、社内扱いの年齢条件・性別が無ければ pool の人数と同じ。
+        const hasPeriod = !!(normDigits8(assignDateFrom) || normDigits8(assignDateTo));
+        const qualifiedCount=pool.filter((p)=>p.qualified).length;
+        const unconfirmedCount=pool.filter((p)=>p.verify==="unconf").length;
+        const availableCount = hasPeriod ? pool.filter((p)=>p.qualified && p.available).length : null;
+        // 社内の絞り込み（年齢条件・性別を社内扱いにした場合）をかける前の、公告の要件だけで「条件に合う人」の人数。
+        // 支店は候補の母集団を絞らないので、社内扱いの年齢条件・性別が無ければ qualifiedCount と同じ。
         const reqPoolCount = (ageGenderInternal && hasAgeGenderCond)
-          ? computeCandidatePool(false, undefined, {ignoreAgeGender:true}).length
-          : pool.length;
+          ? buildBidLogPool({ignoreAgeGender:true}).filter((p)=>p.qualified).length
+          : qualifiedCount;
         await addBidLogToFirestore({
           bidKey, koban:bidKoban, stage:tags.stage||"", role:tags.role||"", listTitle:title,
           savedAt:Date.now(), savedBy:email,
           filters:filterSnap||null, summaryLines:filtersToSummaryLines(filterSnap||{}),
           assignFrom:normDigits8(assignDateFrom)||"", assignTo:normDigits8(assignDateTo)||"",
-          pool, poolCount:pool.length, availableCount:pool.filter((p)=>p.available).length,
+          pool, poolCount:pool.length, qualifiedCount, unconfirmedCount, availableCount,
           shortlist:considerList.map((c)=>c.engcd),
           cond, condKey:bidCondKey(cond), reqPoolCount,
         });
